@@ -1,4 +1,6 @@
 name: aegisops
+include:
+  - docker-compose.observability.yml
 services:
   postgres:
     image: pgvector/pgvector:0.8.7-pg18-bookworm@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11
@@ -33,6 +35,7 @@ services:
     environment: &api-environment
       DATABASE_URL: postgresql://aegisops:${POSTGRES_PASSWORD}@postgres:5432/aegisops
       REDIS_URL: redis://redis:6379/0
+      ALERTMANAGER_SECRET: ${ALERTMANAGER_SECRET:-aegisops-demo-alertmanager-secret}
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -66,6 +69,9 @@ services:
       context: .
       dockerfile: examples/shop-api/Dockerfile
     profiles: [lab]
+    environment:
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://otel-collector:4318/v1/logs
+      AEGISOPS_DEMO_FAULT_SECRET: aegisops-demo-fault-secret
     ports: ["127.0.0.1:3001:3001"]
     mem_limit: 128m
     security_opt: [no-new-privileges:true]

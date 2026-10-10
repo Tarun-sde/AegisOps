@@ -1,80 +1,100 @@
 # AegisOps — Current Project State
 
-**Updated:** 2026-10-10
-**Current phase:** Phase 0 (Foundation, Contracts, and ADK Spike)
-**Overall state:** `PHASE 0 FOUNDATION & LIVE-MODEL VERIFICATION COMPLETE — LOCAL & HOSTED CI VERIFIED; LIVE EXPERIMENTS VERIFIED ON FREE TIER; PHASE 1 LOCKED PENDING AUTHORIZATION`
-**Source:** `../AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` sections 16–18 and 24; `docs/PHASE_REPORTS/PHASE_00_FOUNDATION.md`; `docs/PHASE_REPORTS/PHASE_00_MODEL_COMPARISON.md`.
+**Updated:** 2026-10-10  
+**Current phase:** Phase 1 (Real Telemetry Vertical Slice)  
+**Overall state:** `PHASE 1 COMPLETE — REAL TELEMETRY, ALERTING, INGESTION, AND UI VERIFIED; PHASE 2 LOCKED PENDING AUTHORIZATION`  
+**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Section 19; `docs/PHASE_REPORTS/PHASE_1_VERIFICATION.md`; `docs/ADR/ADR-021-real-telemetry-pipeline.md`.
 
-## Implemented and verified in Phase 0
+---
 
-- [x] **Repository toolchain and dependency locks:**
-  - Python 3.14.7 via `.venv` and `uv.lock` (`.tools/bin/uv` 0.13.0).
-  - Node.js 22.23.1 and npm 10.9.8 with npm workspaces (`apps/web`, `examples/shop-api`) via `package-lock.json`.
-  - Static linters & formatters passing: `ruff check` (0 errors), `ruff format --check` (19 files formatted), `mypy --strict` (0 errors in 7 files), `npm run lint` (0 errors), `prettier --check` (all files formatted), `tsc --noEmit` (workspaces clean).
-  - Security audits passing: `pip-audit` (0 vulnerabilities), `npm audit --audit-level=high` (0 vulnerabilities).
-- [x] **Core domain contracts and validation:**
-  - `apps/api/app/schemas.py`: Pydantic v2 frozen contracts for `Scope`, `Alert`, `Incident`, `Evidence`, `EvidenceRef`, `Hypothesis`, `InvestigationResult`, `Approval`.
-  - Deterministic `validate_evidence` engine: rejects cross-tenant/cross-service/cross-run citations, rejects fabricated evidence IDs, enforces permitted action catalog, blocks naive timestamps and numeric pseudo-confidence.
-- [x] **FastAPI control plane baseline:**
-  - `apps/api/app/main.py`: `/healthz` (HTTP 200 `{"status":"ok","service":"api"}`) and `/readyz` (HTTP 200 with async PostgreSQL and Redis probes, fails closed with 503 on error without secret leakage).
-  - Docker image `aegisops-api:phase0` built and tested.
-- [x] **Database & queue foundation:**
-  - PostgreSQL 18 with `pgvector` 0.8.7 (`pgvector/pgvector:0.8.7-pg18-bookworm@sha256:...`).
-  - Redis 8.10.2-alpine (`redis:8.10.2-alpine@sha256:...`) with 64MB memory limit and `noeviction` policy.
-  - Alembic migrations: `0001_foundation.py` creating `organizations` and `services` tables with foreign keys and unique constraints.
-  - Migration round-trip verified in isolated verification container (`aegisops_phase0_verify` DB): upgrade head -> insert & constraints -> vector extension 0.8.7 verified -> downgrade base -> upgrade head.
-- [x] **Frontend dashboard shell:**
-  - Next.js 16.4.0 / React 19.3.0 / Tailwind CSS 4.3.3: accessible dark console theme, skip-to-content navigation, truthful empty states.
-  - `/healthz` route (HTTP 200 `{"status":"ok","service":"web"}`).
-  - Production build (`next build --webpack`, single CPU bounded) passes.
-  - Playwright browser tests pass (2/2): shell responsive navigation on desktop and mobile (viewport 375x812), `/healthz` HTTP 200.
-  - Docker image `aegisops-web:phase0` built and tested.
-- [x] **Demo service stub:**
-  - `examples/shop-api`: Express 5.3.0 / TypeScript service with `/healthz` (HTTP 200 `{"status":"ok","service":"shop-api","phase":0}`).
-  - Node test passing (`tests/health.test.mjs`).
-  - Docker image `aegisops-shop-api:phase0` built and tested.
-- [x] **Google ADK integration spike:**
-  - `agents/incident_investigator/spike.py`: Real Google ADK 2.11.0 `LlmAgent`, `Runner`, `InMemorySessionService`, structured `InvestigationResult` schema.
-  - Scoped read-only `SyntheticTool.get_log_snippets` returning `UNTRUSTED_SOURCE` records with audit ledger.
-  - Offline deterministic test double `OfflineModel`: exercises 2 model turns, 1 tool invocation, structured output parsing, citation validation.
-  - Two scenarios tested: `supported` (status: `complete`) and `conflicting` (status: `inconclusive`).
-  - Budget guard: enforces max 4 model calls, max 12 tool calls, token reservations, timeout bounds.
-- [x] **Offline auth spike:**
-  - `apps/api/tests/test_auth_spike.py`: Authlib 1.8.0 offline PKCE S256 and independent state generation verified against `example.invalid` without network access (governed by ADR-019 / DEC-227).
-- [x] **Live Gemini and Groq model verification (Free Tier):**
-  - Developer-confirmed and API-verified Free tier accounts; spending ceiling strictly $0 (DEC-233).
-  - Direct minimal generation verified: Gemini (`gemini-3.5-flash`, 1.75s latency, 61 tokens) and Groq (`openai/gpt-oss-120b`, 0.86s latency, 93 tokens).
-  - Model compatibility verified: `gemini-3.8-flash` free-tier daily quota exhausted (429) & rejected `thinking_level=MINIMAL` (400); primary model adjusted to `gemini-3.5-flash` with dynamic thinking level (DEC-237); `CountTokensConfig` system_instruction fixed (DEC-238); `GroqModel` assistant reasoning_content sanitized for multi-turn history (DEC-239); structured prompt schema refined (DEC-240).
-  - Real Google ADK tool-calling scenarios verified: Gemini (`supported` -> `complete` in 11.52s; `conflicting` -> `inconclusive` in 9.79s); Groq (`supported` -> `complete` in 4.17s; `conflicting` -> `inconclusive` in 2.96s).
-  - All evidence citations validated by deterministic backend engine against tool ledgers. Zero billed spend.
+## Implemented and verified in Phase 1
 
-## Untested / Blocked / Deferred
+- [x] **Sample Commerce Application (`examples/shop-api`):**
+  - Node.js 22.23.1 / TypeScript / Express 5.3.0.
+  - Endpoints: `GET /healthz`, `GET /products` (deterministic catalog), `POST /checkout` (validation + simulated order IDs), `GET /metrics` (Prometheus-compatible RED metrics).
+  - RED metrics instrumented via `prom-client` 15.1.3: `http_requests_total` counter and `http_request_duration_seconds` histogram with bounded labels (`method`, `route`, `status_code`).
+  - Structured JSON logging with pre-export sensitive field redaction (Bearer tokens, cookies, passwords, API keys).
+  - Native Node 22 `fetch` OTLP/HTTP JSON log forwarder (`POST /v1/logs`) to OpenTelemetry Collector.
+  - Demo fault injection: `POST /fault/inject` and `POST /fault/reset` implementing scenario `S01_CHECKOUT_500` (isolated to demo/test via `NODE_ENV !== "production"` and `x-demo-fault-secret`).
+  - Automated Node test suite passing: `examples/shop-api/tests/shop_api.test.mjs` (all 10 assertions verified).
+- [x] **Observability Infrastructure (`infra/`):**
+  - Pinned Docker images: Prometheus 3.3.0 (`prom/prometheus@sha256:...`), Loki 3.4.2 (`grafana/loki@sha256:...`), Alertmanager 0.28.1 (`prom/alertmanager@sha256:...`), OpenTelemetry Collector Contrib 0.120.0 (`otel/opentelemetry-collector-contrib@sha256:...`).
+  - Bounded memory limits configured across stack (~242.7 MiB total resident RAM footprint across all 9 containers).
+  - OTel Collector receives OTLP HTTP logs on port 4318, applies memory limiter & batch processors, exports to Loki.
+  - Prometheus scrapes `shop-api:3001/metrics` every 5 seconds.
+  - Loki stores logs locally in filesystem TSDB format with bounded retention.
+  - Alertmanager routes firing/resolved alerts to AegisOps FastAPI with Bearer token authentication.
+- [x] **Real Alert Rules & Promtool Testing (`infra/prometheus/rules/`):**
+  - `HighApiErrorRate` rule: fires when 5xx error ratio > 20% over 1m window with minimum request volume guard (`sum(rate(http_requests_total[1m])) > 0.05`) and 15s evaluation duration.
+  - Automated promtool test suite (`infra/prometheus/rules/test_api_alerts.yml`): verified 4 scenarios (healthy traffic, volume guard, sustained 500 ratio firing, resolution).
+- [x] **Database Migrations & Models (`apps/api/`):**
+  - Alembic migration `0002_telemetry_incidents.py`: creates `alert_events`, `incidents`, `incident_events` tables.
+  - Partial unique index `uq_open_incident_fingerprint` on `incidents (organization_id, service_id, fingerprint) WHERE status = 'open'`: enforces DB-level duplicate protection per active alert episode.
+  - SQLAlchemy models and Pydantic v2 schemas for Alertmanager webhook payload, incident entities, and timeline events.
+- [x] **FastAPI Ingestion & Incident API (`apps/api/`):**
+  - Webhook receiver: `POST /api/v1/webhooks/alertmanager` with timing-safe `hmac.compare_digest` Bearer token authentication, 512KB payload size limit, Pydantic schema validation, and safe service resolution.
+  - Deterministic deduplication: skips duplicate webhook deliveries without double-counting; transitions to `resolved` on Alertmanager resolved delivery.
+  - Incident queries: `GET /api/v1/incidents` (paginated, filtered by status/severity), `GET /api/v1/incidents/{incident_id}` (detail with 404 validation), `GET /api/v1/incidents/{incident_id}/events` (chronological audit timeline).
+- [x] **Next.js Incident Dashboard (`apps/web/`):**
+  - Incident feed route `/app/incidents`: renders real PostgreSQL incident data with status/severity badges, relative timestamps, and accessible loading/empty/error states.
+  - Incident detail route `/app/incidents/[incidentId]`: displays incident metadata, audit event timeline, and explicit notice that AI-driven investigation is locked pending Phase 2.
+  - Playwright browser tests passing (2/2 in 1.9s).
+- [x] **End-to-End System Demonstration (`scripts/verify_phase1_e2e.py`):**
+  - Full automated 19-step verification executed and passed against running Docker stack:
+    1. Service health checks (API, Shop, Prom, Alertmanager, Loki)
+    2. Prometheus target scrape confirmed (`shop-api` UP)
+    3. Normal traffic (12 requests, 0 alerts)
+    4. Fault injection (`S01_CHECKOUT_500` enabled)
+    5. Fault traffic (35 failing requests, HTTP 500)
+    6. Prometheus error counter incremented (`http_requests_total` = 140.0)
+    7. Loki error logs queried successfully
+    8. Prometheus alert evaluated as firing
+    9. Alertmanager delivered authenticated webhook
+    10. FastAPI created incident in PostgreSQL
+    11. Web dashboard SSR rendered incident feed
+    12. Duplicate webhook delivery skipped (`duplicates_skipped == 1`, DB count unchanged)
+    13. Fault reset & recovery traffic sent
+    14. Incident resolved in database
 
-**Developer authorization gate:** Phase 0 foundation, offline contracts, and live-model verification on Free tier are COMPLETE. Phase 1 remains **LOCKED** until developer explicitly authorizes Phase 1 commencement.
+---
 
-- [ ] **Real telemetry and alert ingestion:** `DEFERRED TO PHASE 1`.
-  - Per developer instruction ("CRITICAL: DO NOT START PHASE 1"), Prometheus, Loki, Tempo, Alertmanager webhooks, and sample app instrumentation are deferred to Phase 1.
-- [ ] **Celery worker and persistent agent queue:** `DEFERRED TO PHASE 2`.
+## Implemented and verified in Phase 0 (Baseline Preserved)
+
+- [x] Repository toolchain and dependency locks (Python 3.14.7, uv 0.13.0, Node.js 22.23.1, npm 10.9.8).
+- [x] Core domain contracts and deterministic citation validation engine (`validate_evidence`).
+- [x] FastAPI control plane baseline (`/healthz`, `/readyz`).
+- [x] PostgreSQL 18 with `pgvector` 0.8.7 and Redis 8.10.2 container foundation.
+- [x] Frontend dashboard shell with dark console styling and accessible navigation.
+- [x] Google ADK 2.11.0 spike with read-only tools and citation-grounded outputs.
+- [x] Live Gemini 3.5 Flash and Groq `gpt-oss-120b` verification on confirmed Free tier.
+
+---
+
+## Untested / Blocked / Deferred (Strict Phase Boundaries)
+
+**Developer authorization gate:** Phase 1 is COMPLETE. Phase 2 remains **LOCKED** until developer explicitly authorizes Phase 2 commencement.
+
+- [ ] **Automated AI Investigation Workflow with Google ADK:** `DEFERRED TO PHASE 2`.
+  - Connecting live incidents to background Google ADK agent runs via Celery/Redis.
 - [ ] **Full product auth/RBAC and multi-tenant sessions:** `DEFERRED TO PHASE 3`.
+- [ ] **Tempo distributed trace investigation:** `DEFERRED TO PHASE 3`.
+- [ ] **GitHub deployment correlation & cross-fingerprint clustering:** `DEFERRED TO PHASE 4`.
 - [ ] **Runbook RAG with pgvector:** `DEFERRED TO PHASE 5`.
 - [ ] **n8n internal automations and remediation approvals:** `DEFERRED TO PHASES 6–7`.
 
-## Phase 0 exit-gate verification summary
+---
 
-| Verification item | Command | Exit code | Result |
+## Verification Test Summary
+
+| Test Suite | Command | Exit Code | Result |
 |---|---|---|---|
-| Python static checks | `ruff check apps agents && ruff format --check apps agents && mypy apps/api/app agents/incident_investigator/spike.py agents/incident_investigator/free_tier.py agents/incident_investigator/groq_adapter.py` | 0 | PASSED (0 errors, 19 formatted, 7 types checked) |
-| Python unit tests | `pytest -v -m 'not integration'` | 0 | PASSED (59 passed, 2 deselected) |
-| Python security audit | `pip-audit --progress-spinner off` | 0 | PASSED (0 known vulnerabilities) |
-| Web lint & format | `npm run lint && npm run format:check && npm run typecheck` | 0 | PASSED (ESLint, Prettier, TypeScript workspaces clean) |
-| Web unit tests | `npm test` | 0 | PASSED (shop-api health test passed) |
-| Web security audit | `npm audit --audit-level=high` | 0 | PASSED (0 vulnerabilities) |
-| Web browser smoke | `PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright npm run test:web` | 0 | PASSED (2/2 Playwright tests passed) |
-| Web production build | `npm run build` | 0 | PASSED (Next.js webpack build clean) |
-| ADK offline spike generation | `python -m agents.incident_investigator.spike --output ...` (supported & conflicting) | 0 | PASSED (2 artifacts generated) |
-| Live Gemini ADK spike | `python -m agents.incident_investigator.spike --live --provider gemini --scenario ...` | 0 | PASSED (supported: complete, 11.52s, 2633 tokens; conflicting: inconclusive, 9.79s, 2820 tokens) |
-| Live Groq ADK spike | `python -m agents.incident_investigator.spike --live --provider groq --scenario ...` | 0 | PASSED (supported: complete, 4.17s, 1680 tokens; conflicting: inconclusive, 2.96s, 2083 tokens) |
-| Docker image builds | `docker compose build api && docker compose build web && docker compose build shop-api` | 0 | PASSED (all 3 images built) |
-| Compose integration | `docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify run --rm verify` | 0 | PASSED (migration round-trip & DB readiness verified) |
-| Service health checks | `curl -f http://127.0.0.1:{8000,3000,3001}/healthz && curl -f http://127.0.0.1:8000/readyz` | 0 | PASSED (all endpoints 200 OK) |
-| Hosted foundation CI | [run 38043157853](https://github.com/Tarun-sde/AegisOps/actions/runs/38043157853) | success | VERIFIED for b0014ab9; subsequent commits tracked separately |
+| Python Static Checks | `ruff check apps agents scripts && ruff format --check apps agents scripts && mypy apps/api/app ... scripts/verify_phase1_e2e.py` | 0 | PASSED (0 lint errors, 22 formatted, 8 type-checked) |
+| Python Unit Tests | `pytest -v -m 'not integration'` | 0 | PASSED (63 passed, 2 deselected) |
+| Python Security Audit | `pip-audit --progress-spinner off` | 0 | PASSED (0 known vulnerabilities) |
+| Isolated Compose DB Test | `docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify run --rm verify` | 0 | PASSED (2 passed: migration round-trip & DB constraints) |
+| Promtool Alert Rules | `promtool test rules test_api_alerts.yml` | 0 | PASSED (4 scenarios verified) |
+| Shop API Unit Tests | `npm test` | 0 | PASSED (10 assertions verified) |
+| Web Lint & Format | `npm run lint && npm run format:check && npm run typecheck` | 0 | PASSED (ESLint, Prettier, TypeScript workspaces clean) |
+| Web Browser Smoke | `PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright npm run test:web` | 0 | PASSED (2/2 Playwright tests passed) |
+| Web Production Build | `npm run build` | 0 | PASSED (Next.js webpack clean) |
+| Phase 1 End-to-End System | `python scripts/verify_phase1_e2e.py` | 0 | PASSED (All 19 acceptance steps verified live) |

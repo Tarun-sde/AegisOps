@@ -126,3 +126,64 @@ def validate_evidence(
     if set(result.suggested_action_catalog_ids) - allowed_action_ids:
         raise ValueError("Action is outside the permitted catalog")
     return result
+
+
+class AlertmanagerAlertItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    status: Literal["firing", "resolved"]
+    labels: dict[str, str]
+    annotations: dict[str, str] = {}
+    startsAt: Timestamp
+    endsAt: Timestamp | None = None
+    generatorURL: str | None = None
+    fingerprint: str
+
+
+class AlertmanagerWebhookPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    version: str = "4"
+    groupKey: str
+    status: Literal["firing", "resolved"]
+    receiver: str
+    groupLabels: dict[str, str] = {}
+    commonLabels: dict[str, str] = {}
+    commonAnnotations: dict[str, str] = {}
+    externalURL: str | None = None
+    alerts: list[AlertmanagerAlertItem]
+
+
+class IncidentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    service_id: UUID
+    title: str
+    severity: str
+    status: str
+    fingerprint: str
+    started_at: datetime
+    resolved_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class IncidentEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    incident_id: UUID
+    event_type: str
+    actor: str
+    occurred_at: datetime
+    payload: dict[str, object]
+    created_at: datetime
+
+
+class IncidentListResponse(BaseModel):
+    items: list[IncidentRead]
+    total: int
+    page: int
+    size: int

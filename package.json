@@ -17,7 +17,7 @@
     "format": "prettier --write apps/web examples/shop-api package.json",
     "build": "npm run build --workspaces",
     "test": "npm run test --workspace examples/shop-api",
-    "test:web": "npm run test --workspace apps/web"
+    "test:web": "PLAYWRIGHT_BROWSERS_PATH=${PLAYWRIGHT_BROWSERS_PATH:-$(pwd)/.cache/ms-playwright} npm run test --workspace apps/web"
   },
   "devDependencies": {
     "typescript": "6.0.3",

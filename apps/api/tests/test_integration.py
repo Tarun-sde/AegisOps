@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import psycopg
@@ -48,6 +49,77 @@ def test_migration_round_trip_and_database_constraints():
                     "INSERT INTO services (id,organization_id,name) VALUES (%s,%s,%s)",
                     (uuid4(), org_id, "shop-api"),
                 )
+
+            # Phase 1: Test incidents and unique constraint for open status
+            inc1_id = uuid4()
+            connection.execute(
+                """
+                INSERT INTO incidents (
+                    id, organization_id, service_id, title,
+                    severity, status, fingerprint, started_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    inc1_id,
+                    org_id,
+                    service_id,
+                    "High error rate",
+                    "critical",
+                    "open",
+                    "fp-1",
+                    datetime.now(UTC),
+                ),
+            )
+
+            # Second open incident with same fingerprint must violate partial unique index
+            with pytest.raises(psycopg.errors.UniqueViolation), connection.transaction():
+                connection.execute(
+                    """
+                    INSERT INTO incidents (
+                        id, organization_id, service_id, title,
+                    severity, status, fingerprint, started_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        uuid4(),
+                        org_id,
+                        service_id,
+                        "Duplicate alert",
+                        "critical",
+                        "open",
+                        "fp-1",
+                        datetime.now(UTC),
+                    ),
+                )
+
+            # Incident events foreign key constraint
+            event_id = uuid4()
+            connection.execute(
+                """
+                INSERT INTO incident_events (
+                    id, incident_id, event_type, actor, occurred_at, payload
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    event_id,
+                    inc1_id,
+                    "incident_created",
+                    "alertmanager",
+                    datetime.now(UTC),
+                    '{"test": true}',
+                ),
+            )
+
+            with pytest.raises(psycopg.errors.ForeignKeyViolation), connection.transaction():
+                connection.execute(
+                    """
+                    INSERT INTO incident_events (
+                        id, incident_id, event_type, actor, occurred_at, payload
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (uuid4(), uuid4(), "incident_created", "alertmanager", datetime.now(UTC), "{}"),
+                )
+
         assert (
             connection.execute("SELECT id FROM organizations WHERE id=%s", (org_id,)).fetchone()
             is None

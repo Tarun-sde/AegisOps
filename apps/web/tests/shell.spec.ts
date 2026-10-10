@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("shell navigates to truthful empty state on desktop and mobile", async ({
+test("shell navigates to workspace and incidents feed on desktop and mobile", async ({
   page,
 }) => {
   await page.goto("/");
@@ -9,17 +9,24 @@ test("shell navigates to truthful empty state on desktop and mobile", async ({
     page.getByRole("heading", { name: "Operational overview" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "No services connected" }),
+    page.getByRole("heading", { name: "Connected Services (1)" }),
   ).toBeVisible();
+
+  // Navigate to incidents feed
+  await page.getByRole("link", { name: "Incidents" }).click();
   await expect(
-    page.getByText("Service health is currently unknown.", { exact: false }),
+    page.getByRole("heading", { name: "Incident Feed" }),
   ).toBeVisible();
+
+  // Responsive check on mobile viewport
   await page.setViewportSize({ width: 375, height: 812 });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+
+  // Keyboard navigation & accessibility
   await page.goto("/app");
   await page.keyboard.press("Tab");
   await expect(

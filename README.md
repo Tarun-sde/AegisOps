@@ -1,36 +1,111 @@
 # AegisOps
 
-**AI-powered incident intelligence and response platform — design-stage repository starter.**
+**AI-powered incident intelligence and response platform.**
 
-AegisOps aims to detect application incidents using standard observability infrastructure, investigate them through scoped **Google ADK** tools, cite real telemetry and runbook evidence, and coordinate safe, approved responses. The target is a reproducible, deployable, resume-first AI engineering portfolio project.
+AegisOps detects application incidents using production-grade observability infrastructure (OpenTelemetry, Prometheus, Alertmanager, Loki), ingests authenticated alerts idempotently into a FastAPI/PostgreSQL control plane, presents an audit-ready Next.js incident feed, and investigates incidents through scoped, evidence-grounded **Google ADK** AI agents.
 
-> **Status:** Planning and repository bootstrap only. This repository starter does not contain a running backend, frontend, AI agent, or demo. The master plan and decision records are proposals, not measured results.
+> **Status:** **Phase 1 Verified.** Real application telemetry, automated alert evaluation, authenticated Alertmanager webhook ingestion, database-enforced deduplication, Next.js incident dashboard, and controlled fault injection (`S01_CHECKOUT_500`) are fully implemented and verified end-to-end. (Phase 2 automated AI investigations remain locked pending explicit authorization).
 
-## Start here
+---
 
-1. Read [`START_HERE.md`](START_HERE.md) for repository layout and how to begin.
-2. Read [`AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md`](AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md) for product goals, architecture, phase gates and schedule.
-3. Read [`AGENTS.md`](AGENTS.md) before assigning work to a coding assistant.
-4. Read [`docs/ENGINEERING_DECISIONS.md`](docs/ENGINEERING_DECISIONS.md) for initial design rationale and granular decisions.
-5. Track progress in [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md).
+## Architecture (Phase 1 Implemented Data Path)
 
-## Planned architecture
+```
+Express/TypeScript (shop-api)
+    |
+    |-- /metrics (prom-client RED metrics) --------> Prometheus 3.3.0
+    |                                                     |
+    |                                               Alert rules (HighApiErrorRate)
+    |                                                     |
+    |                                                Alertmanager 0.28.1
+    |                                                     |
+    |                                            Bearer-auth webhook
+    |                                                     |
+    |                                              FastAPI Control Plane
+    |                                                     |
+    |                                                PostgreSQL 18
+    |                                                     |
+    |                                              Next.js Dashboard
+    |
+    |-- Structured JSON logs (with redaction)
+              |
+        OTel Collector Contrib 0.120.0
+              |
+         Loki 3.4.2 (TSDB storage)
+```
 
-- **Frontend:** Next.js + TypeScript
-- **Control plane:** FastAPI / PostgreSQL
-- **Investigation:** Google ADK + Gemini API, auditable read-only tool gateway, typed evidence-grounded outputs
-- **Background tasks:** Celery + Redis
-- **Telemetry:** OpenTelemetry, Prometheus, Alertmanager, Loki, Tempo
-- **Knowledge retrieval:** PostgreSQL + pgvector and lexical retrieval
-- **Automation:** Internally operator-authored n8n workflows
-- **Evaluation:** Injected-fault lab, real end-to-end telemetry, held-out scenarios
+---
 
-These are design choices subject to verification and documented revision. **No performance or reliability claim is earned until measured.**
+## Quickstart & Local Verification
 
-## Development priority
+### 1. Prerequisites
+- Python 3.14+ with `uv` (`.tools/bin/uv` or system `uv`)
+- Node.js 22+ with `npm`
+- Docker & Docker Compose v2
 
-Build one verified path first: **controlled sample-app failure → actual alert → persisted incident → scoped ADK investigation → validated evidence-linked diagnosis**. Add polish and extensions only after passing the appropriate phase gates.
+### 2. Start the Full Observability & Application Stack
+```bash
+# Launch core app services + observability pipeline (Prometheus, Loki, Alertmanager, OTel Collector)
+docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile core --profile lab --profile observability up -d --wait
+# (or if make is installed: make obs-up)
+```
 
-## License
+Verify service health:
+- FastAPI Control Plane: `http://localhost:8000/healthz` (readyz probe at `/readyz`)
+- Shop API (Sample App): `http://localhost:3001/healthz` (metrics at `/metrics`)
+- Prometheus Web UI: `http://localhost:9090`
+- Alertmanager UI: `http://localhost:9093`
+- Next.js Web Dashboard: `http://localhost:3000/app/incidents`
 
-Not yet selected. Do not assume this repository is licensed for redistribution just because its source is visible; choose a license explicitly before publishing or distributing source. Review third-party licenses separately, especially n8n usage restrictions.
+### 3. Run the Automated End-to-End Pipeline Verification
+Execute the 19-step automated system verification script:
+```bash
+.tools/bin/uv run --frozen --all-groups python scripts/verify_phase1_e2e.py
+# (or if make is installed: make verify-e2e)
+```
+This script exercises:
+1. Service health checks across all components
+2. Normal traffic generation (12 requests, 0 alerts)
+3. Controlled fault injection (`S01_CHECKOUT_500`) via secured demo endpoint
+4. Generation of 35 failing checkout requests (HTTP 500)
+5. Prometheus RED metric scrape confirmation (`http_requests_total{status_code="500"}`)
+6. Loki log query verification with sensitive token redaction
+7. Prometheus alert rule evaluation (`HighApiErrorRate` firing)
+8. Authenticated Alertmanager webhook delivery to FastAPI
+9. PostgreSQL incident persistence and partial unique index deduplication
+10. Web dashboard SSR rendering
+11. Duplicate delivery rejection (`duplicates_skipped == 1`)
+12. Fault deactivation, recovery traffic, and automated incident resolution
+
+### 4. Running Tests
+```bash
+# Code linters, formatting, and strict type-checking
+.tools/bin/uv run --frozen --all-groups ruff check apps agents scripts
+.tools/bin/uv run --frozen --all-groups ruff format --check apps agents scripts
+.tools/bin/uv run --frozen --all-groups mypy apps/api/app agents/incident_investigator/spike.py agents/incident_investigator/free_tier.py agents/incident_investigator/groq_adapter.py scripts/verify_phase1_e2e.py
+npm run lint && npm run format:check && npm run typecheck
+
+# Backend and unit tests (Python pytest & Node.js test runner)
+.tools/bin/uv run --frozen --all-groups pytest -v -m 'not integration'
+npm test
+
+# Alertmanager rule promtool tests
+docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile observability exec prometheus promtool test rules /etc/prometheus/rules/test_api_alerts.yml
+
+# Playwright browser tests
+PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright npm run test:web
+
+# Isolated PostgreSQL migration round-trip & DB constraints test
+docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify run --rm verify
+docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify down -v
+```
+
+---
+
+## Project Documentation
+- [`AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md`](AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md): Approved master architecture, phase gates, and roadmaps.
+- [`AGENTS.md`](AGENTS.md): Operational instructions and security rules for coding agents.
+- [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md): Current phase status, verified deliverables, and upcoming milestones.
+- [`docs/ENGINEERING_DECISIONS.md`](docs/ENGINEERING_DECISIONS.md): Granular decision log with 10-point interview-defensible explanations (`DEC-201` through `DEC-250`).
+- [`docs/ADR/`](docs/ADR/): Architecture Decision Records (`ADR-001` through `ADR-021`).
+- [`docs/PHASE_REPORTS/`](docs/PHASE_REPORTS/): Verification reports and empirical benchmark artifacts.

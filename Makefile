@@ -12,9 +12,9 @@ install:
 	npx playwright install chromium
 
 check:
-	$(UV) run --frozen --all-groups ruff check apps agents
-	$(UV) run --frozen --all-groups ruff format --check apps agents
-	$(UV) run --frozen --all-groups mypy apps/api/app agents/incident_investigator/spike.py agents/incident_investigator/free_tier.py agents/incident_investigator/groq_adapter.py
+	$(UV) run --frozen --all-groups ruff check apps agents scripts
+	$(UV) run --frozen --all-groups ruff format --check apps agents scripts
+	$(UV) run --frozen --all-groups mypy apps/api/app agents/incident_investigator/spike.py agents/incident_investigator/free_tier.py agents/incident_investigator/groq_adapter.py scripts/verify_phase1_e2e.py
 	npm run lint
 	npm run format:check
 	npm run typecheck
@@ -26,6 +26,9 @@ test:
 browser:
 	npm run test:web
 
+test-rules:
+	docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile observability exec prometheus promtool test rules /etc/prometheus/rules/test_api_alerts.yml
+
 build:
 	docker compose build api
 	docker compose build web
@@ -33,6 +36,12 @@ build:
 
 up:
 	docker compose --profile core --profile lab up -d --wait
+
+obs-up:
+	docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile core --profile lab --profile observability up -d --wait
+
+verify-e2e:
+	$(UV) run --frozen --all-groups python scripts/verify_phase1_e2e.py
 
 migrate:
 	docker compose run --rm api alembic upgrade head
@@ -44,6 +53,9 @@ integration:
 spike:
 	$(UV) run --frozen --all-groups python -m agents.incident_investigator.spike --output artifacts/spike-supported.json
 	$(UV) run --frozen --all-groups python -m agents.incident_investigator.spike --scenario conflicting --output artifacts/spike-conflicting.json
+
+obs-down:
+	docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile core --profile lab --profile observability down
 
 stop:
 	docker compose --profile core --profile lab down

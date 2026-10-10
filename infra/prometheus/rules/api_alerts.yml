@@ -1,0 +1,19 @@
+groups:
+  - name: shop_api_alerts
+    rules:
+      - alert: HighApiErrorRate
+        expr: >-
+          (
+            sum by (service, route) (rate(http_requests_total{status_code=~"5.."}[1m]))
+            /
+            sum by (service, route) (rate(http_requests_total[1m]))
+          ) > 0.2
+          and
+          sum by (service, route) (rate(http_requests_total[1m])) > 0.05
+        for: 15s
+        labels:
+          severity: critical
+          environment: demo
+        annotations:
+          summary: "High 5xx error rate on {{ $labels.service }} route {{ $labels.route }}"
+          description: "Service {{ $labels.service }} route {{ $labels.route }} has 5xx error ratio above 20% over 1m."
