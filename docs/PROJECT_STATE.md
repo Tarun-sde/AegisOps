@@ -98,3 +98,9 @@
 | Web Browser Smoke | `PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright npm run test:web` | 0 | PASSED (2/2 Playwright tests passed) |
 | Web Production Build | `npm run build` | 0 | PASSED (Next.js webpack clean) |
 | Phase 1 End-to-End System | `python scripts/verify_phase1_e2e.py` | 0 | PASSED (All 19 acceptance steps verified live) |
+| Hosted Foundation & Phase 1 CI | GitHub Actions [run 38069571696](https://github.com/Tarun-sde/AegisOps/actions/runs/38069571696) | 0 | PASSED (Full pipeline green on `6f7a1fb`) |
+
+### Hosted CI Fixes Verified (Commit `6f7a1fb`)
+- **Issue 1 (Ruff Import Order):** `scripts/verify_phase1_e2e.py:9` had `from typing import Any` placed before `urllib` stdlib imports. Resolved using `ruff check --fix` and `ruff format`.
+- **Issue 2 (Docker Compose Cleanup Interpolation):** The workflow `Stop task services` step (`if: always()`) failed to interpolate `${POSTGRES_PASSWORD}` when an earlier step failed before `.env` creation. Resolved by providing `POSTGRES_PASSWORD: ci-cleanup-placeholder` scoped strictly to the cleanup step in `.github/workflows/ci.yml`.
+- **Verification Evidence:** Hosted GitHub Actions run [38069571696](https://github.com/Tarun-sde/AegisOps/actions/runs/38069571696) completed with `conclusion=success` across all 11 workflow steps.

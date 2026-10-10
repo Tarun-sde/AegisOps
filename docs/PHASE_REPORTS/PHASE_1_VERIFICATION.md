@@ -107,6 +107,13 @@ Express shop-api (:3001)
 | Playwright Browser Tests | `npm run test:web` | Chromium headless | 2 | 0 | **PASS** |
 | Security Audits | `pip-audit && npm audit --audit-level=high` | PyPI / npm | 0 vulns | 0 | **PASS** |
 | End-to-End System Test | `python scripts/verify_phase1_e2e.py` | Full Docker Stack | 19 checks | 0 | **PASS** |
+| Hosted GitHub Actions CI | [Run 38069571696](https://github.com/Tarun-sde/AegisOps/actions/runs/38069571696) (`6f7a1fb`) | Ubuntu 24.04 (Runner) | 11 steps | 0 | **PASS** |
+
+### Hosted CI Failure Resolution
+- **Prior Failed Run:** [Run 38067694644](https://github.com/Tarun-sde/AegisOps/actions/runs/38067694644) on commit `2f005e6`.
+- **Failure 1 (Static Checks):** `I001 Import block is un-sorted or un-formatted` in `scripts/verify_phase1_e2e.py:9` (`from typing import Any` placed before `urllib` stdlib imports). Fixed via `ruff check --fix scripts/verify_phase1_e2e.py` and `ruff format`.
+- **Failure 2 (Docker Compose Cleanup):** `Stop task services` with `if: always()` failed with missing `POSTGRES_PASSWORD` when static checks failed before `.env` generation. Fixed in `.github/workflows/ci.yml` by providing fallback `POSTGRES_PASSWORD: ci-cleanup-placeholder` scoped exclusively to the cleanup step.
+- **Verification:** Both fixes committed in `6f7a1fb`. Hosted GitHub Actions run [38069571696](https://github.com/Tarun-sde/AegisOps/actions/runs/38069571696) executed all steps with exit code 0 (`conclusion=success`).
 
 ---
 
