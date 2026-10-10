@@ -1,7 +1,7 @@
 # ADR-020 — Isolated Groq comparison inside the existing ADK spike
 
 - **Date:** 2026-10-10
-- **Status:** VERIFIED OFFLINE (pinned bridge, audit and HTTP-mocked ADK tests); live execution BLOCKED by account-tier verification.
+- **Status:** VERIFIED OFFLINE AND LIVE on Free tier (DEC-235/239/240).
 - **Owner / authority:** Developer's explicit Gemini/Groq comparison request; no change to the single-agent architecture.
 - **Problem / constraints:** Compare the same synthetic supported and conflicting fixtures on Gemini 3.8 Flash and Groq GPT-OSS 120B, with no paid requests or automatic switching.
 - **Decision:** Native ADK Gemini remains provisional primary. A small ADK LiteLlm adapter pinned to LiteLLM 1.104.2 supplies the secondary Groq candidate. Same Runner, tool ledger, schema and validation; explicit provider selection only. Free-tier evidence must precede any inference. See DEC-232–235 for exact choices.
@@ -14,4 +14,4 @@
 - **Follow-ups:** Does an offline bridge test prove live compatibility? No. Does a clean audit prove the dependency safe? No, only that checked versions have no reported findings in that audit. Why no automatic fallback? It hides provider failures and is outside the requested scope.
 - **Related:** ADR-001/002/003/012/015/017/018; DEC-231–235.
 
-- **Verification addendum:** 59 offline tests passed (2 integration tests deselected); Ruff/mypy passed; pre-install and installed dependency audits found no known vulnerabilities. Official Linux wheel hash matched and had no Python startup hooks. Full evidence and actual limits: [comparison report](../PHASE_REPORTS/PHASE_00_MODEL_COMPARISON.md). No live provider call occurred.
+- **Verification addendum:** 59 offline tests passed; Ruff/mypy passed; dependency audits clean. Live execution verified on operator-confirmed Free tier: direct generation (0.86s, 93 tokens), ADK supported scenario (4.17s, 1680 tokens, complete), ADK conflicting scenario (2.96s, 2083 tokens, inconclusive). Full evidence: [comparison report](../PHASE_REPORTS/PHASE_00_MODEL_COMPARISON.md). Billed spend: $0.

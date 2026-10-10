@@ -2,15 +2,15 @@
 
 **Updated:** 2026-10-10
 **Current phase:** Phase 0 (Foundation, Contracts, and ADK Spike)
-**Overall state:** `PHASE 0 FOUNDATION COMPLETE — LOCAL + HOSTED CI VERIFIED; LIVE-MODEL GATE OUTSTANDING; PHASE 1 LOCKED`
-**Source:** `../AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` sections 16–18 and 24; `docs/PHASE_REPORTS/PHASE_00_FOUNDATION.md`.
+**Overall state:** `PHASE 0 FOUNDATION & LIVE-MODEL VERIFICATION COMPLETE — LOCAL & HOSTED CI VERIFIED; LIVE EXPERIMENTS VERIFIED ON FREE TIER; PHASE 1 LOCKED PENDING AUTHORIZATION`
+**Source:** `../AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` sections 16–18 and 24; `docs/PHASE_REPORTS/PHASE_00_FOUNDATION.md`; `docs/PHASE_REPORTS/PHASE_00_MODEL_COMPARISON.md`.
 
 ## Implemented and verified in Phase 0
 
 - [x] **Repository toolchain and dependency locks:**
   - Python 3.14.7 via `.venv` and `uv.lock` (`.tools/bin/uv` 0.13.0).
   - Node.js 22.23.1 and npm 10.9.8 with npm workspaces (`apps/web`, `examples/shop-api`) via `package-lock.json`.
-  - Static linters & formatters passing: `ruff check` (0 errors), `ruff format --check` (16 files formatted), `mypy --strict` (0 errors in 5 files), `npm run lint` (0 errors), `prettier --check` (all files formatted), `tsc --noEmit` (workspaces clean).
+  - Static linters & formatters passing: `ruff check` (0 errors), `ruff format --check` (19 files formatted), `mypy --strict` (0 errors in 7 files), `npm run lint` (0 errors), `prettier --check` (all files formatted), `tsc --noEmit` (workspaces clean).
   - Security audits passing: `pip-audit` (0 vulnerabilities), `npm audit --audit-level=high` (0 vulnerabilities).
 - [x] **Core domain contracts and validation:**
   - `apps/api/app/schemas.py`: Pydantic v2 frozen contracts for `Scope`, `Alert`, `Incident`, `Evidence`, `EvidenceRef`, `Hypothesis`, `InvestigationResult`, `Approval`.
@@ -41,17 +41,17 @@
   - Budget guard: enforces max 4 model calls, max 12 tool calls, token reservations, timeout bounds.
 - [x] **Offline auth spike:**
   - `apps/api/tests/test_auth_spike.py`: Authlib 1.8.0 offline PKCE S256 and independent state generation verified against `example.invalid` without network access (governed by ADR-019 / DEC-227).
+- [x] **Live Gemini and Groq model verification (Free Tier):**
+  - Developer-confirmed and API-verified Free tier accounts; spending ceiling strictly $0 (DEC-233).
+  - Direct minimal generation verified: Gemini (`gemini-3.5-flash`, 1.75s latency, 61 tokens) and Groq (`openai/gpt-oss-120b`, 0.86s latency, 93 tokens).
+  - Model compatibility verified: `gemini-3.8-flash` free-tier daily quota exhausted (429) & rejected `thinking_level=MINIMAL` (400); primary model adjusted to `gemini-3.5-flash` with dynamic thinking level (DEC-237); `CountTokensConfig` system_instruction fixed (DEC-238); `GroqModel` assistant reasoning_content sanitized for multi-turn history (DEC-239); structured prompt schema refined (DEC-240).
+  - Real Google ADK tool-calling scenarios verified: Gemini (`supported` -> `complete` in 11.52s; `conflicting` -> `inconclusive` in 9.79s); Groq (`supported` -> `complete` in 4.17s; `conflicting` -> `inconclusive` in 2.96s).
+  - All evidence citations validated by deterministic backend engine against tool ledgers. Zero billed spend.
 
 ## Untested / Blocked / Deferred
 
-**Developer clarification (DEC-231):** Foundation implementation/local verification are complete and hosted CI is verified for the original Phase 0 commit. Live-model verification is a separate mandatory gate before Phase 1 can formally unlock. Earlier credential-absence/unlocked statements are preserved in the journal and dated report history; they are not current status.
+**Developer authorization gate:** Phase 0 foundation, offline contracts, and live-model verification on Free tier are COMPLETE. Phase 1 remains **LOCKED** until developer explicitly authorizes Phase 1 commencement.
 
-- [ ] **Live Gemini/Groq model verification:** `BLOCKED — ACCOUNT TIER UNVERIFIED / NOT RUN`.
-  - Both keys exist locally and `.env` is ignored; values were not displayed.
-  - No authenticated provider browser, gcloud executable, or Google ADC file is available. Key ownership and account Free tier cannot be verified from public pricing or key presence.
-  - Paid spend remains $0; the CLI now rejects nonzero ceilings and requires fresh key-bound operator tier evidence. No evidence record has been created for either real key.
-  - Gemini is provisional primary; Groq is secondary. The same ADK spike has an isolated pinned LiteLLM bridge with offline HTTP tests. No automatic switching.
-  - [Comparison report](PHASE_REPORTS/PHASE_00_MODEL_COMPARISON.md) records exact tests, provider blockers, dependency audit and GitHub evidence.
 - [ ] **Real telemetry and alert ingestion:** `DEFERRED TO PHASE 1`.
   - Per developer instruction ("CRITICAL: DO NOT START PHASE 1"), Prometheus, Loki, Tempo, Alertmanager webhooks, and sample app instrumentation are deferred to Phase 1.
 - [ ] **Celery worker and persistent agent queue:** `DEFERRED TO PHASE 2`.
@@ -63,16 +63,18 @@
 
 | Verification item | Command | Exit code | Result |
 |---|---|---|---|
-| Python static checks | `ruff check apps agents && ruff format --check apps agents && mypy apps/api/app agents/incident_investigator/spike.py` | 0 | PASSED (0 errors, 16 formatted, 5 types checked) |
-| Python unit tests | `pytest -v -m 'not integration'` | 0 | PASSED (36 passed, 2 deselected) |
+| Python static checks | `ruff check apps agents && ruff format --check apps agents && mypy apps/api/app agents/incident_investigator/spike.py agents/incident_investigator/free_tier.py agents/incident_investigator/groq_adapter.py` | 0 | PASSED (0 errors, 19 formatted, 7 types checked) |
+| Python unit tests | `pytest -v -m 'not integration'` | 0 | PASSED (59 passed, 2 deselected) |
 | Python security audit | `pip-audit --progress-spinner off` | 0 | PASSED (0 known vulnerabilities) |
 | Web lint & format | `npm run lint && npm run format:check && npm run typecheck` | 0 | PASSED (ESLint, Prettier, TypeScript workspaces clean) |
 | Web unit tests | `npm test` | 0 | PASSED (shop-api health test passed) |
 | Web security audit | `npm audit --audit-level=high` | 0 | PASSED (0 vulnerabilities) |
 | Web browser smoke | `PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright npm run test:web` | 0 | PASSED (2/2 Playwright tests passed) |
 | Web production build | `npm run build` | 0 | PASSED (Next.js webpack build clean) |
-| ADK spike generation | `python -m agents.incident_investigator.spike --output ...` (supported & conflicting) | 0 | PASSED (2 artifacts generated) |
+| ADK offline spike generation | `python -m agents.incident_investigator.spike --output ...` (supported & conflicting) | 0 | PASSED (2 artifacts generated) |
+| Live Gemini ADK spike | `python -m agents.incident_investigator.spike --live --provider gemini --scenario ...` | 0 | PASSED (supported: complete, 11.52s, 2633 tokens; conflicting: inconclusive, 9.79s, 2820 tokens) |
+| Live Groq ADK spike | `python -m agents.incident_investigator.spike --live --provider groq --scenario ...` | 0 | PASSED (supported: complete, 4.17s, 1680 tokens; conflicting: inconclusive, 2.96s, 2083 tokens) |
 | Docker image builds | `docker compose build api && docker compose build web && docker compose build shop-api` | 0 | PASSED (all 3 images built) |
 | Compose integration | `docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify run --rm verify` | 0 | PASSED (migration round-trip & DB readiness verified) |
 | Service health checks | `curl -f http://127.0.0.1:{8000,3000,3001}/healthz && curl -f http://127.0.0.1:8000/readyz` | 0 | PASSED (all endpoints 200 OK) |
-| Hosted foundation CI | [run 38043157853](https://github.com/Tarun-sde/AegisOps/actions/runs/38043157853) | success | VERIFIED for b0014ab9; subsequent comparison work tracked separately |
+| Hosted foundation CI | [run 38043157853](https://github.com/Tarun-sde/AegisOps/actions/runs/38043157853) | success | VERIFIED for b0014ab9; subsequent commits tracked separately |

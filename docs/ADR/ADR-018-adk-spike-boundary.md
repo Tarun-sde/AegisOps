@@ -1,7 +1,7 @@
 # ADR-018 — Separate framework proof from live model proof
 
 - **Date:** 2026-10-10
-- **Status:** Foundation/offline dispatch VERIFIED; live Gemini/Groq gate BLOCKED by account-tier verification. Gate interpretation clarified by DEC-231 below; historical decision retained.
+- **Status:** Foundation/offline dispatch VERIFIED; live Gemini and Groq model verification VERIFIED on Free tier (DEC-237–240); Phase 1 LOCKED pending authorization.
 - **Owner:** Developer; expands ADR-001/003/012/015 without granting new capabilities.
 - **Master-plan references:** §§4.3–4.8, 17 P0, 18 Day 2.
 - **Problem and constraints:** Prove ADK can call a read-only tool and produce a validated typed result. No Gemini key or authorized spend was initially available. Logs and model responses are untrusted.
@@ -20,3 +20,10 @@
 Foundation implementation and local verification are complete, with hosted CI verified for b0014ab9. Live-model verification is a **separate mandatory outstanding gate before Phase 1 is formally unlocked**. Phase 1 remains LOCKED and unauthorized. This resolves the previous report wording without restarting foundation work or deleting history.
 
 Both keys are now present. The prior absence/budget description above is historical. Live smoke tests are free-tier-only after verification of each exact key-owning account; paid requests are prohibited. ADR-020 and DEC-232–236 extend the same single-agent synthetic spike for Groq. No automatic provider fallback or real telemetry is introduced. See the comparison report for actual verification evidence and blockers.
+
+## Live model verification complete — 2026-10-10 (DEC-237–240)
+
+Direct API and live ADK synthetic scenario verification completed successfully on operator-confirmed Free tier accounts:
+- Direct API generation: Gemini (`gemini-3.5-flash`, 1.75s, 61 tokens) PASSED; Groq (`openai/gpt-oss-120b`, 0.86s, 93 tokens) PASSED.
+- Live ADK tool dispatch: Gemini (`gemini-3.5-flash`, supported=complete in 11.52s, conflicting=inconclusive in 9.79s) PASSED; Groq (`openai/gpt-oss-120b`, supported=complete in 4.17s, conflicting=inconclusive in 2.96s) PASSED.
+- All evidence citations validated deterministically against tool ledgers. Billed spend: $0. Phase 1 remains LOCKED until authorized.

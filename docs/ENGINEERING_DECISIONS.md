@@ -1322,3 +1322,73 @@ Do not write weekly summaries with fabricated project experiences.
 - Actual account verification: no connected browser, gcloud or Google ADC; both exact key-owning tiers remain UNVERIFIED. No real tier record was manufactured. Paid requests, billing activation and Phase 1 work did not occur.
 - Recommendation: Gemini remains provisional primary and Groq secondary by developer instruction. There is no observed live model winner. The bridge passes two HTTP-mocked ADK tool trajectories with structured output/citations; those are not real model successes. Native Gemini integration has fewer translation dependencies; Groq's supported bridge adds dependency/security maintenance and a documented schema/tools capability correction. No measured speed/cost/quality advantage is claimed.
 - Decisions reused: ADR-001/002/003/012/015/017/018; DEC-217–219/221/224/229/230. Paid-mode requirement of DEC-224/229 is superseded for this spike by DEC-233; historical entries retained. No automatic provider switching or architecture change.
+
+### DEC-237 — Primary Gemini model ID candidate adjusted to gemini-3.5-flash
+- Date: 2026-10-10
+- Scope: agents/incident_investigator/spike.py; ADR-018
+- Status: VERIFIED
+- Context / constraints: gemini-3.8-flash on the project's free tier has an exhausted 20 RPD daily quota (429 RESOURCE_EXHAUSTED / 503 UNAVAILABLE) and rejects thinking_level=MINIMAL with 400 INVALID_ARGUMENT. Paid billing is strictly prohibited.
+- Choice / reason: Set default MODEL = "gemini-3.5-flash", allow ("gemini-3.5-flash", "gemini-3.8-flash") in ALLOWED_GEMINI_MODELS, and dynamically assign thinking_level to LOW for 3.8-flash and MINIMAL for 3.5-flash. gemini-3.5-flash is verified available on Free tier with working quota and low latency.
+- Alternatives: Waiting 9+ hours for 3.8-flash daily quota reset rejected; upgrading to paid tier rejected (forbidden); mocking live calls rejected.
+- Downside / revisit: 3.5-flash is an earlier model generation than 3.8-flash; revisit when 3.8-flash quota resets or higher free rate limits become available.
+- Evidence: Direct API generation OK in 1.748s (61 tokens); live ADK supported (11.52s, 2633 tokens) and conflicting (9.79s, 2820 tokens) PASSED with 100% evidence validation.
+- Related: ADR-001/018, DEC-230/231.
+
+### DEC-238 — Fix count_tokens Developer API mode compatibility
+- Date: 2026-10-10
+- Scope: agents/incident_investigator/spike.py
+- Status: VERIFIED
+- Context / constraints: google-genai 2.29.0 SDK raises ValueError: system_instruction parameter is only supported in Gemini Enterprise Agent Platform mode when CountTokensConfig(system_instruction=...) is called in Developer API mode (vertexai=False).
+- Choice / reason: In RequestBudget.before_model, prepend system_instruction text to the contents list passed to client.aio.models.count_tokens without passing system_instruction in CountTokensConfig. Pass configured model dynamically.
+- Alternatives: Disabling token preflight check rejected (violates budget invariants); SDK monkeypatching rejected.
+- Downside / revisit: Prepends system text as user-role content for token counting estimation rather than an official system container; revisit if SDK Developer API supports system_instruction in config.
+- Evidence: Offline mock tests pass; live Gemini token counting succeeds without error.
+- Related: ADR-018, DEC-218/224/237.
+
+### DEC-239 — Sanitize thought parts for Groq multi-turn history in GroqModel
+- Date: 2026-10-10
+- Scope: agents/incident_investigator/groq_adapter.py
+- Status: VERIFIED
+- Context / constraints: Groq's OpenAI-compatible API rejects incoming assistant messages containing the reasoning_content property with HTTP 400 BadRequestError. ADK captures thought parts from turn 1 and passes them as reasoning_parts on turn 2.
+- Choice / reason: In GroqModel.generate_content_async, filter out thought=True parts from llm_request.contents before delegating to super().generate_content_async. Preserves response event thought tracking while preventing wire errors.
+- Alternatives: Disabling reasoning effort on Groq rejected (gpt-oss-120b requires reasoning); custom HTTP client rejected (violates ADR-020).
+- Downside / revisit: Assistant reasoning text from previous turns is omitted from subsequent prompts sent to Groq; model still receives the tool calls and responses.
+- Evidence: Live Groq runs passed turn 2 tool validation without BadRequestError.
+- Related: ADR-020, DEC-232/235.
+
+### DEC-240 — Refine prompt instruction schema and conflicting citation specification
+- Date: 2026-10-10
+- Scope: agents/incident_investigator/spike.py
+- Status: VERIFIED
+- Context / constraints: In multi-turn schema tool calling, GPT-OSS-120B initially hallucinated generic id/title/description fields instead of cause/confidence/supporting_evidence, and both models initially omitted contradicting_evidence_ids in conflicting scenarios without explicit prompt instructions.
+- Choice / reason: Enumerate exact Hypothesis schema fields in INSTRUCTION and mandate that conflicting observations cite the opposing observation in contradicting_evidence_ids and never in supporting_evidence. Increment PROMPT_VERSION to phase0-v2.
+- Alternatives: Multi-agent reformatter rejected (violates ADR-002 single agent); relaxing deterministic validation rejected.
+- Downside / revisit: Slightly longer prompt tokens (932 vs 416); revisit if schema adherence can be enforced at the grammar level.
+- Evidence: Both providers successfully produced matching schema and passed deterministic validation for both supported and conflicting fixtures.
+- Related: ADR-002/018/020, DEC-217/234/235.
+
+### BUG-20261010-006 — CountTokensConfig system_instruction rejected in Developer API mode
+- Symptom / reproduction: First live Gemini run failed in before_model with ValueError: system_instruction parameter is only supported in Gemini Enterprise Agent Platform mode.
+- Hypotheses: SDK configuration incompatibility with generative language API.
+- Cause / repair: google-genai SDK restricts system_instruction in CountTokensConfig to Vertex AI mode. Repaired by prepending system instruction text to contents list for token counting.
+- Verification: Live Gemini runs succeeded with exact token counts; 59 offline tests passed.
+- Lesson: Vendor SDK features differ between Enterprise (Vertex AI) and Developer API modes; test API boundary behavior.
+
+### BUG-20261010-007 — Groq API rejects reasoning_content on incoming assistant messages
+- Symptom / reproduction: Turn 2 of live Groq run failed with litellm.BadRequestError: GroqException - property 'reasoning_content' is unsupported.
+- Hypotheses: ADK LiteLlm multi-turn history conversion attaches reasoning_content from turn 1's thought parts.
+- Cause / repair: Groq API does not support incoming reasoning_content on assistant messages. Repaired by sanitizing thought parts from llm_request.contents in GroqModel.generate_content_async.
+- Verification: Both live Groq scenarios passed without HTTP 400.
+- Lesson: Providers supporting reasoning outputs may not accept their own reasoning tokens in input history.
+
+### BUG-20261010-008 — gemini-3.8-flash free-tier quota exhausted & ThinkingLevel.MINIMAL rejected
+- Symptom / reproduction: Direct generation on gemini-3.8-flash returned 400 INVALID_ARGUMENT on MINIMAL thinking, and 429 RESOURCE_EXHAUSTED / 503 UNAVAILABLE on other thinking levels.
+- Hypotheses: Model ID rate limits or tier constraints.
+- Cause / repair: Project daily free-tier limit for gemini-3.8-flash is 20 RPD and was exhausted. Configured gemini-3.5-flash as primary model candidate with fallback for 3.8-flash and dynamic thinking level.
+- Verification: Direct generation (1.75s) and both live ADK scenarios succeeded on gemini-3.5-flash.
+- Lesson: Free-tier limits vary significantly by model version within the same provider; maintain allowlisted model candidates.
+
+### DEC-237–240 live verification summary
+- Status: Live model verification gate COMPLETE on Free tier; Phase 1 remains LOCKED pending authorization.
+- Evidence: 4 live scenarios verified with real models, genuine tool calls, and 100% deterministic evidence validation. 59 offline tests pass. Security and type checks clean.
+- Recommendation: Gemini remains provisional primary candidate for ADK continuity; Groq verified as viable fast secondary candidate.

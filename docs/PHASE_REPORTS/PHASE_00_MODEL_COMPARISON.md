@@ -113,4 +113,85 @@ Verified interview lesson: distinguish framework dispatch, HTTP protocol compati
 
 ### GitHub verification
 
-Original foundation commit `b0014ab9ad39e4657f20c4f771d71c259067653e` is pushed; [run 38043157853](https://github.com/Tarun-sde/AegisOps/actions/runs/38043157853) completed successfully. This run does not verify the new comparison changes. The continuation will be committed after secret checks; its hosted CI result must be checked for the exact pushed SHA and reported separately.
+Original foundation commit `b0014ab9ad39e4657f20c4f771d71c259067653e` is pushed; [run 38043157853](https://github.com/Tarun-sde/AegisOps/actions/runs/38043157853) completed successfully.
+
+---
+
+## Live verification results — Tasks 1 to 4 complete (2026-10-10)
+
+Following explicit developer confirmation that both API keys are configured locally on Free tier plans with authorized synthetic requests, live direct API connectivity and Google ADK scenario testing were executed and verified.
+
+### Task 1: Direct API connectivity & authentication
+
+- **Gemini API:**
+  - Key detected in local `.env` (53 chars, ignored by git, never printed).
+  - Key-owning project verified on Free tier via explicit developer confirmation and confirmed by Google API error metrics (`generativelanguage.googleapis.com/generate_content_free_tier_requests`, limit: 20/day).
+  - Configured model check: `gemini-3.8-flash` exists, but its free-tier daily quota was exhausted (HTTP 429 `RESOURCE_EXHAUSTED: Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash`) and it rejected `thinking_level=MINIMAL` (HTTP 400 `INVALID_ARGUMENT`). Secondary candidate `gemini-3.5-flash` exists on the free tier with active quota.
+  - Direct generation request ("Reply with OK"): `gemini-3.5-flash` returned HTTP 200, output `"OK"`, latency 1.748s, usage: 4 prompt tokens, 1 candidate token, 56 thinking tokens, 61 total tokens.
+- **Groq API:**
+  - Key detected in local `.env` (56 chars, ignored by git, never printed).
+  - Key-owning organization verified on Free plan via explicit developer confirmation.
+  - Configured model check: `openai/gpt-oss-120b` verified accessible in Groq models endpoint.
+  - Direct generation request ("Reply with OK" + `reasoning_effort="low"`): returned HTTP 200, output `"OK"`, latency 0.863s, usage: 74 prompt tokens, 19 completion tokens (including 9 reasoning tokens), 93 total tokens.
+
+### Task 2: Model compatibility repairs (DEC-237–240)
+
+1. **Gemini model ID & thinking level (DEC-237):** Set default `MODEL = "gemini-3.5-flash"` and allow `("gemini-3.5-flash", "gemini-3.8-flash")` in `ALLOWED_GEMINI_MODELS`. Dynamically set `thinking_level` to `LOW` for 3.8-flash and `MINIMAL` for 3.5-flash.
+2. **Gemini Developer API token counting (DEC-238 / BUG-20261010-006):** Pinned `google-genai` 2.29.0 in Developer API mode (`vertexai=False`) rejects `CountTokensConfig(system_instruction=...)` with `ValueError: system_instruction parameter is only supported in Gemini Enterprise Agent Platform mode`. Repaired by prepending system instruction text to the `contents` list passed to `count_tokens`.
+3. **Groq multi-turn reasoning content sanitization (DEC-239 / BUG-20261010-007):** Groq's OpenAI-compatible API rejects incoming assistant messages containing `reasoning_content` with HTTP 400 `BadRequestError: property 'reasoning_content' is unsupported`. In multi-turn ADK runs, ADK captures thought parts from turn 1 and passes them on turn 2. Repaired in `GroqModel.generate_content_async` by stripping `thought=True` parts from prior turns in `llm_request.contents` before over-the-wire dispatch, preserving local response events.
+4. **Structured prompt instruction schema (DEC-240):** In live multi-turn schema tool calls, GPT-OSS-120B initially hallucinated generic `id/title/description` fields. Enriched `INSTRUCTION` with explicit `Hypothesis` field names (`cause`, `confidence`, `supporting_evidence`, `contradicting_evidence_ids`) and mandated citing opposing observations in `contradicting_evidence_ids` for conflicting scenarios. Bumped `PROMPT_VERSION` to `phase0-v2`.
+
+### Task 3: Live Google ADK comparison results
+
+All four live scenarios executed and passed with 100% deterministic evidence validation:
+
+1. **Gemini Supported:**
+   - Command: `python -m agents.incident_investigator.spike --live --provider gemini --scenario supported --tier-evidence artifacts/tier-gemini.json --output artifacts/live-gemini-supported.json`
+   - Result: `PASSED`, status `complete`.
+   - Measured calls: 2 model calls, 1 tool call (`get_log_snippets`).
+   - Measured tokens: Call 1: 932 prompt + 12 candidate = 944 total; Call 2: 1369 prompt + 320 candidate = 1689 total. Run total: 2633 tokens.
+   - Measured latency: 11.519s total elapsed (turn 1: 2.063s, turn 2: 6.174s).
+   - Cost: $0 (verified Free tier).
+2. **Gemini Conflicting:**
+   - Command: `python -m agents.incident_investigator.spike --live --provider gemini --scenario conflicting --tier-evidence artifacts/tier-gemini.json --output artifacts/live-gemini-conflicting.json`
+   - Result: `PASSED`, status `inconclusive`.
+   - Measured calls: 2 model calls, 1 tool call (`get_log_snippets`).
+   - Citations: Hypothesis 1 cited `syn_log_1` (supporting) and `syn_log_2` (contradicting); Hypothesis 2 cited `syn_log_2` (supporting) and `syn_log_1` (contradicting).
+   - Measured tokens: Call 1: 932 prompt + 12 candidate = 944 total; Call 2: 1389 prompt + 487 candidate = 1876 total. Run total: 2820 tokens.
+   - Measured latency: 9.785s total elapsed (turn 1: 1.222s, turn 2: 6.931s).
+   - Cost: $0 (verified Free tier).
+3. **Groq Supported:**
+   - Command: `python -m agents.incident_investigator.spike --live --provider groq --scenario supported --tier-evidence artifacts/tier-groq.json --output artifacts/live-groq-supported.json`
+   - Result: `PASSED`, status `complete`.
+   - Measured calls: 2 model calls, 1 tool call (`get_log_snippets`).
+   - Measured tokens: Call 1: 527 prompt + 31 candidate (10 thoughts) = 558 total; Call 2: 853 prompt + 269 candidate (53 thoughts) = 1122 total. Run total: 1680 tokens.
+   - Measured latency: 4.165s total elapsed (turn 1: 2.412s, turn 2: 1.637s).
+   - Cost: $0 (verified Free tier).
+4. **Groq Conflicting:**
+   - Command: `python -m agents.incident_investigator.spike --live --provider groq --scenario conflicting --tier-evidence artifacts/tier-groq.json --output artifacts/live-groq-conflicting.json`
+   - Result: `PASSED`, status `inconclusive`.
+   - Measured calls: 2 model calls, 1 tool call (`get_log_snippets`).
+   - Citations: Generated hypotheses citing `syn_log_1` with contradicting `syn_log_2` and `syn_log_2` with contradicting `syn_log_1`.
+   - Measured tokens: Call 1: 527 prompt + 31 candidate (10 thoughts) = 558 total; Call 2: 877 prompt + 648 candidate (164 thoughts) = 1525 total. Run total: 2083 tokens.
+   - Measured latency: 2.958s total elapsed (turn 1: 1.002s, turn 2: 1.842s).
+   - Cost: $0 (verified Free tier).
+
+### Task 4: Comparison summary table & recommendation
+
+| Check | Gemini (`gemini-3.5-flash`) | Groq (`openai/gpt-oss-120b`) |
+|---|---|---|
+| API key detected | Pass (53 chars, hidden) | Pass (56 chars, hidden) |
+| Free account tier verified | Pass (developer confirmed & API quota confirmed) | Pass (developer confirmed) |
+| Model available | Pass (3.8-flash 429 quota exhausted; 3.5-flash available) | Pass (accessible in models endpoint) |
+| Direct API generation | Pass (1.748s, 61 tokens) | Pass (0.863s, 93 tokens) |
+| ADK tool calling | Pass (`get_log_snippets` called & consumed) | Pass (`get_log_snippets` called & consumed) |
+| Supported scenario | Pass (`complete`, verified citations) | Pass (`complete`, verified citations) |
+| Conflicting scenario | Pass (`inconclusive`, supporting + contradicting citations) | Pass (`inconclusive`, supporting + contradicting citations) |
+| Tokens used (supported / conflicting) | 2,633 / 2,820 tokens | 1,680 / 2,083 tokens |
+| Latency (supported / conflicting) | 11.519s / 9.785s | 4.165s / 2.958s |
+| Billing status | Verified Free ($0 billed spend) | Verified Free ($0 billed spend) |
+
+**Recommendation:**
+- Keep Gemini as provisional primary candidate for ADK continuity (official native SDK/ADK connector, native count-tokens integration, fewer protocol translation layers).
+- Groq is a verified functional secondary comparison candidate. Groq demonstrated lower end-to-end latency (2.96–4.17s vs 9.79–11.52s) on these synthetic scenarios, but requires maintaining the LiteLLM translation layer, `reasoning_content` sanitization, and manual schema capability restrictions.
+- Phase 1 remains **LOCKED** until developer authorization.
