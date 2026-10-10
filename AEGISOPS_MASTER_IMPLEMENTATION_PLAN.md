@@ -926,6 +926,8 @@ AegisOps/
 
 **Exit gate:** A user can open dev UI; basic API and DB health checks pass; ADK mocked-tool test is reproducible; current model/ADK decisions recorded. No real incident claim yet.
 
+**Developer gate clarification, 2026-10-10 (DEC-231):** Foundation implementation and local verification are complete and hosted CI is verified. Live-model verification is a separate mandatory outstanding gate before Phase 1 formally unlocks. This explicitly approved clarification supplements the foundation exit gate above; Phase 1 remains locked and requires developer authorization after the live gate.
+
 ### Week 2 — Phase 1: real telemetry vertical slice (~45–60 h)
 
 **Objectives**

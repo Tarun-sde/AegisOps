@@ -1,7 +1,7 @@
 # ADR-018 — Separate framework proof from live model proof
 
 - **Date:** 2026-10-10
-- **Status:** IMPLEMENTED — UNVERIFIED for live Gemini; offline dispatch verified separately.
+- **Status:** Foundation/offline dispatch VERIFIED; live Gemini/Groq gate BLOCKED by account-tier verification. Gate interpretation clarified by DEC-231 below; historical decision retained.
 - **Owner:** Developer; expands ADR-001/003/012/015 without granting new capabilities.
 - **Master-plan references:** §§4.3–4.8, 17 P0, 18 Day 2.
 - **Problem and constraints:** Prove ADK can call a read-only tool and produce a validated typed result. No Gemini key or authorized spend was initially available. Logs and model responses are untrusted.
@@ -14,3 +14,9 @@
 - **Interview explanation:** “The spike distinguishes three facts: ADK dispatched a tool, the output passed a schema, and every cited ID came from authorized tool results. Those are testable without claiming that a fake model proved Gemini's quality. A separate live experiment must validate the provider, and later held-out cases must measure diagnosis accuracy.”
 - **Follow-ups:** Can a real citation support a wrong claim? Yes. Does the model choose the tenant? No; the tool accepts no scope arguments. Are approvals implemented? No, only a typed envelope; no executor exists. Can local tests unlock Phase 1? Only when all gates, including live model and hosted CI evidence, pass.
 - **Related decisions:** DEC-215–219, DEC-224; ADR-001/002/003/012/015.
+
+## Developer clarification — 2026-10-10 (DEC-231)
+
+Foundation implementation and local verification are complete, with hosted CI verified for b0014ab9. Live-model verification is a **separate mandatory outstanding gate before Phase 1 is formally unlocked**. Phase 1 remains LOCKED and unauthorized. This resolves the previous report wording without restarting foundation work or deleting history.
+
+Both keys are now present. The prior absence/budget description above is historical. Live smoke tests are free-tier-only after verification of each exact key-owning account; paid requests are prohibited. ADR-020 and DEC-232–236 extend the same single-agent synthetic spike for Groq. No automatic provider fallback or real telemetry is introduced. See the comparison report for actual verification evidence and blockers.

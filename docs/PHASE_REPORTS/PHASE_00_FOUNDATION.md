@@ -1,6 +1,6 @@
 # Phase 0 — Foundation, Contracts and ADK Spike
 
-**Current status:** `VERIFIED — COMPLETE`. **Date:** 2026-10-10.  
+**Current status:** `FOUNDATION COMPLETE — LOCAL + HOSTED CI VERIFIED; LIVE-MODEL GATE OUTSTANDING; PHASE 1 LOCKED` (DEC-231). **Date:** 2026-10-10.
 **Master-plan source:** §§17 (Week 1), 18 (first 72 hours), 24.
 
 ## Delivered deliverables
@@ -29,7 +29,7 @@
 | Isolated Compose migration round-trip | `docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify run --rm verify` | `PASSED` (upgrade head -> constraint checks -> downgrade base -> upgrade head) |
 | CI configuration | `.github/workflows/ci.yml` | `VERIFIED` (ready for hosted run upon git push) |
 
-## Honest boundary report
+## Historical foundation boundary report (before DEC-231 clarification)
 
 1. **Google ADK vs Live Gemini:**
    - Real Google ADK 2.11.0 framework dispatch, runner, session service, and tool calling verified offline with deterministic test double.
@@ -41,4 +41,12 @@
 4. **Remediation:**
    - Proposal contracts forbid execution; production environment rejected by contract validator. Staging execution deferred to Phase 7.
 
-**Phase 0 is complete. Phase 1 is unlocked pending developer authorization.**
+**Historical conclusion, superseded by DEC-231:** Phase 0 was recorded complete with Phase 1 unlocked pending authorization. Current interpretation: foundation complete, live-model gate mandatory and outstanding, Phase 1 LOCKED.
+
+## Subsequent model-comparison preflight — 2026-10-10
+
+DEC-230 records updated facts in [PHASE_00_MODEL_COMPARISON.md](PHASE_00_MODEL_COMPARISON.md): both keys are configured without disclosure; commit `b0014ab9ad39e4657f20c4f771d71c259067653e` is on remote main and its hosted CI passed; all 36 offline unit tests passed again outside the sandbox. Live inference remains NOT RUN pending actual account free-tier confirmation. ADR-018's stricter phase-unlock statement conflicts with the completion statement above; the conflict was reported and implementation paused pending clarification. Historical gate claims are preserved, not silently reconciled. Phase 1 remains unauthorized and untouched.
+
+## Developer clarification — DEC-231
+
+The developer resolved the earlier conflict: foundation implementation and local verification are complete; hosted CI for commit b0014ab9 is confirmed green. Live-model verification is a separate outstanding mandatory gate before Phase 1 is formally unlocked. The historical boundary report above is retained for provenance. Current keys are present, but actual provider account tiers are unverified; no live inference was authorized to proceed. See the [current comparison report](PHASE_00_MODEL_COMPARISON.md). No Phase 1 work was started.

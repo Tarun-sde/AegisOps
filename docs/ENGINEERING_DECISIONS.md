@@ -1214,3 +1214,111 @@ Do not write weekly summaries with fabricated project experiences.
 - [ADR-018](ADR/ADR-018-adk-spike-boundary.md): independent framework/live-model evidence.
 - [ADR-019](ADR/ADR-019-auth-spike.md): auth exploration without a fake login; provider choice open.
 
+### DEC-230 — Free-only comparison preflight and evidence boundaries
+- Date (UTC): 2026-10-10
+- Phase / work item: Phase 0 live Gemini/Groq comparison requested by developer
+- Scope: `docs/PHASE_REPORTS/PHASE_00_MODEL_COMPARISON.md`; preflight only, no runtime changes
+- Status: VERIFIED for credential presence and pushed/hosted-CI observations; BLOCKED for account eligibility and live comparison
+- Trigger / problem: Both local keys are now configured, but the user authorizes no paid requests; previous credential-absence descriptions are historical. Phase 0 gate documents also disagree.
+- Constraints: Never print key values; no billing changes, paid inference, Phase 1 work, automatic fallback, or multi-agent orchestration. Follow AGENTS.md conflict reporting.
+- Selected choice: Check key presence without values, verify remote SHA and hosted run via read-only GitHub operations, and request account-tier evidence before inference. Pause implementation pending reconciliation of ADR-018 versus project/phase status. Preserve all historical decision entries. Report the two models as NOT RUN with no observed winner.
+- Alternatives: Assuming a configured key is free-tier eligible rejected because paid projects can also have keys; setting positive spend merely to satisfy the old guard rejected because it contradicts the user's $0 constraint; claiming local CI proves hosted success rejected. Provider integration alternatives are researched but not selected.
+- Why selected: Separates credential presence, project billing eligibility, model behavior, and CI evidence. Prevents an unverified free-tier assumption from authorizing spend.
+- Costs / failure modes: Blocks the requested live comparison until account evidence and the document conflict are resolved. No model latency, tokens, quality, or security-verified Groq integration can yet be claimed.
+- Evidence level: TESTED-LOCAL, DOC-CONFIRMED, and observed GitHub API/remote refs; account eligibility UNVERIFIED
+- Evidence: Both `.env` keys nonempty and file ignored; `git ls-remote origin HEAD refs/heads/main` matches `b0014ab9ad39e4657f20c4f771d71c259067653e`; GitHub Actions API returned completed/success for [run 38043157853](https://github.com/Tarun-sde/AegisOps/actions/runs/38043157853). Sources and per-provider NOT RUN ledger in the comparison report.
+- When to revisit: Developer confirms exact account tiers and gate interpretation; then choose/pin/audit the smallest supported adapter and run both fixtures under bounded free-only authorization.
+- Interview answer: We verified that credentials existed without exposing them, and verified hosted CI against the exact pushed commit. We did not confuse public free-tier pricing with the actual account's billing state, or offline ADK dispatch with a live model pass. The model comparison remains open.
+- Related ADR/DEC: ADR-001/002/003/012/015/018; DEC-217–219/221/224/229
+
+### BUG-20261010-004 — Preflight network and Phase 0 gate discrepancies
+- Symptom / reproduction: Sandboxed `git ls-remote origin HEAD refs/heads/main` failed with `Could not resolve host: github.com`; ADR-018 requires live-model evidence to unlock Phase 1 while the project state and Phase 0 report already mark it unlocked.
+- Hypotheses: Restricted network versus missing remote; stale ADR follow-up versus incorrect phase completion. No runtime model failure observed.
+- Cause / uncertainty: Authorized network escalation made the same Git command succeed, confirming access restrictions affected the initial check. The intended gate interpretation is pending developer clarification.
+- Repair: Read-only remote/API checks verified push and hosted CI. Record the document conflict and pause implementation; do not silently rewrite history or billing guards.
+- Verification / prevention: Exact SHA and run URL in DEC-230 and the comparison report. No code regression test required for these read-only observations. Local unit-test results will be recorded separately.
+- Lesson: Network failures are not CI failures; a documented complete foundation is not evidence of live model compatibility. No live-model or production claim follows from this preflight.
+
+### DEC-230 verification addendum
+- Existing offline suite: sandbox invocation stalled after one test and was interrupted (exit 130). Same suite outside sandbox with `timeout 60s .venv/bin/python -m pytest -q -m 'not integration'`: **36 passed, 2 deselected, 4 warnings in 1.33s**, exit 0. Reuses BUG-20261010-003's environment diagnostic; exact sandbox cause remains unconfirmed. `git diff --check` passed.
+- No new ADR or runtime change. Governing architecture/security decisions remain ADR-001/002/003/012/015/018; spike behavior remains DEC-217–219/224/229; hosted-CI evidence follows DEC-221. No measured model preference is supported.
+
+### DEC-231 — Developer clarification of the Phase 0 gate
+- Date: 2026-10-10
+- Scope: PROJECT_STATE, ADR-018, Phase 0 reports, master-plan clarification
+- Status: ACCEPTED — developer explicitly authorized
+- Context / constraints: Foundation/local verification and hosted CI are complete; live verification is still mandatory before formally unlocking Phase 1.
+- Choice / reason: Separate foundation completion from the outstanding live-model gate; mark Phase 1 LOCKED. Preserve previous statements as dated history and append this clarification.
+- Alternatives: Leaving “unlocked” active contradicts the developer; restarting foundation wastes verified work.
+- Downside / revisit: Phase 1 remains blocked until live evidence and explicit authorization exist; revisit when both occur.
+- Evidence: Developer Decision 2 in this task; existing hosted run 38043157853.
+- Related: ADR-018, DEC-203/221/229/230. No architecture change.
+
+### DEC-232 — Pin the supported ADK LiteLLM bridge for Groq
+- Date: 2026-10-10
+- Scope: pyproject.toml, uv.lock, groq_adapter.py, TECH_STACK_LOCK; ADR-020
+- Status: ACCEPTED — DESIGN ONLY pending audit and tests
+- Context / constraints: A second provider needs protocol conversion without another agent runtime; ADK remains 2.11.0.
+- Choice / reason: Pin LiteLLM 1.104.2 (official PyPI metadata, Python >=3.10,<3.15, satisfies ADK >=1.84). Use ADK's existing LiteLlm; no proxy/extras/router. Review wheel hash/contents and audit the resolved set before use. Pin existing dotenv 1.2.4 in the agent group for explicit CLI env loading.
+- Alternatives: Custom HTTP/BaseLlm conversion creates protocol code to own; direct Groq SDK still needs ADK conversion; compromised LiteLLM 1.82.7/1.82.8 are excluded.
+- Downside / revisit: Additional transitive dependencies and ongoing supply-chain exposure; a clean audit is not proof of absence of vulnerabilities. Revisit if audit or compatibility fails.
+- Evidence: https://adk.dev/agents/models/litellm/ ; https://docs.litellm.ai/docs/providers/groq ; PyPI 1.104.2 metadata checked 2026-10-10. Installation/test evidence pending.
+- Related: ADR-001/003/017/020, DEC-054/173/217/230.
+
+### DEC-233 — Free-tier evidence is an operator boundary, not a pricing guess
+- Date: 2026-10-10
+- Scope: spike.py live preflight and tests; comparison report
+- Status: ACCEPTED — DESIGN ONLY pending tests
+- Context / constraints: No authenticated account console or cloud credentials are available; only free-only inference is authorized.
+- Choice / reason: Keep each provider blocked until a local, operator-reviewed tier evidence record identifies the provider, Free tier, exact key SHA-256, account/project reference, console source and verification timestamp. Require <=1 hour freshness and reject future timestamps, paid/unknown tiers, key/provider mismatch and nonzero spend. This records manual account verification; it does not query or prove billing automatically. Never manufacture a record from key presence or model-list responses.
+- Alternatives: A bare environment Boolean or public pricing cannot establish account eligibility; attempting inference to discover billing violates the prerequisite; building a cloud billing/OAuth service is out of scope.
+- Downside / revisit: Trusts truthful local operator review and no billing changes during a run; the hour window is a conservative unbenchmarked default. Reverify immediately after key/account/billing changes; use a provider-enforced billing control if one becomes available.
+- Evidence: Official Google billing and Groq billing/rate-limit documentation; current browser inventory empty, gcloud/ADC absent. Tests pending.
+- Related: DEC-198/219/224/229/230. Supersedes the old positive-spend requirement for this spike; paid mode is disabled.
+
+### DEC-234 — Reuse the spike and retain failure measurements
+- Date: 2026-10-10
+- Scope: spike.py, Groq adapter, offline tests, Makefile
+- Status: ACCEPTED — DESIGN ONLY pending tests
+- Context / constraints: Compare identical synthetic scenarios without switching providers automatically, extra orchestration or paid retries.
+- Choice / reason: Explicit provider selection (Gemini default) and allowlisted configurable model IDs; reuse ADK Runner, prompt, tools, schema and ledger. Retain 4 calls/run, 2048 output tokens/call, 180s run and 30s HTTP limits, no retries. Gemini retains counted input <=16000; Groq caps serialized ADK request bytes at 16000 to avoid an additional tokenizer download (not represented as an exact token count). Record per-response timing/usage, partial events on failure, sanitized exception class/HTTP status, and null for unknown usage/cost. Require supported=complete and conflicting=inconclusive with both support and contradiction citations.
+- Alternatives: Separate agent loops would bias the comparison; silently retrying/falling back obscures errors; zero-filled unknown usage fabricates measurement.
+- Downside / revisit: Small samples cannot establish production quality/latency distributions. Bytes are conservative context control, not a provider token counter. Revisit for live incompatibility or larger evaluation scope.
+- Evidence: Existing DEC-218/219/224 and pinned ADK source; regression and bridge tests pending.
+- Related: ADR-012/018/020; DEC-217/221/233.
+
+### DEC-235 — Restrict the Groq bridge to the documented surface
+- Date: 2026-10-10
+- Scope: groq_adapter.py and boundary tests
+- Status: ACCEPTED — DESIGN ONLY pending tests
+- Context / constraints: Groq documents that structured-output mode cannot be combined with tool use; generic LiteLlm capability detection can advertise that combination.
+- Choice / reason: Declare combined native schema/tools unsupported so ADK uses its existing set_model_response tool. Fixed HTTPS Groq endpoint, explicit key, no provider built-ins, low reasoning effort, no retries/fallback, bundled cost map, telemetry/debug output disabled. Keep Gemini minimal thinking separately; these are provider-specific settings, not equivalent reasoning budgets.
+- Alternatives: Forcing native schema+tools contradicts vendor docs; adding a second formatting agent changes topology; remote cost-map downloads introduce unrelated network activity.
+- Downside / revisit: Small subclass depends on pinned ADK capability API; tool-produced JSON still needs validation. Revisit when Groq documents and tests combined support.
+- Evidence: https://console.groq.com/docs/structured-outputs (tool-use limitation); installed ADK BaseLlm.capabilities and LiteLlm._resolve_capabilities; tests pending.
+- Related: ADR-018/020; DEC-224/232/234.
+
+### DEC-236 — Resolved dependency and verification scope
+- Date: 2026-10-10
+- Scope: uv.lock, Makefile, comparison tests/report
+- Status: IMPLEMENTED — verification in progress
+- Context / constraints: LiteLLM requires filelock <4; the existing environment had 4.1.0. The connector adds 31 packages and replaces filelock with 3.32.7.
+- Choice / reason: Accept the resolver's required filelock downgrade and exact transitive pins, preserving all other existing versions. Audit the entire exported lock before installation, install wheels only, and extend existing mypy/pytest checks to the new modules. Verify HTTP payload conversion, fixed endpoint, output cap, schema-tool fallback, rejected tier proofs, no retries, evidence failures and sanitized errors with synthetic HTTP doubles.
+- Alternatives: Silently changing filelock rejected; waiving dependency constraints rejected; live tests without account evidence rejected. Other filelock versions were not benchmarked.
+- Downside / revisit: Larger dependency graph; audits and mocks do not certify supply-chain security or live API correctness. Revisit when bridge constraints change or any security/compatibility finding appears.
+- Evidence: PyPI wheel SHA-256 416c3538ea78b08d637ec45564a919232aa2093e73adb9dd7752f7cff2ec585e matched downloaded Linux wheel; no .pth/sitecustomize/usercustomize files. Exported resolved set pip-audit: no known vulnerabilities. First full bridge run: 52 passed, 2 failed; fixture correction: 54 passed, 2 deselected in 4.63s. Final expanded checks pending.
+- Related: ADR-017/020, DEC-232–235.
+
+### BUG-20261010-005 — Groq mock response omitted documented service tier
+- Symptom / reproduction: First ADK→LiteLLM→mock-HTTP run returned APIConnectionError: ModelResponse lacked service_tier; 2 scenario tests failed while 52 passed.
+- Hypotheses: Adapter conversion defect versus incomplete mock. Installed LiteLLM Groq transformation reads the response field; official Groq API reference documents service_tier in the response.
+- Cause / repair: The synthetic response omitted service_tier; add documented on_demand to the fixture. No vendor code monkeypatch or live request was used. If a real response omits the field, current bridge fails safely; live compatibility remains unverified.
+- Verification: Both full ADK/HTTP scenario tests then passed, 54 tests total. HTTP 401/429/500 tests confirm one request and sanitized failure artifacts. Mypy also required a typed subclass constructor and direct pinned capability import; those fixes alter no wire behavior.
+- Lesson: A plausible OpenAI-shaped mock is not automatically a faithful Groq fixture; compare vendor fields and test conversion at the HTTP boundary.
+
+### DEC-231–236 verification and recommendation addendum
+- Status: DEC-231 documentation reconciled under explicit developer authority. ADR-020 / DEC-232–236 IMPLEMENTED and VERIFIED OFFLINE; live provider compatibility remains BLOCKED, not VERIFIED.
+- Evidence: Final suite **59 passed, 2 deselected, 132 warnings in 5.65s**; Ruff clean/19 formatted files; mypy clean/7 source files; installed and pre-install dependency audits report no known vulnerabilities. Both original deterministic CLI scenarios pass. All four real-key CLI preflights without evidence exit 1 with zero inference/tool calls. `git diff --check` passed after whitespace correction. Details and exact commands: PHASE_00_MODEL_COMPARISON.md.
+- Actual account verification: no connected browser, gcloud or Google ADC; both exact key-owning tiers remain UNVERIFIED. No real tier record was manufactured. Paid requests, billing activation and Phase 1 work did not occur.
+- Recommendation: Gemini remains provisional primary and Groq secondary by developer instruction. There is no observed live model winner. The bridge passes two HTTP-mocked ADK tool trajectories with structured output/citations; those are not real model successes. Native Gemini integration has fewer translation dependencies; Groq's supported bridge adds dependency/security maintenance and a documented schema/tools capability correction. No measured speed/cost/quality advantage is claimed.
+- Decisions reused: ADR-001/002/003/012/015/017/018; DEC-217–219/221/224/229/230. Paid-mode requirement of DEC-224/229 is superseded for this spike by DEC-233; historical entries retained. No automatic provider switching or architecture change.

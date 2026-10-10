@@ -1,9 +1,10 @@
-"""Phase 0 only: real ADK dispatch, synthetic evidence, optional live Gemini."""
+"""Phase 0: real ADK dispatch, synthetic evidence, opt-in free-only providers."""
 
 import argparse
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import time
 from collections.abc import AsyncGenerator
@@ -18,6 +19,7 @@ from google import genai
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.run_config import RunConfig
+from google.adk.models.base_llm import BaseLlm
 from google.adk.models.google_llm import Gemini
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
@@ -25,6 +27,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
+from agents.incident_investigator.free_tier import FreeTierEvidence, Provider, require_free_tier
 from apps.api.app.schemas import Evidence, Hypothesis, InvestigationResult, Scope, validate_evidence
 
 MODEL = "gemini-3.8-flash"
@@ -144,17 +147,34 @@ class OfflineModel(Gemini):
 
 
 class RequestBudget:
-    def __init__(self, client: genai.Client | None, max_usd: Decimal) -> None:
+    def __init__(
+        self,
+        client: genai.Client | None,
+        max_usd: Decimal,
+        *,
+        evidence: FreeTierEvidence | None = None,
+        key: str = "",
+    ) -> None:
         self.client = client
         self.max_usd = max_usd
         self.reserved_usd = Decimal(0)
         self.calls = 0
+        self.evidence = evidence
+        self.key = key
+        self.responses: list[dict[str, Any]] = []
+        self.started = 0.0
 
     async def before_model(
         self, callback_context: CallbackContext, llm_request: LlmRequest
     ) -> None:
         if self.calls >= MAX_CALLS:
             raise ValueError("Model request budget exhausted")
+        if self.evidence is not None:
+            self.evidence.check(self.evidence.provider, self.key)
+            if self.evidence.provider == "groq":
+                request_bytes = len(llm_request.model_dump_json(exclude={"tools_dict"}).encode())
+                if request_bytes > MAX_INPUT_TOKENS:
+                    raise ValueError("Groq serialized input byte budget exceeded")
         if self.client is not None:
             count = await self.client.aio.models.count_tokens(
                 model=MODEL,
@@ -173,41 +193,79 @@ class RequestBudget:
             reservation = (
                 Decimal(tokens) * Decimal("0.75") + Decimal(2048) * Decimal("3.75")
             ) / 1000000
+            if self.evidence is not None:
+                reservation = Decimal(0)
             if self.reserved_usd + reservation > self.max_usd:
                 raise ValueError("Model cost reservation exceeds configured ceiling")
             self.reserved_usd += reservation
         self.calls += 1
+        self.started = time.monotonic()
+
+    async def after_model(
+        self, callback_context: CallbackContext, llm_response: LlmResponse
+    ) -> None:
+        self.responses.append(
+            {
+                "elapsed_seconds": round(time.monotonic() - self.started, 3),
+                "model_version": llm_response.model_version,
+                "usage": llm_response.usage_metadata.model_dump(mode="json")
+                if llm_response.usage_metadata
+                else None,
+            }
+        )
 
 
 async def run_spike(
-    scenario: Scenario = "supported", *, live: bool = False, max_usd: Decimal = Decimal(0)
+    scenario: Scenario = "supported",
+    *,
+    live: bool = False,
+    max_usd: Decimal = Decimal(0),
+    provider: Provider = "gemini",
+    tier_evidence: Path | None = None,
 ) -> dict[str, Any]:
-    configured_model = os.environ.get("AEGISOPS_AGENT_MODEL", MODEL)
+    if provider not in ("gemini", "groq") or scenario not in ("supported", "conflicting"):
+        raise ValueError("Unsupported provider or scenario")
+    configured_model = (
+        os.environ.get("AEGISOPS_AGENT_MODEL", MODEL)
+        if provider == "gemini"
+        else (os.environ.get("AEGISOPS_GROQ_MODEL", "openai/gpt-oss-120b"))
+    )
     client: genai.Client | None = None
+    evidence = None
+    key = ""
+    model: BaseLlm = OfflineModel(model=MODEL, scenario=scenario)
     if live:
-        if not os.environ.get("GOOGLE_API_KEY"):
-            raise ValueError("GOOGLE_API_KEY missing; live Gemini gate is BLOCKED")
-        if configured_model != MODEL:
+        key = os.environ.get("GOOGLE_API_KEY" if provider == "gemini" else "GROQ_API_KEY", "")
+        if not key:
+            raise ValueError("Provider API key missing; live gate is BLOCKED")
+        expected_model = MODEL if provider == "gemini" else "openai/gpt-oss-120b"
+        if configured_model != expected_model:
             raise ValueError(
                 "Revalidate model support and pricing before changing the live candidate"
             )
         if datetime.now(UTC).date().isoformat() > "2026-12-31":
             raise ValueError("Pricing evidence expired; revalidate before live execution")
-        if not max_usd.is_finite() or not Decimal(0) < max_usd <= Decimal("0.10"):
-            raise ValueError("Set an authorized live ceiling above zero and at most USD 0.10")
-        client = genai.Client(
-            api_key=os.environ["GOOGLE_API_KEY"],
-            vertexai=False,
-            http_options=types.HttpOptions(
-                timeout=30000, retry_options=types.HttpRetryOptions(attempts=1)
-            ),
-        )
+        if not max_usd.is_finite() or max_usd != 0:
+            raise ValueError("Paid requests disabled: live spending ceiling must be zero")
+        evidence = require_free_tier(tier_evidence, provider, key)
+        if provider == "gemini":
+            client = genai.Client(
+                api_key=key,
+                vertexai=False,
+                http_options=types.HttpOptions(
+                    base_url="https://generativelanguage.googleapis.com",
+                    timeout=30000,
+                    retry_options=types.HttpRetryOptions(attempts=1),
+                ),
+            )
+            model = Gemini(model=configured_model, client=client)
+        else:
+            from agents.incident_investigator.groq_adapter import create_groq_model
+
+            model = create_groq_model(key)
     scope = Scope(organization_id=UUID(int=1), service_id=UUID(int=2), run_id=uuid4())
     tool = SyntheticTool(scope, scenario)
-    budget = RequestBudget(client, max_usd)
-    model = (
-        Gemini(model=MODEL, client=client) if live else OfflineModel(model=MODEL, scenario=scenario)
-    )
+    budget = RequestBudget(client, max_usd, evidence=evidence, key=key)
     agent = LlmAgent(
         name="incident_investigator",
         model=model,
@@ -215,12 +273,15 @@ async def run_spike(
         tools=[tool.get_log_snippets],
         output_schema=InvestigationResult,
         before_model_callback=budget.before_model,
+        after_model_callback=budget.after_model,
         generate_content_config=types.GenerateContentConfig(
             temperature=0,
             max_output_tokens=MAX_OUTPUT_TOKENS,
             thinking_config=types.ThinkingConfig(
                 thinking_level=types.ThinkingLevel.MINIMAL, include_thoughts=False
-            ),
+            )
+            if provider == "gemini"
+            else None,
         ),
     )
     sessions = InMemorySessionService()
@@ -228,6 +289,8 @@ async def run_spike(
     runner = Runner(agent=agent, app_name="aegisops_spike", session_service=sessions)
     events: list[dict[str, Any]] = []
     final_text: str | None = None
+    result = None
+    error: dict[str, Any] | None = None
     started = time.monotonic()
     try:
         async with asyncio.timeout(TIMEOUT_SECONDS):
@@ -263,52 +326,95 @@ async def run_spike(
             raise ValueError("Spike did not return both tool evidence and a final response")
         result = InvestigationResult.model_validate_json(final_text)
         validate_evidence(result, scope=scope, returned_ledger=tool.ledger)
-        if scenario == "conflicting" and result.status != "inconclusive":
-            raise ValueError("Conflicting fixture did not produce an inconclusive result")
-        return {
-            "mode": "live_gemini_synthetic_tool" if live else "offline_fake_model_synthetic_tool",
-            "adk_version": version("google-adk"),
-            "model_id": configured_model if live else "deterministic-test-double",
-            "prompt_version": PROMPT_VERSION,
-            "prompt_sha256": hashlib.sha256(INSTRUCTION.encode()).hexdigest(),
-            "fixture_sha256": hashlib.sha256(
-                json.dumps([item.redacted_snippet for item in tool.ledger.values()]).encode()
-            ).hexdigest(),
-            "generation_config": {
-                "temperature": 0,
-                "max_output_tokens": MAX_OUTPUT_TOKENS,
-                "thinking_level": "minimal",
-            },
-            "scenario": scenario,
-            "scope": scope.model_dump(mode="json"),
-            "elapsed_seconds": round(time.monotonic() - started, 3),
-            "model_calls": budget.calls,
-            "tool_calls": tool.calls,
-            "reserved_usd": str(budget.reserved_usd),
-            "actual_billed_usd": None,
-            "events": events,
-            "returned_evidence": [item.model_dump(mode="json") for item in tool.ledger.values()],
-            "result": result.model_dump(mode="json"),
+        if result.status != ("complete" if scenario == "supported" else "inconclusive"):
+            raise ValueError("Fixture did not produce its expected status")
+        if scenario == "conflicting" and not (
+            any(h.supporting_evidence for h in result.hypotheses)
+            and any(h.contradicting_evidence_ids for h in result.hypotheses)
+        ):
+            raise ValueError("Conflicting fixture must cite supporting and contradicting evidence")
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", getattr(exc, "code", None))
+        error = {
+            "type": type(exc).__name__,
+            "http_status": status_code if isinstance(status_code, int) else None,
         }
     finally:
-        await runner.close()
+        try:
+            await runner.close()
+        except Exception as exc:
+            error = error or {"type": type(exc).__name__, "http_status": None}
         if client is not None:
-            await client.aio.aclose()
-            client.close()
+            try:
+                await client.aio.aclose()
+                client.close()
+            except Exception as exc:
+                error = error or {"type": type(exc).__name__, "http_status": None}
+    return {
+        "status": "FAILED" if error else "PASSED",
+        "error": error,
+        "provider": provider if live else "offline",
+        "mode": f"live_{provider}_synthetic_tool" if live else "offline_fake_model_synthetic_tool",
+        "adk_version": version("google-adk"),
+        "model_id": configured_model if live else "deterministic-test-double",
+        "prompt_version": PROMPT_VERSION,
+        "prompt_sha256": hashlib.sha256(INSTRUCTION.encode()).hexdigest(),
+        "fixture_sha256": hashlib.sha256(
+            json.dumps([item.redacted_snippet for item in tool.ledger.values()]).encode()
+        ).hexdigest(),
+        "generation_config": {
+            "temperature": 0,
+            "max_output_tokens": MAX_OUTPUT_TOKENS,
+            "thinking_level": "minimal" if provider == "gemini" else None,
+            "reasoning_effort": "low" if provider == "groq" else None,
+        },
+        "scenario": scenario,
+        "scope": scope.model_dump(mode="json"),
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "model_calls": budget.calls,
+        "tool_calls": tool.calls,
+        "reserved_usd": str(budget.reserved_usd),
+        "actual_billed_usd": None,
+        "estimated_cost_usd": "0" if evidence is not None and error is None else None,
+        "cost_basis": "operator-verified free tier" if evidence else "offline test double",
+        "model_responses": budget.responses,
+        "events": events,
+        "returned_evidence": [item.model_dump(mode="json") for item in tool.ledger.values()],
+        "result": result.model_dump(mode="json") if result is not None else None,
+    }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--live", action="store_true")
+    parser.add_argument("--provider", choices=["gemini", "groq"], default="gemini")
+    parser.add_argument("--tier-evidence", type=Path)
     parser.add_argument("--scenario", choices=["supported", "conflicting"], default="supported")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    # Provider logs may contain request details; the CLI emits only sanitized reports.
+    logging.disable(logging.CRITICAL)
+    if args.live:
+        from dotenv import dotenv_values
+
+        values = dotenv_values(".env", interpolate=False)
+        for name in (
+            "GOOGLE_API_KEY",
+            "GROQ_API_KEY",
+            "AEGISOPS_AGENT_MODEL",
+            "AEGISOPS_GROQ_MODEL",
+            "AEGISOPS_SPIKE_MAX_USD",
+        ):
+            if values.get(name):
+                os.environ.setdefault(name, values[name] or "")
     try:
         report = asyncio.run(
             run_spike(
                 args.scenario,
                 live=args.live,
                 max_usd=Decimal(os.environ.get("AEGISOPS_SPIKE_MAX_USD", "0")),
+                provider=args.provider,
+                tier_evidence=args.tier_evidence,
             )
         )
     except Exception as exc:
@@ -317,6 +423,16 @@ def main() -> None:
             "status": "BLOCKED_OR_FAILED",
             "error_type": type(exc).__name__,
             "live": args.live,
+            "provider": args.provider,
+            "scenario": args.scenario,
+            "model_id": os.environ.get("AEGISOPS_AGENT_MODEL", MODEL)
+            if args.provider == "gemini"
+            else os.environ.get("AEGISOPS_GROQ_MODEL", "openai/gpt-oss-120b"),
+            "model_calls": 0,
+            "tool_calls": 0,
+            "usage": None,
+            "elapsed_seconds": None,
+            "estimated_cost_usd": "0",
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2) + "\n")
@@ -328,6 +444,8 @@ def main() -> None:
     print(
         f"{report['mode']}: {report['model_calls']} model calls, {report['tool_calls']} tool calls"
     )
+    if report["status"] != "PASSED":
+        raise SystemExit("Spike failed; see sanitized report")
 
 
 if __name__ == "__main__":

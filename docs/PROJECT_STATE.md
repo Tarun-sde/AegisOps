@@ -1,8 +1,8 @@
 # AegisOps — Current Project State
 
-**Updated:** 2026-10-10  
-**Current phase:** Phase 0 (Foundation, Contracts, and ADK Spike)  
-**Overall state:** `PHASE 0 VERIFIED — PHASE 1 UNLOCKED (AWAITING DEVELOPER AUTHORIZATION)`  
+**Updated:** 2026-10-10
+**Current phase:** Phase 0 (Foundation, Contracts, and ADK Spike)
+**Overall state:** `PHASE 0 FOUNDATION COMPLETE — LOCAL + HOSTED CI VERIFIED; LIVE-MODEL GATE OUTSTANDING; PHASE 1 LOCKED`
 **Source:** `../AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` sections 16–18 and 24; `docs/PHASE_REPORTS/PHASE_00_FOUNDATION.md`.
 
 ## Implemented and verified in Phase 0
@@ -44,10 +44,14 @@
 
 ## Untested / Blocked / Deferred
 
-- [ ] **Live Gemini API call:** `BLOCKED BY CREDENTIALS / NOT RUN`.
-  - `GOOGLE_API_KEY` is not configured in local environment or `.env`.
-  - Authorized paid spend is currently $0.
-  - Offline ADK framework spike is fully verified; live model verification remains a reproducible one-command test (`python -m agents.incident_investigator.spike --live --output ...`) when authorized credentials and budget are provided.
+**Developer clarification (DEC-231):** Foundation implementation/local verification are complete and hosted CI is verified for the original Phase 0 commit. Live-model verification is a separate mandatory gate before Phase 1 can formally unlock. Earlier credential-absence/unlocked statements are preserved in the journal and dated report history; they are not current status.
+
+- [ ] **Live Gemini/Groq model verification:** `BLOCKED — ACCOUNT TIER UNVERIFIED / NOT RUN`.
+  - Both keys exist locally and `.env` is ignored; values were not displayed.
+  - No authenticated provider browser, gcloud executable, or Google ADC file is available. Key ownership and account Free tier cannot be verified from public pricing or key presence.
+  - Paid spend remains $0; the CLI now rejects nonzero ceilings and requires fresh key-bound operator tier evidence. No evidence record has been created for either real key.
+  - Gemini is provisional primary; Groq is secondary. The same ADK spike has an isolated pinned LiteLLM bridge with offline HTTP tests. No automatic switching.
+  - [Comparison report](PHASE_REPORTS/PHASE_00_MODEL_COMPARISON.md) records exact tests, provider blockers, dependency audit and GitHub evidence.
 - [ ] **Real telemetry and alert ingestion:** `DEFERRED TO PHASE 1`.
   - Per developer instruction ("CRITICAL: DO NOT START PHASE 1"), Prometheus, Loki, Tempo, Alertmanager webhooks, and sample app instrumentation are deferred to Phase 1.
 - [ ] **Celery worker and persistent agent queue:** `DEFERRED TO PHASE 2`.
@@ -71,4 +75,4 @@
 | Docker image builds | `docker compose build api && docker compose build web && docker compose build shop-api` | 0 | PASSED (all 3 images built) |
 | Compose integration | `docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify run --rm verify` | 0 | PASSED (migration round-trip & DB readiness verified) |
 | Service health checks | `curl -f http://127.0.0.1:{8000,3000,3001}/healthz && curl -f http://127.0.0.1:8000/readyz` | 0 | PASSED (all endpoints 200 OK) |
-| CI configuration | `.github/workflows/ci.yml` | 0 | VERIFIED (workflow syntactically valid and mapped to Makefile) |
+| Hosted foundation CI | [run 38043157853](https://github.com/Tarun-sde/AegisOps/actions/runs/38043157853) | success | VERIFIED for b0014ab9; subsequent comparison work tracked separately |

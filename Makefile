@@ -14,7 +14,7 @@ install:
 check:
 	$(UV) run --frozen --all-groups ruff check apps agents
 	$(UV) run --frozen --all-groups ruff format --check apps agents
-	$(UV) run --frozen --all-groups mypy apps/api/app agents/incident_investigator/spike.py
+	$(UV) run --frozen --all-groups mypy apps/api/app agents/incident_investigator/spike.py agents/incident_investigator/free_tier.py agents/incident_investigator/groq_adapter.py
 	npm run lint
 	npm run format:check
 	npm run typecheck
