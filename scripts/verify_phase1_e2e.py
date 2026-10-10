@@ -10,10 +10,10 @@ import json
 import os
 import sys
 import time
-from typing import Any
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any
 
 API_URL = os.environ.get("AEGISOPS_API_URL", "http://127.0.0.1:8000")
 SHOP_URL = os.environ.get("AEGISOPS_SHOP_URL", "http://127.0.0.1:3001")

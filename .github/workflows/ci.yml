@@ -59,6 +59,8 @@ jobs:
           curl --fail http://127.0.0.1:3001/healthz
       - name: Stop task services
         if: always()
+        env:
+          POSTGRES_PASSWORD: ci-cleanup-placeholder
         run: |
           docker compose --profile core --profile lab down
           docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify down
