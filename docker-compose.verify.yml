@@ -1,0 +1,9 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_DB: aegisops_phase0_verify
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U aegisops -d aegisops_phase0_verify"]
+  verify:
+    environment:
+      DATABASE_URL: postgresql://aegisops:${POSTGRES_PASSWORD}@postgres:5432/aegisops_phase0_verify

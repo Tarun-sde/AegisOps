@@ -1,0 +1,45 @@
+[project]
+name = "aegisops"
+version = "0.0.1"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "fastapi==0.141.0",
+  "pydantic==2.14.0",
+  "uvicorn==0.54.0",
+  "sqlalchemy==2.1.4",
+  "alembic==1.20.0",
+  "psycopg[binary]==3.3.6",
+  "redis==8.1.0",
+]
+
+[dependency-groups]
+agent = ["google-adk==2.11.0", "google-genai==2.29.0"]
+dev = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "httpx==0.28.1",
+  "ruff==0.17.0",
+  "mypy==2.4.0",
+  "pip-audit==2.10.1",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["apps/api/tests", "agents/incident_investigator/tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+markers = ["integration: requires the isolated Compose database and Redis"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+exclude = ["alembic/versions"]

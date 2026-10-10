@@ -1,0 +1,92 @@
+name: aegisops
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg18-bookworm@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11
+    profiles: [core, lab, verify]
+    environment:
+      POSTGRES_USER: aegisops
+      POSTGRES_DB: aegisops
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in ignored .env}
+    volumes: [postgres-data:/var/lib/postgresql]
+    mem_limit: 256m
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U aegisops -d aegisops"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  redis:
+    image: redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+    profiles: [core, lab, verify]
+    command: [redis-server, --maxmemory, 64mb, --maxmemory-policy, noeviction, --save, "", --appendonly, "no"]
+    mem_limit: 128m
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  api:
+    image: aegisops-api:phase0
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    profiles: [core]
+    environment: &api-environment
+      DATABASE_URL: postgresql://aegisops:${POSTGRES_PASSWORD}@postgres:5432/aegisops
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    ports: ["127.0.0.1:8000:8000"]
+    mem_limit: 512m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+  web:
+    image: aegisops-web:phase0
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    profiles: [core]
+    ports: ["127.0.0.1:3000:3000"]
+    mem_limit: 512m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+  shop-api:
+    image: aegisops-shop-api:phase0
+    build:
+      context: .
+      dockerfile: examples/shop-api/Dockerfile
+    profiles: [lab]
+    ports: ["127.0.0.1:3001:3001"]
+    mem_limit: 128m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3001/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+  verify:
+    image: aegisops-api:phase0
+    profiles: [verify]
+    environment:
+      <<: *api-environment
+      AEGISOPS_INTEGRATION: "1"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    command: [pytest, -q, -p, no:cacheprovider, -m, integration]
+    mem_limit: 512m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+volumes:
+  postgres-data:

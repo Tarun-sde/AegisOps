@@ -1,0 +1,96 @@
+================================================================================
+AegisOps Phase 0 Local Verification Evidence Log
+Timestamp: 2026-10-10T09:42:00Z
+Workstation: Fedora Linux 44 (Workstation Edition), AMD Ryzen 7 5800H, 7.1 GiB RAM
+================================================================================
+
+1. PYTHON STATIC CHECKS & FORMATTING:
+Command: .venv/bin/ruff check apps agents && .venv/bin/ruff format --check apps agents && .venv/bin/mypy apps/api/app agents/incident_investigator/spike.py
+Output:
+All checks passed!
+16 files already formatted
+Success: no issues found in 5 source files
+Exit Code: 0
+
+2. PYTHON UNIT TESTS:
+Command: .venv/bin/pytest -v -m 'not integration'
+Output:
+36 passed, 2 deselected, 4 warnings in 1.90s
+Exit Code: 0
+
+3. PYTHON VULNERABILITY AUDIT:
+Command: .venv/bin/pip-audit --progress-spinner off
+Output:
+No known vulnerabilities found
+Exit Code: 0
+
+4. WEB STATIC CHECKS & FORMATTING:
+Command: npm run lint && npm run format:check && npm run typecheck
+Output:
+> @aegisops/web@0.0.1 lint
+> eslint .
+
+> format:check
+> prettier --check apps/web examples/shop-api package.json
+All matched files use Prettier code style!
+
+> typecheck
+> npm run typecheck --workspaces
+Exit Code: 0
+
+5. WEB UNIT TESTS & DEPENDENCY AUDIT:
+Command: npm test && npm audit --audit-level=high
+Output:
+> @aegisops/shop-api@0.0.1 test
+> npm run build && node --test tests/*.test.mjs
+✔ health works and no fault controls exist (72.244311ms)
+ℹ tests 1, pass 1, fail 0
+found 0 vulnerabilities
+Exit Code: 0
+
+6. WEB PLAYWRIGHT BROWSER SMOKE TEST:
+Command: PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright npm run test:web
+Output:
+Running 2 tests using 1 worker
+  ✓ shell navigates to truthful empty state on desktop and mobile (3.1s)
+  ✓ health endpoint responds (37ms)
+  2 passed (6.3s)
+Exit Code: 0
+
+7. WEB PRODUCTION BUILD:
+Command: npm run build
+Output:
+▲ Next.js 16.4.0 (webpack)
+✓ Compiled successfully in 2.2s
+✓ Finished TypeScript in 1799ms
+✓ Generating static pages using 1 worker (5/5) in 430ms
+Collecting build traces in 6.8s
+Finalizing page optimization in 6.8s
+Exit Code: 0
+
+8. GOOGLE ADK SPIKE DISPATCH:
+Command: .venv/bin/python -m agents.incident_investigator.spike --output artifacts/spike-supported.json && .venv/bin/python -m agents.incident_investigator.spike --scenario conflicting --output artifacts/spike-conflicting.json
+Output:
+offline_fake_model_synthetic_tool: 2 model calls, 1 tool calls (complete)
+offline_fake_model_synthetic_tool: 2 model calls, 1 tool calls (inconclusive)
+Exit Code: 0
+
+9. ISOLATED DATABASE MIGRATION ROUND-TRIP IN COMPOSE:
+Command: docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify run --rm verify
+Output:
+2 passed, 36 deselected, 3 warnings in 3.98s
+(verified: current_database() == aegisops_phase0_verify, upgrade head, fk/unique constraints, pgvector 0.8.7 extension, downgrade base, upgrade head, /readyz checks: postgres=ok, redis=ok)
+Exit Code: 0
+
+10. LIVE CONTAINER HEALTH CHECKS:
+Command: curl -s http://127.0.0.1:8000/readyz && curl -s http://127.0.0.1:8000/healthz && curl -s http://127.0.0.1:3000/healthz && curl -s http://127.0.0.1:3001/healthz
+Output:
+http://127.0.0.1:8000/readyz -> HTTP 200 {"status":"ready","checks":{"postgres":"ok","redis":"ok"}}
+http://127.0.0.1:8000/healthz -> HTTP 200 {"status":"ok","service":"api"}
+http://127.0.0.1:3000/healthz -> HTTP 200 {"status":"ok","service":"web"}
+http://127.0.0.1:3001/healthz -> HTTP 200 {"status":"ok","service":"shop-api","phase":0}
+Exit Code: 0
+
+================================================================================
+Phase 0 Verification Verdict: ALL CHECKS PASSED (VERIFIED)
+================================================================================
