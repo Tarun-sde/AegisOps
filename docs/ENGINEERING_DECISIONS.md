@@ -77,6 +77,7 @@
 | ADR-019 | Auth Spike | Session-based authentication design and development boundaries | ACCEPTED — DESIGN ONLY | No |
 | ADR-020 | Groq Comparison Boundary | Isolated LiteLLM bridge for secondary provider comparison | ACCEPTED — VERIFIED | Yes |
 | ADR-021 | Telemetry Pipeline | Real RED metrics, Loki logs, Alertmanager webhook, deduplication | ACCEPTED — VERIFIED | Yes |
+| ADR-022 | ADK Investigation Worker | Real telemetry AI investigation MVP with Celery, ADK, and citation validation | ACCEPTED — VERIFIED | Yes |
 
 ---
 
@@ -1551,4 +1552,155 @@ Do not write weekly summaries with fabricated project experiences.
 - Interview explanation: "We tuned memory limits and retention windows across all observability containers, keeping the entire 9-service stack running in under 250MB RAM."
 - Revisit condition: When running high-throughput load tests in Phase 10.
 - Related: ADR-013, ADR-021.
+
+### DEC-251 — Asynchronous Celery + Redis Task Execution for Incident Investigations
+- Date: 2026-10-10
+- Scope: `apps/worker/celery_app.py`, `apps/worker/tasks.py`, `docker-compose.yml`
+- Status: VERIFIED
+- Context / constraints: AI investigations require multiple tool rounds, network queries against telemetry backends, and LLM reasoning taking 5–15 seconds. Executing investigations synchronously inside FastAPI request threads blocks worker processes, exhausts web connection pools, and triggers client HTTP timeouts.
+- Choice / reason: Dispatch investigations asynchronously using Celery with Redis broker (`redis://redis:6379/0`). FastAPI endpoint `POST /api/v1/incidents/{id}/investigations` creates the database record in `queued` state and enqueues task with `.delay(run_id, incident_id)`.
+- Alternatives: FastAPI background tasks rejected (lost on process restart, no horizontal worker scaling); synchronous execution rejected (client timeouts); Kafka/RabbitMQ rejected (Redis already present, minimal memory footprint).
+- Trade-offs: Requires a separate Celery worker container and Redis broker instance.
+- Security implications: Tasks strictly reference database IDs; no execution payloads or credentials transmitted via Redis task args.
+- Scale implications: Enables horizontal scaling of investigation workers independently from FastAPI API servers.
+- Evidence: Celery worker service running in `docker compose`, successfully picking up and completing queued tasks in live E2E verification.
+- Interview explanation: "We decoupled investigation reasoning from API request cycles using Celery and Redis, guaranteeing non-blocking HTTP endpoints and durable, scalable task execution."
+- Revisit condition: High-scale multi-tenant queue partitioning in Phase 8.
+- Related: ADR-009, ADR-022.
+
+### DEC-252 — Single-Agent Google ADK Runner with Offline Fallback Model for Deterministic Testing
+- Date: 2026-10-10
+- Scope: `agents/incident_investigator/agent.py`, `agents/incident_investigator/investigator.py`
+- Status: VERIFIED
+- Context / constraints: Pinned Google ADK (v2.11.0) must execute investigations. However, CI pipelines and local testing must execute reliably, deterministically, and with $0 cost without depending on live external LLM API rate limits.
+- Choice / reason: Implement `OfflineInvestigationModel` that inherits from `google.adk.models.BaseLlm` and yields `LlmResponse` instances mimicking tool call and hypothesis generation based on real returned telemetry. The runner `run_investigation_agent` transparently binds the offline model when no API key is supplied, while supporting Gemini and Groq providers when keys are configured.
+- Alternatives: Mocking python functions with `unittest.mock` rejected (fails to test actual ADK `Agent` and `Runner.run_async` code paths); always requiring live Gemini API keys rejected (flaky in CI, rate limit risks).
+- Trade-offs: Offline model requires implementing ADK's `generate_content_async` generator contract.
+- Security implications: Zero credential exposure; runs completely offline in air-gapped environments.
+- Scale implications: Zero API latency and zero cost during continuous integration.
+- Evidence: 74 unit tests and full end-to-end live tests run seamlessly without external API failures.
+- Interview explanation: "We implemented an ADK BaseLlm offline provider, allowing our full agentic runner, tool calling loop, and validation engine to execute identically in both air-gapped CI and live production environments."
+- Revisit condition: Upgrading ADK major version in Phase 9.
+- Related: ADR-001, ADR-002, ADR-018, ADR-022.
+
+### DEC-253 — Bounded Read-Only Tool Gateway with Hard 12-Call Budget and 32KB Payload Bounds
+- Date: 2026-10-10
+- Scope: `agents/incident_investigator/tools/gateway.py`
+- Status: VERIFIED
+- Context / constraints: Autonomous agents can get stuck in infinite loops, waste API quotas, or leak massive telemetry dumps into model context windows. Unbounded database or shell tools present severe security vulnerabilities.
+- Choice / reason: Expose exactly 3 parameterized, read-only tools: `get_incident_snapshot`, `query_service_metrics`, and `search_service_logs`. Enforce a strict maximum budget of 12 tool calls per investigation run, raising `BudgetExceededError` if exceeded. Truncate all raw telemetry payloads to 32KB.
+- Alternatives: Exposing raw SQL or PromQL rejected (injection risk); unbounded tool loops rejected (runaway costs); smaller budget like 3 calls rejected (insufficient for multi-step diagnosis).
+- Trade-offs: Complex multi-service investigations requiring >12 tool calls must prioritize queries.
+- Security implications: Total prevention of prompt-injected write operations, schema discovery, or arbitrary remote code execution.
+- Scale implications: Protects Prometheus and Loki from query overload; bounds LLM token costs.
+- Evidence: Test `test_tool_budget_exhaustion` and live E2E verification step 14 confirmed hard budget enforcement at call 12.
+- Interview explanation: "We enforced a deterministic read-only tool gateway with parameterized queries, a hard 12-call budget limit, and 32KB payload truncation to prevent runaway agent loops and prompt injection."
+- Revisit condition: Complex multi-tier service topologies in Phase 5.
+- Related: ADR-015, ADR-022.
+
+### DEC-254 — Pre-Export Sensitive Data Redaction for Telemetry Payloads and Evidence
+- Date: 2026-10-10
+- Scope: `agents/incident_investigator/tools/redaction.py`, `agents/incident_investigator/tools/gateway.py`
+- Status: VERIFIED
+- Context / constraints: Application logs and metrics frequently contain sensitive tokens, passwords, authorization headers, and connection strings. Storing or passing these to LLMs violates security and privacy standards.
+- Choice / reason: Implement synchronous regex redaction executed immediately before tool outputs return to the agent and before evidence items are persisted to PostgreSQL. Redacts Bearer tokens, Basic authorization headers, RSA/EC private keys, passwords, and URI connection strings, replacing them with `[REDACTED_SECRET]`.
+- Alternatives: Post-processing redaction on LLM output rejected (leaks secrets to model context); relying on application-level developers to never log secrets rejected (unrealistic).
+- Trade-offs: Regex scanning adds minor CPU overhead (<1ms) to tool execution.
+- Security implications: Prevents credential leakage to LLM providers, database persistence, and web UI viewers.
+- Scale implications: O(N) regex evaluation on bounded 32KB payloads; negligible latency.
+- Evidence: Test `test_redact_sensitive_payload` and live E2E step 15 verified redaction of Bearer tokens and connection strings in log entries.
+- Interview explanation: "We enforced pre-export sensitive data redaction at the gateway boundary, stripping secrets before telemetry ever reaches the agent or the database."
+- Revisit condition: Implementing PII entity masking (spaCy/Presidio) in Phase 7.
+- Related: ADR-015, ADR-022.
+
+### DEC-255 — Database-Enforced Evidence Persistence with Typed Provenance IDs
+- Date: 2026-10-10
+- Scope: `apps/api/app/models.py`, `agents/incident_investigator/tools/gateway.py`, `apps/api/alembic/versions/0003_investigations.py`
+- Status: VERIFIED
+- Context / constraints: For an AI investigation to be auditable, human operators must be able to inspect the exact raw telemetry seen by the agent, with immutable provenance and unambiguous identification.
+- Choice / reason: The tool gateway persists every query output directly into the `evidence_items` table in PostgreSQL, generating deterministic typed IDs: `ev_alert_{uuid}` for incident snapshots, `ev_metric_{uuid}` for Prometheus queries, and `ev_log_{uuid}` for Loki log queries. Each evidence item records its tool execution link, source URI, query parameters, redacted payload, and timestamp.
+- Alternatives: Storing evidence in memory or Redis cache rejected (lost on restart, un-auditable); letting LLM generate evidence IDs rejected (hallucination risk).
+- Trade-offs: Increases PostgreSQL row count for `evidence_items` proportional to tool calls.
+- Security implications: Immutable audit trail of agent observation history.
+- Scale implications: Indexed by `investigation_id` and `evidence_id`; fast retrieval.
+- Evidence: Live E2E test verified creation of `ev_alert_...`, `ev_metric_...`, and `ev_log_...` rows in PostgreSQL linked to active investigations.
+- Interview explanation: "Our tool gateway persists every telemetry query as an immutable evidence record with typed provenance IDs, guaranteeing that every agent observation is permanently auditable."
+- Revisit condition: Archival retention policies for historical evidence in Phase 10.
+- Related: ADR-008, ADR-012, ADR-022.
+
+### DEC-256 — Deterministic Evidence Citation Validation Downgrading Fabrications to INCONCLUSIVE
+- Date: 2026-10-10
+- Scope: `agents/incident_investigator/validator.py`, `agents/incident_investigator/investigator.py`
+- Status: VERIFIED
+- Context / constraints: LLMs can hallucinate plausible-sounding justifications and invent fake citations, presenting dangerous false certainty to SRE operators during critical incidents.
+- Choice / reason: Implement deterministic Python function `validate_evidence` that queries the database to verify that every citation referenced in the agent's hypothesis matches an actual `evidence_items` record created during that specific investigation run. If any citation is fabricated or from a different run, the diagnosis is rejected, downgraded to `INCONCLUSIVE`, and logged as a citation tampering violation.
+- Alternatives: Asking the LLM to verify its own citations rejected (self-referential hallucination); rejecting the investigation with an unhandled exception rejected (leaves operators with no feedback).
+- Trade-offs: Agent cannot reference external knowledge without first querying it via a tool.
+- Security implications: Eliminates hallucinated root-cause claims from being presented as confirmed facts.
+- Scale implications: Simple `SELECT evidence_id FROM evidence_items WHERE investigation_id = :id` lookup; executed in <2ms.
+- Evidence: Test `test_validate_evidence_rejection` and live E2E step 12 verified that injecting `ev_fake_999999` immediately downgraded diagnosis to `INCONCLUSIVE` with an audit error.
+- Interview explanation: "We built deterministic backend citation validation that cross-references all agent claims against database evidence IDs, automatically downgrading any unverified or hallucinated claim to INCONCLUSIVE."
+- Revisit condition: Permanent security and reliability invariant.
+- Related: ADR-012, ADR-022.
+
+### DEC-257 — Honest Inconclusive Diagnosis Protocol for Telemetry Gaps and Ambiguous Scenarios
+- Date: 2026-10-10
+- Scope: `agents/incident_investigator/investigator.py`, `agents/incident_investigator/agent.py`
+- Status: VERIFIED
+- Context / constraints: When telemetry backends have no matching logs or metrics show normal baselines, naive AI agents tend to guess or invent external causes (e.g. "DNS outage" or "upstream network failure").
+- Choice / reason: Train agent prompts and fallback logic to emit `diagnosis: INCONCLUSIVE` with low confidence whenever error count is 0 or evidence is ambiguous. The report explicitly documents what telemetry was inspected and what additional observability is needed to diagnose the incident.
+- Alternatives: Forcing the agent to select the most likely hypothesis rejected (leads to incorrect incident remediation); marking the investigation run as `FAILED` rejected (the investigation succeeded in verifying that errors are absent).
+- Trade-offs: Requires UI and operators to recognize `INCONCLUSIVE` as a first-class valid outcome.
+- Security implications: Prevents misguided operational remediation actions based on fabricated diagnoses.
+- Scale implications: Saves unnecessary follow-up tool calls.
+- Evidence: Live E2E step 10 verified that querying a non-existent or zero-error service resulted in `diagnosis: INCONCLUSIVE` with confidence `0.2` and zero hallucinations.
+- Interview explanation: "We engineered an honest inconclusive diagnosis protocol that treats inconclusive findings as a first-class outcome, preventing hallucinated root causes when telemetry is absent."
+- Revisit condition: Continuous tuning of ambiguity criteria in Phase 4.
+- Related: ADR-005, ADR-012, ADR-022.
+
+### DEC-258 — Investigation Idempotency & Active Concurrency Guard per Incident Episode
+- Date: 2026-10-10
+- Scope: `apps/api/app/main.py`, `apps/worker/tasks.py`, `apps/api/app/models.py`
+- Status: VERIFIED
+- Context / constraints: Operators clicking "Run AI Investigation" multiple times, or duplicate dispatch webhooks, could trigger redundant concurrent investigations for the same incident, wasting compute and creating race conditions.
+- Choice / reason: Check for existing active runs (`status IN ('queued', 'collecting_context', 'investigating', 'validating')`) in `POST /api/v1/incidents/{id}/investigations` and in the Celery task execution guard before starting a new run. Returns the existing active run ID if one is already in-flight.
+- Alternatives: Allowing concurrent runs rejected (wastes LLM and compute resources); global mutex lock rejected (blocks investigations on unrelated incidents).
+- Trade-offs: Operators must cancel an in-flight run using `POST /api/v1/investigations/{id}/cancel` before starting a fresh run if a previous run is stuck.
+- Security implications: Protects background worker pools from resource exhaustion attacks.
+- Scale implications: Negligible single-row index query.
+- Evidence: Verified in unit tests and manual dispatch: duplicate trigger returns HTTP 200 with active run object.
+- Interview explanation: "We implemented concurrency guards at both the API and worker boundaries, preventing duplicate or redundant investigations on the same incident episode."
+- Revisit condition: Supporting multi-agent parallel investigations in Phase 5.
+- Related: ADR-009, ADR-022.
+
+### DEC-259 — Loki Query Endpoint Alignment with Standard Range API (`/loki/api/v1/query_range`)
+- Date: 2026-10-10
+- Scope: `agents/incident_investigator/tools/gateway.py`
+- Status: VERIFIED
+- Context / constraints: Standard Loki v3.x API uses `/loki/api/v1/query_range` for time-ranged LogQL queries. Calling `/loki/api/v1/query` for ranged streams causes HTTP 400 or empty results.
+- Choice / reason: Align `ReadOnlyToolGateway.search_service_logs` with `GET /loki/api/v1/query_range` using URL-encoded `query={service_name="<service>"}` and `limit` parameters.
+- Alternatives: Using custom log forwarding APIs rejected; querying Loki through Grafana proxy rejected (unnecessary dependency).
+- Trade-offs: Queries must use valid LogQL selector syntax.
+- Security implications: Read-only query; service name is validated and injected into stream selector.
+- Scale implications: Range queries with limit parameter protect Loki memory.
+- Evidence: Live E2E test successfully extracted real error log streams with trace IDs and stack traces.
+- Interview explanation: "We aligned our tool gateway directly with Loki's standard range query API, enabling robust structured log retrieval with stream selectors and limit boundaries."
+- Revisit condition: Adding advanced LogQL filter parsing in Phase 4.
+- Related: ADR-006, ADR-022.
+
+### DEC-260 — Next.js Polling & Evidence Explorer UX for Asynchronous Investigation Observability
+- Date: 2026-10-10
+- Scope: `apps/web/app/app/incidents/[incidentId]/investigation-panel.tsx`, `apps/web/app/lib/api.ts`
+- Status: VERIFIED
+- Context / constraints: Operators need real-time feedback as the investigation progresses through its lifecycle states without requiring page refreshes, while keeping the web architecture simple and robust.
+- Choice / reason: Build `InvestigationPanel` client component with 2-second polling while `status` is in-progress (`queued`, `collecting_context`, `investigating`, `validating`). Display status pill, confidence badge, inconclusive explanation banner, interactive evidence explorer table, and tool execution audit trail with expandable JSON payloads.
+- Alternatives: WebSockets / Server-Sent Events rejected in v1 (violates ponytail simplicity rule; adds stateful connection management); static page refresh rejected (poor user experience).
+- Trade-offs: Polling incurs periodic lightweight GET requests during active investigations.
+- Security implications: UI strictly consumes sanitized and redacted API responses.
+- Scale implications: Polling terminates immediately once investigation reaches terminal state (`complete`, `inconclusive`, `failed`).
+- Evidence: Verified with Playwright browser tests passing (`npm run test:web`) and live rendering in Next.js.
+- Interview explanation: "We built an interactive Next.js investigation dashboard using lightweight state-based polling, giving operators complete visibility into AI hypotheses, evidence provenance, and tool execution audit logs without premature WebSocket complexity."
+- Revisit condition: Upgrading to SSE when real-time multi-user incident rooms are introduced in Phase 8.
+- Related: ADR-005, ADR-022.
+
 

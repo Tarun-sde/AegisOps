@@ -48,6 +48,23 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+  worker:
+    image: aegisops-api:phase0
+    profiles: [core]
+    environment:
+      <<: *api-environment
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      AEGISOPS_AGENT_MODEL: ${AEGISOPS_AGENT_MODEL:-gemini-3.5-flash}
+      AEGISOPS_PROM_URL: http://prometheus:9090
+      AEGISOPS_LOKI_URL: http://loki:3100
+      IN_DOCKER: "1"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    command: [celery, -A, apps.worker.celery_app.celery_app, worker, --loglevel=info, -c, "2"]
+    mem_limit: 512m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
   web:
     image: aegisops-web:phase0
     build:

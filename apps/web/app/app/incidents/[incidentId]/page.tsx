@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getIncident, getIncidentEvents } from "../../../lib/api";
+import { InvestigationPanel } from "./investigation-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -121,22 +122,46 @@ export default async function IncidentDetailPage({ params }: PageProps) {
         </section>
 
         <section aria-labelledby="ai-title" className="panel">
-          <p className="eyebrow">Investigation State</p>
-          <h2 id="ai-title">AI Investigation Gate</h2>
-          <p>
-            Automated Google ADK root-cause investigation is scheduled for Phase
-            2. Phase 1 verifies real application RED metrics, structured Loki
-            logs, Alertmanager webhook delivery, and durable deduplicated
-            persistence.
+          <p className="eyebrow">Phase 2 AI Runtime</p>
+          <h2 id="ai-title">Google ADK Runtime</h2>
+          <p style={{ color: "#9eaeb2", fontSize: "0.9rem", lineHeight: 1.6 }}>
+            Autonomous incident diagnosis using official Google ADK 2.11.0
+            runtime, bounded read-only tool gateway, and deterministic evidence
+            verification.
           </p>
-          <span
-            className="badge"
-            style={{ marginTop: "12px", display: "inline-block" }}
+          <div
+            style={{
+              marginTop: "12px",
+              display: "flex",
+              gap: "8px",
+              flexWrap: "wrap",
+            }}
           >
-            Phase 2 Gate Locked
-          </span>
+            <span
+              className="badge"
+              style={{
+                background: "#1c261e",
+                borderColor: "#3d5742",
+                color: "#9ee0a9",
+              }}
+            >
+              Google ADK 2.11.0
+            </span>
+            <span
+              className="badge"
+              style={{
+                background: "#172733",
+                borderColor: "#2f5c80",
+                color: "#8ec4f5",
+              }}
+            >
+              Celery + Redis Worker
+            </span>
+          </div>
         </section>
       </div>
+
+      <InvestigationPanel incidentId={incident.id} />
 
       <section
         aria-labelledby="timeline-title"

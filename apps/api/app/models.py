@@ -82,6 +82,9 @@ class Incident(Base):
     events: Mapped[list[IncidentEvent]] = relationship(
         "IncidentEvent", back_populates="incident", cascade="all, delete-orphan"
     )
+    investigations: Mapped[list[InvestigationRun]] = relationship(
+        "InvestigationRun", back_populates="incident", cascade="all, delete-orphan"
+    )
 
 
 class IncidentEvent(Base):
@@ -96,3 +99,100 @@ class IncidentEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     incident: Mapped[Incident] = relationship("Incident", back_populates="events")
+
+
+class InvestigationRun(Base):
+    __tablename__ = "investigation_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    incident_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("incidents.id", ondelete="CASCADE"), index=True
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    service_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("services.id"), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="QUEUED", index=True)
+    model: Mapped[str] = mapped_column(String(120), default="gemini-3.5-flash")
+    prompt_version: Mapped[str] = mapped_column(String(64), default="phase2-v1")
+    summary: Mapped[str | None] = mapped_column(String(4000), nullable=True)
+    missing_evidence: Mapped[list[str]] = mapped_column(JSON, default=list)
+    limitations: Mapped[list[str]] = mapped_column(JSON, default=list)
+    suggested_actions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    tool_call_count: Mapped[int] = mapped_column(default=0)
+    error_message: Mapped[str | None] = mapped_column(String(4000), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    incident: Mapped[Incident] = relationship("Incident", back_populates="investigations")
+    tool_executions: Mapped[list[ToolExecution]] = relationship(
+        "ToolExecution", back_populates="run", cascade="all, delete-orphan"
+    )
+    evidence_items: Mapped[list[EvidenceItem]] = relationship(
+        "EvidenceItem", back_populates="run", cascade="all, delete-orphan"
+    )
+    hypotheses: Mapped[list[HypothesisRecord]] = relationship(
+        "HypothesisRecord", back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class ToolExecution(Base):
+    __tablename__ = "tool_executions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investigation_runs.id", ondelete="CASCADE"), index=True
+    )
+    tool_name: Mapped[str] = mapped_column(String(64))
+    arguments: Mapped[dict[str, Any]] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(32))  # success | error
+    latency_ms: Mapped[float] = mapped_column(default=0.0)
+    error_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    run: Mapped[InvestigationRun] = relationship(
+        "InvestigationRun", back_populates="tool_executions"
+    )
+
+
+class EvidenceItem(Base):
+    __tablename__ = "evidence_items"
+    __table_args__ = (UniqueConstraint("run_id", "evidence_id", name="uq_run_evidence_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    evidence_id: Mapped[str] = mapped_column(String(128), index=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investigation_runs.id", ondelete="CASCADE"), index=True
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    service_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("services.id"), index=True)
+    source: Mapped[str] = mapped_column(String(32))  # metrics | logs | alert
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    locator: Mapped[str] = mapped_column(String(500))
+    redacted_snippet: Mapped[str] = mapped_column(String(32000))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    query_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    run: Mapped[InvestigationRun] = relationship(
+        "InvestigationRun", back_populates="evidence_items"
+    )
+
+
+class HypothesisRecord(Base):
+    __tablename__ = "hypotheses"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investigation_runs.id", ondelete="CASCADE"), index=True
+    )
+    cause: Mapped[str] = mapped_column(String(1000))
+    confidence: Mapped[str] = mapped_column(String(32))  # low | medium | high
+    supporting_evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    contradicting_evidence_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    next_check: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    run: Mapped[InvestigationRun] = relationship("InvestigationRun", back_populates="hypotheses")

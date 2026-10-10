@@ -31,8 +31,10 @@ def setup_test_db():
         db.add(svc)
         db.commit()
 
+    app.dependency_overrides[get_db] = override_get_db
     yield
 
+    app.dependency_overrides.pop(get_db, None)
     Base.metadata.drop_all(bind=test_engine)
 
 
@@ -44,7 +46,6 @@ def override_get_db():
         db.close()
 
 
-app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
 AUTH_HEADER = {"Authorization": "Bearer aegisops-demo-alertmanager-secret"}

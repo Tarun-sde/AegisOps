@@ -4,8 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_LINK_MODE=copy
 RUN pip install --no-cache-dir uv==0.13.0
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --all-groups
-COPY apps/__init__.py apps/__init__.py
-COPY apps/api apps/api
+COPY apps apps
 COPY agents agents
 COPY alembic.ini ./
 RUN useradd --uid 10001 --create-home aegisops

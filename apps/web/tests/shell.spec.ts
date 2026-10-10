@@ -39,3 +39,19 @@ test("health endpoint responds", async ({ request }) => {
   expect(response.status()).toBe(200);
   expect(await response.json()).toEqual({ status: "ok", service: "web" });
 });
+
+test("incident detail page displays AI investigation panel", async ({
+  page,
+}) => {
+  await page.goto("/app/incidents");
+  const firstIncidentLink = page
+    .getByRole("link", { name: /High 5xx error rate/i })
+    .first();
+  if (await firstIncidentLink.isVisible()) {
+    await firstIncidentLink.click();
+    await expect(
+      page.getByRole("heading", { name: "AI Incident Investigator" }),
+    ).toBeVisible();
+    await expect(page.locator("#start-investigation-btn")).toBeVisible();
+  }
+});

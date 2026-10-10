@@ -3,7 +3,6 @@ import hashlib
 import hmac
 import os
 import uuid
-from collections.abc import Generator
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
@@ -12,17 +11,35 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, sta
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from sqlalchemy import create_engine, desc, func, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import desc, func, select
+from sqlalchemy.orm import Session, selectinload
 from starlette.responses import JSONResponse
 
-from apps.api.app.models import AlertEvent, Incident, IncidentEvent, Organization, Service
+from apps.api.app.db import get_db
+from apps.api.app.models import (
+    AlertEvent,
+    EvidenceItem,
+    Incident,
+    IncidentEvent,
+    InvestigationRun,
+    Organization,
+    Service,
+    ToolExecution,
+)
 from apps.api.app.schemas import (
     AlertmanagerWebhookPayload,
+    EvidenceItemRead,
+    EvidenceListResponse,
+    HypothesisRead,
     IncidentEventRead,
     IncidentListResponse,
     IncidentRead,
+    InvestigationRunCreate,
+    InvestigationRunDetailRead,
+    InvestigationRunRead,
+    ToolExecutionRead,
 )
+from apps.worker.tasks import run_investigation_task
 
 
 class Health(BaseModel):
@@ -31,25 +48,6 @@ class Health(BaseModel):
 
 
 app = FastAPI(title="AegisOps Control Plane", version="0.1.0")
-
-# Database engine & sessionmaker
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://aegisops:test@127.0.0.1:5432/aegisops")
-engine_url = (
-    DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
-    if "postgresql" in DATABASE_URL and "+psycopg" not in DATABASE_URL
-    else DATABASE_URL
-)
-engine = create_engine(engine_url, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-
-
-def get_db() -> Generator[Session]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 
 DbSession = Annotated[Session, Depends(get_db)]
 
@@ -326,3 +324,219 @@ def get_incident_events(incident_id: uuid.UUID, db: DbSession) -> list[IncidentE
         .order_by(IncidentEvent.occurred_at.asc())
     ).all()
     return [IncidentEventRead.model_validate(e) for e in events]
+
+
+@app.post(
+    "/api/v1/incidents/{incident_id}/investigations",
+    response_model=InvestigationRunRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_investigation(
+    incident_id: uuid.UUID,
+    db: DbSession,
+    payload: InvestigationRunCreate | None = None,
+) -> InvestigationRunRead:
+    body = payload or InvestigationRunCreate()
+    incident = db.scalar(select(Incident).where(Incident.id == incident_id))
+    if not incident:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Incident '{incident_id}' not found",
+        )
+
+    # Check for an active running investigation on this incident
+    active_run = db.scalar(
+        select(InvestigationRun).where(
+            InvestigationRun.incident_id == incident_id,
+            InvestigationRun.status.in_(
+                ["QUEUED", "COLLECTING_CONTEXT", "INVESTIGATING", "VALIDATING"]
+            ),
+        )
+    )
+    if active_run:
+        return InvestigationRunRead.model_validate(active_run)
+
+    model_name = body.model or os.environ.get("AEGISOPS_AGENT_MODEL", "gemini-3.5-flash")
+    prompt_version = body.prompt_version or "phase2-v1"
+
+    run = InvestigationRun(
+        incident_id=incident.id,
+        organization_id=incident.organization_id,
+        service_id=incident.service_id,
+        status="QUEUED",
+        model=model_name,
+        prompt_version=prompt_version,
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    # Dispatch asynchronous background task
+    try:
+        run_investigation_task.delay(str(run.id))
+    except Exception:
+        # Fallback to local synchronous execution if broker is not reachable
+        from agents.incident_investigator.investigator import execute_investigation
+
+        execute_investigation(run.id, db)
+        db.refresh(run)
+
+    return InvestigationRunRead.model_validate(run)
+
+
+@app.get(
+    "/api/v1/incidents/{incident_id}/investigations",
+    response_model=list[InvestigationRunRead],
+)
+def list_incident_investigations(
+    incident_id: uuid.UUID,
+    db: DbSession,
+) -> list[InvestigationRunRead]:
+    runs = db.scalars(
+        select(InvestigationRun)
+        .where(InvestigationRun.incident_id == incident_id)
+        .order_by(desc(InvestigationRun.created_at))
+    ).all()
+    return [InvestigationRunRead.model_validate(r) for r in runs]
+
+
+@app.get(
+    "/api/v1/investigations/{investigation_id}",
+    response_model=InvestigationRunDetailRead,
+)
+def get_investigation(
+    investigation_id: uuid.UUID,
+    db: DbSession,
+) -> InvestigationRunDetailRead:
+    run = db.scalar(
+        select(InvestigationRun)
+        .options(
+            selectinload(InvestigationRun.hypotheses),
+            selectinload(InvestigationRun.evidence_items),
+        )
+        .where(InvestigationRun.id == investigation_id)
+    )
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Investigation run '{investigation_id}' not found",
+        )
+
+    return InvestigationRunDetailRead(
+        id=run.id,
+        incident_id=run.incident_id,
+        organization_id=run.organization_id,
+        service_id=run.service_id,
+        status=run.status,
+        model=run.model,
+        prompt_version=run.prompt_version,
+        summary=run.summary,
+        tool_call_count=run.tool_call_count,
+        error_message=run.error_message,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+        hypotheses=[HypothesisRead.model_validate(h) for h in run.hypotheses],
+        missing_evidence=run.missing_evidence or [],
+        limitations=run.limitations or [],
+        suggested_actions=run.suggested_actions or [],
+        evidence_items=[EvidenceItemRead.model_validate(e) for e in run.evidence_items],
+    )
+
+
+@app.get(
+    "/api/v1/investigations/{investigation_id}/events",
+    response_model=list[ToolExecutionRead],
+)
+def get_investigation_events(
+    investigation_id: uuid.UUID,
+    db: DbSession,
+) -> list[ToolExecutionRead]:
+    run = db.scalar(select(InvestigationRun).where(InvestigationRun.id == investigation_id))
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Investigation run '{investigation_id}' not found",
+        )
+
+    executions = db.scalars(
+        select(ToolExecution)
+        .where(ToolExecution.run_id == investigation_id)
+        .order_by(ToolExecution.created_at.asc())
+    ).all()
+    return [ToolExecutionRead.model_validate(e) for e in executions]
+
+
+@app.get(
+    "/api/v1/investigations/{investigation_id}/evidence",
+    response_model=EvidenceListResponse,
+)
+def get_investigation_evidence(
+    investigation_id: uuid.UUID,
+    db: DbSession,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+) -> EvidenceListResponse:
+    run = db.scalar(select(InvestigationRun).where(InvestigationRun.id == investigation_id))
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Investigation run '{investigation_id}' not found",
+        )
+
+    count_query = (
+        select(func.count())
+        .select_from(EvidenceItem)
+        .where(EvidenceItem.run_id == investigation_id)
+    )
+    total = db.scalar(count_query) or 0
+    items = db.scalars(
+        select(EvidenceItem)
+        .where(EvidenceItem.run_id == investigation_id)
+        .order_by(EvidenceItem.created_at.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    ).all()
+
+    return EvidenceListResponse(
+        items=[EvidenceItemRead.model_validate(item) for item in items],
+        total=total,
+        page=page,
+        size=size,
+    )
+
+
+@app.get("/api/v1/evidence/{evidence_id}", response_model=EvidenceItemRead)
+def get_evidence_item(evidence_id: str, db: DbSession) -> EvidenceItemRead:
+    item = db.scalar(select(EvidenceItem).where(EvidenceItem.evidence_id == evidence_id))
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Evidence item '{evidence_id}' not found",
+        )
+    return EvidenceItemRead.model_validate(item)
+
+
+@app.post(
+    "/api/v1/investigations/{investigation_id}/cancel",
+    response_model=InvestigationRunRead,
+)
+def cancel_investigation(
+    investigation_id: uuid.UUID,
+    db: DbSession,
+) -> InvestigationRunRead:
+    run = db.scalar(select(InvestigationRun).where(InvestigationRun.id == investigation_id))
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Investigation run '{investigation_id}' not found",
+        )
+
+    if run.status in ["QUEUED", "COLLECTING_CONTEXT", "INVESTIGATING", "VALIDATING"]:
+        run.status = "CANCELLED"
+        run.completed_at = datetime.now(UTC)
+        db.commit()
+        db.refresh(run)
+
+    return InvestigationRunRead.model_validate(run)

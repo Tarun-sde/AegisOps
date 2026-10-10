@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 from uuid import UUID
 
 from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, model_validator
@@ -49,7 +49,7 @@ class Incident(Contract):
 
 class Evidence(Scope):
     evidence_id: Identifier
-    source: Literal["synthetic", "logs", "metrics", "traces", "deployments", "runbooks"]
+    source: Literal["synthetic", "logs", "metrics", "traces", "deployments", "runbooks", "alert"]
     observed_at: Timestamp
     redacted_snippet: Annotated[str, Field(min_length=1, max_length=32000)]
     locator: Text
@@ -184,6 +184,90 @@ class IncidentEventRead(BaseModel):
 
 class IncidentListResponse(BaseModel):
     items: list[IncidentRead]
+    total: int
+    page: int
+    size: int
+
+
+class InvestigationRunCreate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    model: str | None = None
+    prompt_version: str | None = None
+
+
+class InvestigationRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    incident_id: UUID
+    organization_id: UUID
+    service_id: UUID
+    status: str
+    model: str
+    prompt_version: str
+    summary: str | None = None
+    tool_call_count: int
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ToolExecutionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    run_id: UUID
+    tool_name: str
+    arguments: dict[str, Any]
+    status: str
+    latency_ms: float
+    error_category: str | None = None
+    created_at: datetime
+
+
+class EvidenceItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    evidence_id: str
+    run_id: UUID
+    organization_id: UUID
+    service_id: UUID
+    source: str
+    observed_at: datetime
+    locator: str
+    redacted_snippet: str
+    content_hash: str
+    query_metadata: dict[str, Any]
+    created_at: datetime
+
+
+class HypothesisRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    run_id: UUID
+    cause: str
+    confidence: str
+    supporting_evidence: list[dict[str, Any]]
+    contradicting_evidence_ids: list[str]
+    next_check: str | None = None
+    created_at: datetime
+
+
+class InvestigationRunDetailRead(InvestigationRunRead):
+    hypotheses: list[HypothesisRead] = []
+    missing_evidence: list[str] = []
+    limitations: list[str] = []
+    suggested_actions: list[str] = []
+    evidence_items: list[EvidenceItemRead] = []
+
+
+class EvidenceListResponse(BaseModel):
+    items: list[EvidenceItemRead]
     total: int
     page: int
     size: int

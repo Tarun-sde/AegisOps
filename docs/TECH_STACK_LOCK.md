@@ -11,12 +11,12 @@
 | Node.js | LTS | 22.23.1 / npm 10.9.8 | Native runtime / `package-lock.json` | 2026-10-10 | Pinned in `package.json` engines and `.node-version` |
 | Frontend | Next.js / React | Next.js 16.4.0 / React 19.3.0 | npm registry via `package-lock.json` | 2026-10-10 | ESLint 9.39.5, TypeScript 6.0.3, Tailwind 4.3.3, cpus: 1 webpack build verified |
 | Database | PostgreSQL / pgvector | PostgreSQL 18 / pgvector 0.8.7 | `pgvector/pgvector:0.8.7-pg18-bookworm@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11` | 2026-10-10 | Healthcheck and Alembic migration round-trip verified in Compose |
-| Queue | Redis / Celery | Redis 8.10.2 | `redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0` | 2026-10-10 | 64MB noeviction probe verified; Celery deferred to Phase 2 |
+| Queue | Redis / Celery | Redis 8.10.2 / Celery 5.5.3 | `redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0` | 2026-10-10 | Celery worker verified with Redis broker in Docker Compose for Phase 2 |
 | Automation | n8n Community | Design only (v1 internal) | TBD | Deferred to Phase 6 | Operator-authored workflows only; no customer builder |
 | Metrics | Prometheus / Alertmanager | Prometheus v3.2.1 / Alertmanager v0.28.1 | `prom/prometheus:v3.2.1@sha256:6927e0919a144aa7616fd0137d4816816d42f6b816de3af269ab065250859a62` / `prom/alertmanager:v0.28.1@sha256:27c475db5fb156cab31d5c18a4251ac7ed567746a2483ff264516437a39b15ba` | 2026-10-10 | Promtool rule tests and authenticated webhook delivery verified in Phase 1 |
 | Logs / traces | Loki / OTel Collector / Tempo | Loki 3.4.2 / OTel Collector Contrib 0.120.0 | `grafana/loki:3.4.2@sha256:58a6c186ce78ba04d58bfe2a927eff296ba733a430df09645d56cdc158f3ba08` / `otel/opentelemetry-collector-contrib:0.120.0@sha256:85ac41c2db88d0df9bd6145e608a3cb023f5d8443868adbfbbf66efb51087917` | 2026-10-10 | OTLP HTTP logs -> Loki export verified; Tempo deferred to Phase 3 |
 | Node metrics | prom-client | 15.1.3 | npm registry via `package-lock.json` | 2026-10-10 | HTTP RED metrics with bounded label policy in `shop-api` |
-| Tests | Pytest / Playwright | pytest 9.1.1 / Playwright 1.64.0 | PyPI / npm | 2026-10-10 | 63 unit + 2 Compose integration + 2 Playwright browser + promtool tests passing |
+| Tests | Pytest / Playwright | pytest 9.1.1 / Playwright 1.64.0 | PyPI / npm | 2026-10-10 | 74 unit + 3 Playwright browser + promtool + Phase 1 & 2 E2E verified live |
 
 Governed by `ADR-017`, `DEC-209`–`DEC-228`. Commit lockfiles after software is installed and tested.
 

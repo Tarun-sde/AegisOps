@@ -1,66 +1,75 @@
 # AegisOps — Current Project State
 
 **Updated:** 2026-10-10  
-**Current phase:** Phase 1 (Real Telemetry Vertical Slice)  
-**Overall state:** `PHASE 1 COMPLETE — REAL TELEMETRY, ALERTING, INGESTION, AND UI VERIFIED; PHASE 2 LOCKED PENDING AUTHORIZATION`  
-**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Section 19; `docs/PHASE_REPORTS/PHASE_1_VERIFICATION.md`; `docs/ADR/ADR-021-real-telemetry-pipeline.md`.
+**Current phase:** Phase 2 (End-to-End AI Investigation MVP)  
+**Overall state:** `PHASE 2 COMPLETE — END-TO-END AI INVESTIGATION MVP (GOOGLE ADK + REAL TELEMETRY) VERIFIED; PHASE 3 READY FOR AUTHORIZATION`  
+**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Phase 2; `docs/PHASE_REPORTS/PHASE_2_VERIFICATION.md`; `docs/ADR/ADR-022-adk-investigation-worker.md`.
 
 ---
 
-## Implemented and verified in Phase 1
+## Implemented and verified in Phase 2
 
-- [x] **Sample Commerce Application (`examples/shop-api`):**
-  - Node.js 22.23.1 / TypeScript / Express 5.3.0.
-  - Endpoints: `GET /healthz`, `GET /products` (deterministic catalog), `POST /checkout` (validation + simulated order IDs), `GET /metrics` (Prometheus-compatible RED metrics).
-  - RED metrics instrumented via `prom-client` 15.1.3: `http_requests_total` counter and `http_request_duration_seconds` histogram with bounded labels (`method`, `route`, `status_code`).
-  - Structured JSON logging with pre-export sensitive field redaction (Bearer tokens, cookies, passwords, API keys).
-  - Native Node 22 `fetch` OTLP/HTTP JSON log forwarder (`POST /v1/logs`) to OpenTelemetry Collector.
-  - Demo fault injection: `POST /fault/inject` and `POST /fault/reset` implementing scenario `S01_CHECKOUT_500` (isolated to demo/test via `NODE_ENV !== "production"` and `x-demo-fault-secret`).
-  - Automated Node test suite passing: `examples/shop-api/tests/shop_api.test.mjs` (all 10 assertions verified).
-- [x] **Observability Infrastructure (`infra/`):**
-  - Pinned Docker images: Prometheus 3.3.0 (`prom/prometheus@sha256:...`), Loki 3.4.2 (`grafana/loki@sha256:...`), Alertmanager 0.28.1 (`prom/alertmanager@sha256:...`), OpenTelemetry Collector Contrib 0.120.0 (`otel/opentelemetry-collector-contrib@sha256:...`).
-  - Bounded memory limits configured across stack (~242.7 MiB total resident RAM footprint across all 9 containers).
-  - OTel Collector receives OTLP HTTP logs on port 4318, applies memory limiter & batch processors, exports to Loki.
-  - Prometheus scrapes `shop-api:3001/metrics` every 5 seconds.
-  - Loki stores logs locally in filesystem TSDB format with bounded retention.
-  - Alertmanager routes firing/resolved alerts to AegisOps FastAPI with Bearer token authentication.
-- [x] **Real Alert Rules & Promtool Testing (`infra/prometheus/rules/`):**
-  - `HighApiErrorRate` rule: fires when 5xx error ratio > 20% over 1m window with minimum request volume guard (`sum(rate(http_requests_total[1m])) > 0.05`) and 15s evaluation duration.
-  - Automated promtool test suite (`infra/prometheus/rules/test_api_alerts.yml`): verified 4 scenarios (healthy traffic, volume guard, sustained 500 ratio firing, resolution).
+- [x] **Asynchronous Investigation Worker (`apps/worker/`):**
+  - Celery application connected to Redis broker (`redis://redis:6379/0`).
+  - Durable background task `investigate_incident_task` orchestrating the investigation lifecycle.
+  - Active-run idempotency guard preventing duplicate concurrent investigations on the same incident.
+  - Worker container deployed and running healthily in `docker-compose.yml`.
+- [x] **Google ADK Single-Agent Runner (`agents/incident_investigator/`):**
+  - Google ADK 2.11.0 `Agent`, `Runner.run_async`, and `ToolContext` integration.
+  - `OfflineInvestigationModel` inheriting from `google.adk.models.BaseLlm` providing deterministic test responses with $0 cost and zero flaky network dependencies.
+  - Transparent support for live Gemini and Groq model providers when API keys are configured.
+  - Enforced single-agent topology (no premature multi-agent swarm).
+- [x] **Bounded Read-Only Tool Gateway (`agents/incident_investigator/tools/gateway.py`):**
+  - Parameterized read-only tools: `get_incident_snapshot`, `query_service_metrics` (Prometheus), and `search_service_logs` (Loki).
+  - Hard execution budget capped at 12 calls per investigation; raises `BudgetExceededError` on call 13.
+  - Telemetry payload size truncation at 32KB per call.
+  - Zero raw SQL, PromQL, LogQL, or shell access permitted to the agent.
+- [x] **Sensitive Secret Redaction (`agents/incident_investigator/tools/redaction.py`):**
+  - Synchronous pre-export regex filtering replacing Bearer tokens, Basic authorization headers, passwords, connection strings, and private keys with `[REDACTED_SECRET]`.
+  - Enforced before tool responses return to the agent or persist into PostgreSQL.
 - [x] **Database Migrations & Models (`apps/api/`):**
-  - Alembic migration `0002_telemetry_incidents.py`: creates `alert_events`, `incidents`, `incident_events` tables.
-  - Partial unique index `uq_open_incident_fingerprint` on `incidents (organization_id, service_id, fingerprint) WHERE status = 'open'`: enforces DB-level duplicate protection per active alert episode.
-  - SQLAlchemy models and Pydantic v2 schemas for Alertmanager webhook payload, incident entities, and timeline events.
-- [x] **FastAPI Ingestion & Incident API (`apps/api/`):**
-  - Webhook receiver: `POST /api/v1/webhooks/alertmanager` with timing-safe `hmac.compare_digest` Bearer token authentication, 512KB payload size limit, Pydantic schema validation, and safe service resolution.
-  - Deterministic deduplication: skips duplicate webhook deliveries without double-counting; transitions to `resolved` on Alertmanager resolved delivery.
-  - Incident queries: `GET /api/v1/incidents` (paginated, filtered by status/severity), `GET /api/v1/incidents/{incident_id}` (detail with 404 validation), `GET /api/v1/incidents/{incident_id}/events` (chronological audit timeline).
-- [x] **Next.js Incident Dashboard (`apps/web/`):**
-  - Incident feed route `/app/incidents`: renders real PostgreSQL incident data with status/severity badges, relative timestamps, and accessible loading/empty/error states.
-  - Incident detail route `/app/incidents/[incidentId]`: displays incident metadata, audit event timeline, and explicit notice that AI-driven investigation is locked pending Phase 2.
-  - Playwright browser tests passing (2/2 in 1.9s).
-- [x] **End-to-End System Demonstration (`scripts/verify_phase1_e2e.py`):**
-  - Full automated 19-step verification executed and passed against running Docker stack:
-    1. Service health checks (API, Shop, Prom, Alertmanager, Loki)
-    2. Prometheus target scrape confirmed (`shop-api` UP)
-    3. Normal traffic (12 requests, 0 alerts)
-    4. Fault injection (`S01_CHECKOUT_500` enabled)
-    5. Fault traffic (35 failing requests, HTTP 500)
-    6. Prometheus error counter incremented (`http_requests_total` = 140.0)
-    7. Loki error logs queried successfully
-    8. Prometheus alert evaluated as firing
-    9. Alertmanager delivered authenticated webhook
-    10. FastAPI created incident in PostgreSQL
-    11. Web dashboard SSR rendered incident feed
-    12. Duplicate webhook delivery skipped (`duplicates_skipped == 1`, DB count unchanged)
-    13. Fault reset & recovery traffic sent
-    14. Incident resolved in database
+  - Alembic migration `0003_investigations.py` creating `investigation_runs`, `tool_executions`, `evidence_items`, and `hypotheses` tables.
+  - SQLAlchemy ORM models with cascading relationships and foreign key integrity.
+  - Evidence records store typed provenance IDs: `ev_alert_{uuid}`, `ev_metric_{uuid}`, `ev_log_{uuid}`.
+  - Tool execution audit trail records execution times, parameters, and success status.
+- [x] **Deterministic Evidence Citation Validation (`agents/incident_investigator/validator.py`):**
+  - Backend function `validate_evidence` cross-references all hypothesis citations against persisted database rows for that specific investigation run.
+  - Fabricated or cross-run citations are strictly rejected and automatically downgrade the diagnosis to `INCONCLUSIVE` with an audit error.
+- [x] **Honest Inconclusive Diagnosis Protocol:**
+  - Emits `diagnosis: INCONCLUSIVE` with low confidence when telemetry is absent or ambiguous, strictly preventing hallucinated root causes.
+- [x] **FastAPI Investigation Endpoints (`apps/api/app/main.py`):**
+  - `POST /api/v1/incidents/{incident_id}/investigations`: creates run in `queued` state and enqueues Celery task.
+  - `GET /api/v1/incidents/{incident_id}/investigations`: lists investigation history for an incident.
+  - `GET /api/v1/investigations/{investigation_id}`: returns detailed run metadata, hypotheses, and supporting evidence.
+  - `GET /api/v1/investigations/{investigation_id}/events`: returns tool execution audit timeline.
+  - `GET /api/v1/investigations/{investigation_id}/evidence`: paginated list of all evidence items collected during the run.
+  - `GET /api/v1/evidence/{evidence_id}`: individual evidence item with provenance and raw redacted payload.
+  - `POST /api/v1/investigations/{investigation_id}/cancel`: safely transitions active investigation to `cancelled`.
+- [x] **Next.js AI Investigation Dashboard (`apps/web/`):**
+  - Client component `InvestigationPanel` replacing locked gate on incident detail page `/app/incidents/[incidentId]`.
+  - Auto-polls investigation status every 2 seconds during active states.
+  - Renders status pills, hypotheses with qualitative confidence badges, supporting evidence chips, inconclusive explanation banner, interactive evidence explorer table, and expandable tool execution audit log.
+  - Playwright browser test verifying investigation panel rendering and interaction.
+- [x] **Automated End-to-End System Verification (`scripts/verify_phase2_e2e.py`):**
+  - 21-step live verification verifying real fault injection -> telemetry scraping -> incident creation -> Celery dispatch -> ADK investigation -> Prometheus & Loki queries -> PostgreSQL evidence persistence -> hypothesis emission -> inconclusive diagnosis -> citation rejection -> tool budget limits -> secret redaction -> UI rendering.
+
+---
+
+## Implemented and verified in Phase 1 (Baseline Preserved)
+
+- [x] Instrumented Node.js Express service (`examples/shop-api`) with RED metrics and structured JSON logging.
+- [x] Controlled demo fault injection `S01_CHECKOUT_500` via authenticated endpoint.
+- [x] Observability stack: Prometheus v3.2.1, Alertmanager v0.28.1, Loki 3.4.2, OTel Collector Contrib 0.120.0.
+- [x] Prometheus alert rule `HighApiErrorRate` with volume guard, tested via `promtool`.
+- [x] Webhook receiver `POST /api/v1/webhooks/alertmanager` with timing-safe authentication and episode deduplication via PostgreSQL partial unique index `uq_open_incident_fingerprint`.
+- [x] Incident feed and detail pages in Next.js dashboard.
+- [x] Full Phase 1 E2E regression verification passing (`scripts/verify_phase1_e2e.py`).
 
 ---
 
 ## Implemented and verified in Phase 0 (Baseline Preserved)
 
-- [x] Repository toolchain and dependency locks (Python 3.14.7, uv 0.13.0, Node.js 22.23.1, npm 10.9.8).
+- [x] Repository toolchain and dependency locks (Python 3.14.7, uv, Node.js 22.23.1, npm 10.9.8).
 - [x] Core domain contracts and deterministic citation validation engine (`validate_evidence`).
 - [x] FastAPI control plane baseline (`/healthz`, `/readyz`).
 - [x] PostgreSQL 18 with `pgvector` 0.8.7 and Redis 8.10.2 container foundation.
@@ -72,15 +81,15 @@
 
 ## Untested / Blocked / Deferred (Strict Phase Boundaries)
 
-**Developer authorization gate:** Phase 1 is COMPLETE. Phase 2 remains **LOCKED** until developer explicitly authorizes Phase 2 commencement.
+**Developer authorization gate:** Phase 2 is COMPLETE. Phase 3 remains **LOCKED** until developer explicitly authorizes Phase 3 commencement.
 
-- [ ] **Automated AI Investigation Workflow with Google ADK:** `DEFERRED TO PHASE 2`.
-  - Connecting live incidents to background Google ADK agent runs via Celery/Redis.
-- [ ] **Full product auth/RBAC and multi-tenant sessions:** `DEFERRED TO PHASE 3`.
-- [ ] **Tempo distributed trace investigation:** `DEFERRED TO PHASE 3`.
-- [ ] **GitHub deployment correlation & cross-fingerprint clustering:** `DEFERRED TO PHASE 4`.
-- [ ] **Runbook RAG with pgvector:** `DEFERRED TO PHASE 5`.
-- [ ] **n8n internal automations and remediation approvals:** `DEFERRED TO PHASES 6–7`.
+- [ ] **Distributed Tracing Investigation with Grafana Tempo:** `DEFERRED TO PHASE 3`.
+- [ ] **GitHub Deployment / Commit Correlation:** `DEFERRED TO PHASE 3`.
+- [ ] **Full Product Auth / RBAC and Multi-Tenant Sessions:** `DEFERRED TO PHASE 3`.
+- [ ] **Runbook RAG with pgvector and Lexical Search:** `DEFERRED TO PHASE 4`.
+- [ ] **Cross-Incident Fingerprint Clustering & Correlation:** `DEFERRED TO PHASE 4`.
+- [ ] **Multi-Agent Specialist Swarm:** `DEFERRED TO PHASE 5`.
+- [ ] **Automated Remediation / n8n Internal Workflows:** `DEFERRED TO PHASES 6–7`.
 
 ---
 
@@ -88,19 +97,10 @@
 
 | Test Suite | Command | Exit Code | Result |
 |---|---|---|---|
-| Python Static Checks | `ruff check apps agents scripts && ruff format --check apps agents scripts && mypy apps/api/app ... scripts/verify_phase1_e2e.py` | 0 | PASSED (0 lint errors, 22 formatted, 8 type-checked) |
-| Python Unit Tests | `pytest -v -m 'not integration'` | 0 | PASSED (63 passed, 2 deselected) |
+| Python Static Checks | `ruff check apps agents scripts && ruff format --check apps agents scripts && mypy apps/api/app apps/worker agents/incident_investigator` | 0 | PASSED (0 lint errors, all files formatted, 14 source files type-checked clean) |
+| Python Unit Tests | `pytest -q -m 'not integration'` | 0 | PASSED (74 passed, 2 deselected in 6.27s) |
 | Python Security Audit | `pip-audit --progress-spinner off` | 0 | PASSED (0 known vulnerabilities) |
-| Isolated Compose DB Test | `docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify run --rm verify` | 0 | PASSED (2 passed: migration round-trip & DB constraints) |
-| Promtool Alert Rules | `promtool test rules test_api_alerts.yml` | 0 | PASSED (4 scenarios verified) |
-| Shop API Unit Tests | `npm test` | 0 | PASSED (10 assertions verified) |
-| Web Lint & Format | `npm run lint && npm run format:check && npm run typecheck` | 0 | PASSED (ESLint, Prettier, TypeScript workspaces clean) |
-| Web Browser Smoke | `PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright npm run test:web` | 0 | PASSED (2/2 Playwright tests passed) |
-| Web Production Build | `npm run build` | 0 | PASSED (Next.js webpack clean) |
-| Phase 1 End-to-End System | `python scripts/verify_phase1_e2e.py` | 0 | PASSED (All 19 acceptance steps verified live) |
-| Hosted Foundation & Phase 1 CI | GitHub Actions [run 38069571696](https://github.com/Tarun-sde/AegisOps/actions/runs/38069571696) | 0 | PASSED (Full pipeline green on `6f7a1fb`) |
-
-### Hosted CI Fixes Verified (Commit `6f7a1fb`)
-- **Issue 1 (Ruff Import Order):** `scripts/verify_phase1_e2e.py:9` had `from typing import Any` placed before `urllib` stdlib imports. Resolved using `ruff check --fix` and `ruff format`.
-- **Issue 2 (Docker Compose Cleanup Interpolation):** The workflow `Stop task services` step (`if: always()`) failed to interpolate `${POSTGRES_PASSWORD}` when an earlier step failed before `.env` creation. Resolved by providing `POSTGRES_PASSWORD: ci-cleanup-placeholder` scoped strictly to the cleanup step in `.github/workflows/ci.yml`.
-- **Verification Evidence:** Hosted GitHub Actions run [38069571696](https://github.com/Tarun-sde/AegisOps/actions/runs/38069571696) completed with `conclusion=success` across all 11 workflow steps.
+| Web Lint & Format | `npm --prefix apps/web run lint && npm --prefix apps/web run type-check` | 0 | PASSED (ESLint clean, TypeScript clean) |
+| Web Browser E2E Tests | `npm --prefix apps/web test` | 0 | PASSED (3/3 Playwright browser tests passed in 2.7s) |
+| Phase 1 Regression E2E | `.venv/bin/python scripts/verify_phase1_e2e.py` | 0 | PASSED (All 19 acceptance steps verified live) |
+| Phase 2 End-to-End System | `.venv/bin/python scripts/verify_phase2_e2e.py` | 0 | PASSED (All 21 acceptance steps verified live) |
