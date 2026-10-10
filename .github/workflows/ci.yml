@@ -1,4 +1,4 @@
-name: Phase 0 foundation
+name: AegisOps CI
 on:
   push:
   pull_request:
