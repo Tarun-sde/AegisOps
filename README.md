@@ -4,11 +4,11 @@
 
 AegisOps detects application incidents using production-grade observability infrastructure (OpenTelemetry, Prometheus, Alertmanager, Loki), ingests authenticated alerts idempotently into a FastAPI/PostgreSQL control plane, presents an audit-ready Next.js incident feed, and investigates incidents through scoped, evidence-grounded **Google ADK** AI agents.
 
-> **Status:** **Phase 1 Verified.** Real application telemetry, automated alert evaluation, authenticated Alertmanager webhook ingestion, database-enforced deduplication, Next.js incident dashboard, and controlled fault injection (`S01_CHECKOUT_500`) are fully implemented and verified end-to-end. (Phase 2 automated AI investigations remain locked pending explicit authorization).
+> **Status:** **Phase 4 Verified.** Auditable 6-state incident lifecycle machine, deterministic multi-alert correlation, scoped read-only GitHub integration, deployment-aware Google ADK investigations, citation validation, Next.js interactive incident timeline, and full observability pipeline are implemented and verified locally and in hosted GitHub Actions CI ([Run 38146836542](https://github.com/Tarun-sde/AegisOps/actions/runs/38146836542), all green). Phase 5 (Runbook RAG & pgvector knowledge subsystem) is unlocked and ready.
 
 ---
 
-## Architecture (Phase 1 Implemented Data Path)
+## Architecture (Core Telemetry & Investigation Data Path)
 
 ```
 Express/TypeScript (shop-api)
@@ -106,6 +106,6 @@ docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify
 - [`AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md`](AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md): Approved master architecture, phase gates, and roadmaps.
 - [`AGENTS.md`](AGENTS.md): Operational instructions and security rules for coding agents.
 - [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md): Current phase status, verified deliverables, and upcoming milestones.
-- [`docs/ENGINEERING_DECISIONS.md`](docs/ENGINEERING_DECISIONS.md): Granular decision log with 10-point interview-defensible explanations (`DEC-201` through `DEC-250`).
-- [`docs/ADR/`](docs/ADR/): Architecture Decision Records (`ADR-001` through `ADR-021`).
+- [`docs/ENGINEERING_DECISIONS.md`](docs/ENGINEERING_DECISIONS.md): Granular decision log with 10-point interview-defensible explanations (`DEC-001` through `DEC-282`).
+- [`docs/ADR/`](docs/ADR/): Architecture Decision Records (`ADR-001` through `ADR-024`).
 - [`docs/PHASE_REPORTS/`](docs/PHASE_REPORTS/): Verification reports and empirical benchmark artifacts.

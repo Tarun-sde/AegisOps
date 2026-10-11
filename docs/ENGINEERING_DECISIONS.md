@@ -79,7 +79,7 @@
 | ADR-021 | Telemetry Pipeline | Real RED metrics, Loki logs, Alertmanager webhook, deduplication | ACCEPTED — VERIFIED | Yes |
 | ADR-022 | ADK Investigation Worker | Real telemetry AI investigation MVP with Celery, ADK, and citation validation | ACCEPTED — VERIFIED | Yes |
 | ADR-023 | Phase 3 Auth & Tracing | Production auth, RBAC, multi-tenant query scoping, and Grafana Tempo distributed tracing | ACCEPTED — VERIFIED | Yes |
-| ADR-024 | Lifecycle, Correlation & GitHub | 6-state lifecycle machine, deterministic multi-alert correlation, and scoped read-only GitHub integration | IMPLEMENTED — UNVERIFIED | Pending |
+| ADR-024 | Lifecycle, Correlation & GitHub | 6-state lifecycle machine, deterministic multi-alert correlation, and scoped read-only GitHub integration | ACCEPTED — VERIFIED | Yes |
 
 ---
 
@@ -622,7 +622,22 @@ _No implementation events recorded. Add first actual entry at Phase 0, before th
 - **Interview story (STAR):** Situation / Task / Action / Result — no invented numbers.
 ```
 
-**Starting state:** No implementation defects recorded yet. Add real entries during development.
+### BUG-20261011-001 — Hosted CI Static Checks Failure Due to Unformatted TypeScript Files
+- **Symptom:** Hosted GitHub Actions CI run `38146331923` failed at `Static checks` (`make check`) with exit code 1. Prettier format check failed on 5 TypeScript/TSX files across `apps/web` and `examples/shop-api`.
+- **User impact:** Blocked CI pull request / push gate; subsequent test, security scan, and isolated Compose steps were skipped.
+- **Hypotheses considered:**
+  1. *ESLint rule mismatch:* Tested by running ESLint directly; ESLint passed clean.
+  2. *Prettier formatting drift:* Tested via `npm run format:check`; identified 5 unformatted files (`apps/web/app/app/incidents/[incidentId]/deployment-context.tsx`, `apps/web/app/app/incidents/[incidentId]/lifecycle-controls.tsx`, `apps/web/app/app/incidents/[incidentId]/page.tsx`, `apps/web/app/lib/api.ts`, `examples/shop-api/src/app.ts`).
+- **Actual root cause:** New and modified TypeScript/TSX files in Phase 4 were committed without running `npm run format`. Additionally, the local developer workstation lacked `make` and `uv` in system PATH, causing developers to run individual Python commands rather than the comprehensive `make check` target.
+- **Fix:** Installed `/usr/bin/make` and `uv` locally. Ran `npm run format` across workspaces, verified locally with `npm run format:check` and `make check`, and committed fix as `d3ed05a2a8718d849450ae63aa1421e6355ab3bf` (`style: fix Phase 4 formatting and CI checks`).
+- **Why this fix:** Adheres strictly to the repository's pinned formatting standards without altering runtime logic or application behavior.
+- **Verification:** Hosted CI run [38146836542](https://github.com/Tarun-sde/AegisOps/actions/runs/38146836542) on commit `d3ed05a` passed all 12 jobs/steps with 100% green status.
+- **Prevention:** Always execute `make check` (covering Python Ruff/Mypy and Node ESLint/Prettier/TypeScript) before git commit/push, and enforce local toolchain prerequisites.
+- **Interview story (STAR):**
+  - *Situation:* Pushing Phase 4 to GitHub triggered CI, but the pipeline failed immediately on static checks.
+  - *Task:* Rapidly triage the CI failure, determine whether it was a functional or formatting error, fix it cleanly, and get the build green.
+  - *Action:* Inspected GitHub Actions raw logs, identified Prettier failures on 5 frontend/example files, addressed local toolchain gaps (`make`, `uv`), executed `npm run format`, verified the entire `make check` suite locally, and pushed the remediation commit.
+  - *Result:* Hosted CI Run 38146836542 completed with full green status across all 12 steps, including 107 unit tests, security audits, and isolated Docker Compose verification.
 
 ---
 
@@ -1963,83 +1978,83 @@ Do not write weekly summaries with fabricated project experiences.
 - Date (UTC): 2026-10-11
 - Phase / work item: Phase 4 Alert Correlation
 - Scope: `apps/api/app/main.py`, `apps/api/app/correlation.py`
-- Status: IMPLEMENTED — UNVERIFIED
+- Status: VERIFIED
 - Trigger / problem: HighApiErrorRate and HighLatency alerts from the same service during one incident episode were creating disjoint incidents.
 - Constraints: Zero LLM dependency on the ingestion path; deterministic sub-10ms execution; zero cross-tenant / cross-environment data leakage.
 - Selected choice: Deterministic correlation service evaluating (organization_id, service_id, environment, time_window=30m). Correlates distinct fingerprints into the active incident episode, recording `alert_correlated` with explainable reason.
 - Alternatives: LLM-based clustering rejected (slow, expensive, non-deterministic, fails when LLM provider is down); fixed Redis in-memory cache rejected (data loss on worker restart).
 - Why selected: High availability and rock-solid determinism are mandatory for incident ingestion.
 - Costs / failure modes: Alerts spanning multiple services in microservice cascades remain separate incidents in v1.
-- Evidence: `apps/api/tests/test_incident_lifecycle_correlation.py`.
+- Evidence: `apps/api/tests/test_incident_lifecycle_correlation.py`; hosted CI run 38146836542 all green.
 - Related ADR/DEC: ADR-024
 
 ### DEC-278 — 6-state incident lifecycle state machine and optimistic concurrency
 - Date (UTC): 2026-10-11
 - Phase / work item: Phase 4 Incident Lifecycle
 - Scope: `apps/api/app/models.py`, `apps/api/app/main.py`, `apps/api/app/schemas.py`
-- Status: IMPLEMENTED — UNVERIFIED
+- Status: VERIFIED
 - Trigger / problem: Incidents lacked auditable transition rules, allowing arbitrary string statuses and susceptible to race conditions.
 - Constraints: Enforce master plan states `OPEN -> ACKNOWLEDGED -> MITIGATING -> RESOLVED -> CLOSED` (plus reopening).
 - Selected choice: Deterministic state machine matrix rejecting unauthorized and invalid transitions with HTTP 400. Optimistic concurrency control via integer `version` column. Every status mutation persists `IncidentEvent` and `AuditEvent`.
 - Alternatives: Unconstrained string status updates rejected (breaks SLA automation and UI); distributed locks with Redlock rejected (unnecessary operational complexity for single-row mutations).
 - Why selected: Strict auditability, clear user role accountability, and race-free state transitions.
 - Costs / failure modes: Concurrent human edits will result in HTTP 409 Conflict requiring client refresh.
-- Evidence: Verified via unit test matrix covering all permitted and forbidden transitions.
+- Evidence: Verified via unit test matrix covering all permitted and forbidden transitions; hosted CI run 38146836542 all green.
 - Related ADR/DEC: ADR-024
 
 ### DEC-279 — Scoped read-only GitHub integration with token least privilege
 - Date (UTC): 2026-10-11
 - Phase / work item: Phase 4 GitHub Integration
 - Scope: `apps/api/app/integrations/github.py`, `agents/incident_investigator/tools/gateway.py`
-- Status: IMPLEMENTED — UNVERIFIED
+- Status: VERIFIED
 - Trigger / problem: Investigation agent needed software deployment context without endangering source repositories.
 - Constraints: Server-side only; zero write permissions; no tokens in client bundles, logs, or LLM prompts; bound to service repository configuration.
 - Selected choice: Pure read-only GitHub client using standard library `urllib.request`. Bounded pagination (max 10 commits / 5 deployments). Rejects cross-tenant / non-mapped repository access at the gateway.
 - Alternatives: Full GitHub App with write/dispatch capabilities rejected (excessive attack surface); client-side Octokit fetch rejected (credential exposure).
 - Why selected: Ponytail ultra minimalism: zero new external npm/pip dependencies, absolute security boundary.
 - Costs / failure modes: GitHub rate-limiting or network outage degrades deployment context to `commit_history_only` or graceful limitation warning.
-- Evidence: Tested against real and mocked GitHub API responses.
+- Evidence: Tested against real and mocked GitHub API responses; hosted CI run 38146836542 all green.
 - Related ADR/DEC: ADR-024
 
 ### DEC-280 — Sample application release instrumentation and build info metric
 - Date (UTC): 2026-10-11
 - Phase / work item: Phase 4 Telemetry Instrumentation
 - Scope: `examples/shop-api/src/app.ts`
-- Status: IMPLEMENTED — UNVERIFIED
+- Status: VERIFIED
 - Trigger / problem: Telemetry lacked verified release identification, making it impossible to link alerts to deployed revisions.
 - Constraints: Avoid high-cardinality label explosion on request metrics; standard Prometheus conventions.
 - Selected choice: Added Prometheus `Gauge` metric `shop_api_build_info` with constant labels `{version, commit_sha, environment}` set to 1. Injected release attributes into OTLP log/trace resource metadata and `/healthz`. Added controlled `/fault` release regression trigger.
 - Alternatives: Adding commit SHA label to `http_requests_total` rejected (high-cardinality disaster).
 - Why selected: Standard Prometheus/OpenTelemetry best practice for release identification without metric cardinality risks.
 - Costs / failure modes: Environment variables must be set at container start.
-- Evidence: Tested in `examples/shop-api/tests/shop_api.test.mjs`.
+- Evidence: Tested in `examples/shop-api/tests/shop_api.test.mjs`; hosted CI run 38146836542 all green.
 - Related ADR/DEC: ADR-024
 
 ### DEC-281 — Bounded ADK deployment tool and anti-hallucination claim validation
 - Date (UTC): 2026-10-11
 - Phase / work item: Phase 4 ADK Tooling & Validation
 - Scope: `agents/incident_investigator/tools/gateway.py`, `agents/incident_investigator/validator.py`
-- Status: IMPLEMENTED — UNVERIFIED
+- Status: VERIFIED
 - Trigger / problem: Agent might hallucinate that any preceding commit caused an outage, or cite fake deployment evidence IDs.
 - Constraints: Hard 32KB payload cap; budget tracking within 12 tool calls; deterministic claim support verification.
 - Selected choice: Registered `get_recent_deployments` tool creating immutable `ev_deploy_...` evidence. Updated `validate_claim_support` to reject causal claims linking deployments to outages unless corroborating error logs/traces are present and contradictory signals are acknowledged.
 - Alternatives: Letting LLM decide causality without verification rejected (causes false root cause claims in postmortems).
 - Why selected: Enforces scientific rigor in automated incident triage.
 - Costs / failure modes: Genuine release bugs with zero runtime logging will be marked INCONCLUSIVE rather than falsely declared high confidence.
-- Evidence: Tested across T1–T8 test matrix.
+- Evidence: Tested across T1–T8 test matrix; hosted CI run 38146836542 all green.
 - Related ADR/DEC: ADR-022, ADR-024
 
 ### DEC-282 — Database migration 0006 schema extensions for lifecycle and correlation
 - Date (UTC): 2026-10-11
 - Phase / work item: Phase 4 Persistence
 - Scope: `apps/api/alembic/versions/0006_phase4_lifecycle_correlation_github.py`
-- Status: IMPLEMENTED — UNVERIFIED
+- Status: VERIFIED
 - Trigger / problem: Persistent storage needed for incident versioning, environment scoping, correlated alert counts, and service GitHub repositories.
 - Constraints: Backward compatibility with all existing Phase 1–3 records and test suites; zero data loss.
 - Selected choice: Migration `0006` adds `version`, `environment`, `correlated_alert_count` columns to `incidents`; adds `github_repo`, `current_version`, `current_commit_sha` to `services`; updates partial unique index on `incidents`.
 - Alternatives: Separate `incident_correlations` table rejected (redundant complexity when incident events and count suffice).
 - Why selected: Clean, minimal extension of existing core relational tables.
 - Costs / failure modes: None; all new columns have safe default values.
-- Evidence: Verified via Alembic upgrade and test suite execution.
+- Evidence: Verified via Alembic upgrade and test suite execution; hosted CI run 38146836542 all green.
 - Related ADR/DEC: ADR-024
 

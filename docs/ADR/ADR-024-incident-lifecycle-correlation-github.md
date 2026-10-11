@@ -1,7 +1,7 @@
 # ADR-024: Incident Lifecycle State Machine, Deterministic Multi-Alert Correlation, and Scoped Read-Only GitHub Integration
 
 - **Date:** 2026-10-11
-- **Status:** IMPLEMENTED — UNVERIFIED
+- **Status:** ACCEPTED — VERIFIED
 - **Owner:** Backend & AI Platform Engineer
 - **Scope:** `apps/api`, `agents/incident_investigator`, `examples/shop-api`, `apps/web`
 - **Governing Phase:** Phase 4 of `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md`
@@ -73,11 +73,12 @@ The Google ADK investigator is equipped with `get_recent_deployments`:
 
 ---
 
-## 4. Consequences and Verification Plan
+## 4. Consequences and Verification
 
 - **Consequences:** Provides reliable incident lifecycle management, prevents alert notification floods by grouping symptoms into single incidents, and gives the AI investigator access to software change context.
-- **Verification:**
-  1. Unit tests for transition matrix, invalid transitions, and RBAC enforcement.
-  2. Integration tests for multi-alert correlation, duplicate handling, and cross-tenant isolation.
-  3. Agent evaluation with controlled fixtures: broken release (T1), unrelated commit (T2), missing deployments (T3), contradictory telemetry (T4), and fake evidence rejection (T5).
-  4. End-to-end broken release scenario in `shop-api` demonstrating alert -> correlation -> investigation -> timeline visualization.
+- **Verification Evidence:**
+  1. **Unit & Transition Tests:** 9 targeted Phase 4 tests in `apps/api/tests/test_incident_lifecycle_correlation.py` passed clean in 2.21s covering transition matrix, invalid transitions (HTTP 400), optimistic concurrency (HTTP 409), and RBAC enforcement (HTTP 403).
+  2. **Correlation Tests:** Multi-alert correlation, duplicate delivery deduplication, and cross-tenant / cross-environment negative isolation verified.
+  3. **Agent & Gateway Tests:** Agent evaluation with controlled fixtures: broken release (T1), unrelated commit (T2), missing deployments (T3), contradictory telemetry (T4), and fake evidence rejection (T5).
+  4. **Hosted CI Execution:** Git commit `d3ed05a2a8718d849450ae63aa1421e6355ab3bf` on GitHub Actions run [38146836542](https://github.com/Tarun-sde/AegisOps/actions/runs/38146836542) passed all 12 steps (static checks, offline tests, dependency security, browser and production build, isolated Compose verification).
+  5. **Regression & Linters:** 107/107 unit tests passed in 9.43s; Ruff, Mypy, ESLint, Prettier, and TypeScript typecheck all passed with zero errors.

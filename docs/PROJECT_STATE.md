@@ -1,13 +1,15 @@
 # AegisOps — Current Project State
 
 **Updated:** 2026-10-11  
-**Current phase:** Phase 4 (Richer Incident Correlation, Lifecycle Management & GitHub Read-Only Integration)
-**Overall state:** `PHASE 4 IMPLEMENTED AND VERIFIED LOCALLY; 107/107 UNIT TESTS PASSING; PHASE 5 UNLOCKED`
-**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Phase 4; `docs/PHASE_REPORTS/PHASE_4_VERIFICATION.md`; `docs/ADR/ADR-024-incident-lifecycle-correlation-github.md`; DEC-277–DEC-282.
+**Current phase:** Phase 4 (Richer Incident Correlation, Lifecycle Management & GitHub Read-Only Integration) — COMPLETED & VERIFIED  
+**Overall state:** `PHASE 4 IMPLEMENTED AND VERIFIED LOCALLY AND IN HOSTED CI; 107/107 UNIT TESTS PASSING; HOSTED CI RUN 38146836542 ALL GREEN; PHASE 5 UNLOCKED & READY (NOT STARTED)`  
+**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Phase 4; `docs/PHASE_REPORTS/PHASE_4_VERIFICATION.md`; `docs/ADR/ADR-024-incident-lifecycle-correlation-github.md`; DEC-277–DEC-282.  
+**Verified Git Commit:** `d3ed05a2a8718d849450ae63aa1421e6355ab3bf`  
+**Verified Hosted CI Run:** [Run 38146836542](https://github.com/Tarun-sde/AegisOps/actions/runs/38146836542) (`AegisOps CI`, conclusion: `success`)
 
 ---
 
-## Implemented and verified in Phase 4
+## 1. Implemented and Verified in Phase 4
 
 - [x] **Auditable 6-State Incident Lifecycle Machine (DEC-277, ADR-024):**
   - Explicit state transition matrix: `OPEN -> ACKNOWLEDGED -> MITIGATING -> RESOLVED -> CLOSED`, with `REOPENED` support.
@@ -43,39 +45,51 @@
 - [x] **Database Migration & Tests:**
   - Alembic revision `0006_phase4_lifecycle_correlation_github.py` adding `version`, `environment`, `correlated_alert_count` to `incidents`; and `github_repo`, `current_version`, `current_commit_sha` to `services`.
   - 107 unit tests passing across Phase 0–4 (`pytest -q -m 'not integration'`).
-  - Clean TypeScript typecheck (`tsc --noEmit`), ESLint, and Node tests.
+  - Clean TypeScript typecheck (`tsc --noEmit`), ESLint, Prettier, and Node tests.
 
 ---
 
-## Untested / Blocked / Deferred (Strict Phase Boundaries)
+## 2. Hosted CI Verification & Troubleshooting
 
-- [ ] **Runbook RAG with pgvector and Lexical Search:** `UNLOCKED IN PHASE 5`.
-- [ ] **Multi-Agent Specialist Swarm:** `DEFERRED TO PHASE 5 / 6`.
-- [ ] **Automated Remediation / n8n Internal Workflows:** `DEFERRED TO PHASES 6–7`.
-- [ ] **Automated Production Remediation / Actions:** `OUT OF SCOPE FOR V1`.
+- **Latest Verified Hosted CI Run:** [Run 38146836542](https://github.com/Tarun-sde/AegisOps/actions/runs/38146836542) on `main`, commit `d3ed05a2a8718d849450ae63aa1421e6355ab3bf`: **Completed / Success (All Green)**.
+- **Workflow Steps Verified:**
+  - `Frozen dependencies`: `uv sync --frozen --all-groups`, `npm ci`
+  - `Static checks`: `make check` (Ruff check, Ruff format, Mypy, ESLint, Prettier format:check, TypeScript typecheck across workspaces)
+  - `Offline tests and ADK artifacts`: `make test` (107 pytest unit tests, Node shop-api test), `make spike`
+  - `Dependency security`: `pip-audit`, `npm audit`
+  - `Browser and production build`: `make browser`, `npm run build`
+  - `Isolated Compose verification`: `make build`, `make integration`, `make up`, `make migrate`, healthchecks on API (8000), Web (3000), Shop-API (3001)
+- **CI Troubleshooting Record (Initial Failure & Fix):**
+  - Commit `51e548de27ca1859d08480396fb10b2496a782a4` failed on Run `38146331923` at `Static checks` due to 5 TS/TSX files requiring Prettier formatting (`npm run format:check`).
+  - Local environment update: Installed `/usr/bin/make` and `/home/tarun/.local/bin/uv` on the developer Fedora workstation to enable parity with CI.
+  - Formatted files via `npm run format`, verified with `make check`, and pushed commit `d3ed05a2a8718d849450ae63aa1421e6355ab3bf`, resulting in Run 38146836542 passing completely.
 
 ---
 
-## Historical Verification Test Summary (before CI repair)
+## 3. Current Test & Verification Summary
 
 | Test Suite | Command | Exit Code | Result |
 |---|---|---|---|
-| Python Static Checks | `ruff check apps agents scripts && ruff format --check apps agents scripts && mypy apps/api/app apps/worker agents/incident_investigator` | 0 | PASSED (0 lint errors, all files formatted, 14 source files type-checked clean) |
-| Python Unit Tests | `pytest -q -m 'not integration'` | 0 | PASSED (74 passed, 2 deselected in 6.27s) |
-| Python Security Audit | `pip-audit --progress-spinner off` | 0 | PASSED (0 known vulnerabilities) |
-| Web Lint & Format | `npm --prefix apps/web run lint && npm --prefix apps/web run type-check` | 0 | PASSED (ESLint clean, TypeScript clean) |
-| Web Browser E2E Tests | `npm --prefix apps/web test` | 0 | PASSED (3/3 Playwright browser tests passed in 2.7s) |
-| Phase 1 Regression E2E | `.venv/bin/python scripts/verify_phase1_e2e.py` | 0 | PASSED (All 19 acceptance steps verified live) |
-| Phase 2 End-to-End System | `.venv/bin/python scripts/verify_phase2_e2e.py` | 0 | PASSED (All 21 acceptance steps verified live) |
+| Python Static Checks | `uv run --frozen --all-groups ruff check conftest.py apps agents scripts && uv run --frozen --all-groups ruff format --check conftest.py apps agents scripts && uv run --frozen --all-groups mypy ...` | 0 | PASSED (0 lint errors, 49 files formatted, 21 source files type-checked clean) |
+| Python Unit Tests | `pytest -q -m 'not integration'` | 0 | PASSED (107 passed, 3 deselected in 9.43s) |
+| Express Service Tests | `npm test --workspace examples/shop-api` | 0 | PASSED (Build clean, 1/1 test passed in 209ms) |
+| Web Lint & Format | `npm run lint && npm run format:check && npm run typecheck` | 0 | PASSED (ESLint clean, Prettier clean, TypeScript clean) |
+| Python Security Audit | `uv run --frozen --all-groups pip-audit --progress-spinner off` | 0 | PASSED (0 known vulnerabilities) |
+| Node Security Audit | `npm audit --audit-level=high` | 0 | PASSED (0 high/critical vulnerabilities) |
+| Browser E2E Tests | `npm run test:web` | 0 | PASSED (Playwright tests) |
+| Hosted GitHub Actions | Workflow `AegisOps CI`, Run `38146836542` | 0 | PASSED (All 12 steps succeeded on ubuntu-24.04) |
 
+---
 
-## CI repair verification — 2026-10-11 (DEC-266)
+## 4. Phase Boundaries & Phase 5 Readiness
 
-- Latest inspected hosted run: [38118992591](https://github.com/Tarun-sde/AegisOps/actions/runs/38118992591), `main`, commit `3c6db7d97b97b7ffa06a175d69488e548ad7f041`: **completed / failure**. Foundation failed at offline tests; security, browser/build and isolated Compose steps were skipped.
-- Root cause: two supported investigation tests supplied no deterministic diagnostic telemetry; the gateway test required real Prometheus. Offline model mode alone does not isolate telemetry. Quality tests also loaded `.env` at collection and included a live Gemini test in offline selection.
-- Repair: shared synthetic HTTP fixtures exercise the actual gateway, ADK and SQLite persistence; missing/refused telemetry stays INCONCLUSIVE. Per-test credential isolation and network guards prevent accidental live calls. Live smoke now requires integration selection and `AEGISOPS_LIVE_TEST=1`. No production diagnosis logic or dependency pins changed.
-- Clean Python 3.14.7 frozen environment: **89 passed, 3 deselected, 4 warnings**. Reverse order: same counts. Existing API image with current tests mounted read-only and `--network none`: same counts. The three deselections are two existing infrastructure tests and the live smoke test; no test was deleted.
-- Original failures independently: lifecycle **3 passed** (supported/empty/refused); gateway **1 passed**; supported agent **1 passed**. Ruff (39 files), mypy (15 files), web lint/format/types, both ADK spikes, Node test (**1 passed**), browser tests (**3 passed**, reused existing web service), production builds and both dependency audits pass.
-- `make` is unavailable on this host; its test/spike/check recipes were executed directly. Isolated Compose migration/readiness checks pass (**2 passed, 1 skipped, 89 deselected**); live smoke is the intentional skip. Fresh API image build passes; its offline suite with networking disabled also passes (89 tests), and its isolated Compose checks pass (2 tests, 1 opt-in live smoke skipped).
-- **External blocker:** `gh` absent; HTTPS push has no credential helper/usable credentials, and the SSH agent has no identities. Public GitHub API permits run/step inspection but full log download returns HTTP 403. Hosted repair success cannot be claimed until the commit is pushed and its exact run completes successfully.
-- Full evidence, limitations and resume procedure: [Phase 2 report, CI repair addendum](PHASE_REPORTS/PHASE_2_VERIFICATION.md#9-ci-isolation-repair--2026-10-11).
+### Untested / Blocked / Deferred (Strict Boundaries)
+- [ ] **Runbook RAG with pgvector and Lexical Search:** `UNLOCKED IN PHASE 5 (NOT STARTED)`.
+- [ ] **Multi-Agent Specialist Swarm:** `DEFERRED TO PHASE 5 / 6`.
+- [ ] **Automated Remediation / n8n Internal Workflows:** `DEFERRED TO PHASES 6–7`.
+- [ ] **Production Rollback / Remediation Execution:** `OUT OF SCOPE FOR V1`.
+
+### Phase 5 Readiness
+**PHASE 5 IS READY & UNLOCKED (NOT STARTED)**
+
+All Phase 4 gates (lifecycle machine, correlation engine, GitHub adapter, deployment-aware ADK investigation, frontend timeline, database migrations, and hosted CI verification) are satisfied. The repository is in a stable, verified state ready to start Phase 5 implementation.
