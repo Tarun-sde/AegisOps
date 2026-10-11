@@ -5,11 +5,26 @@ export interface Incident {
   title: string;
   severity: string;
   status: string;
+  version?: number;
+  environment?: string;
+  correlated_alert_count?: number;
   fingerprint: string;
   started_at: string;
   resolved_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface DeploymentRecord {
+  deployment_id: string;
+  repository: string;
+  commit_sha: string;
+  version?: string | null;
+  environment: string;
+  deployed_at: string;
+  source: string;
+  is_deployment: boolean;
+  message?: string | null;
 }
 
 export interface IncidentEvent {
@@ -658,6 +673,77 @@ export async function getTrace(
       data: null,
       error:
         err instanceof Error ? err.message : "Failed to fetch trace from Tempo",
+    };
+  }
+}
+
+export async function getServiceDeployments(
+  serviceId: string,
+  limit: number = 5,
+): Promise<{ data: DeploymentRecord[] | null; error: string | null }> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/v1/services/${serviceId}/deployments?limit=${limit}`,
+      {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+        credentials: "include",
+      },
+    );
+    if (!res.ok) {
+      return {
+        data: null,
+        error: `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as DeploymentRecord[];
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error:
+        err instanceof Error
+          ? err.message
+          : "Failed to connect to control plane API",
+    };
+  }
+}
+
+export async function updateIncidentStatus(
+  incidentId: string,
+  status: string,
+  expectedVersion?: number,
+  reason?: string,
+): Promise<{ data: Incident | null; error: string | null }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/incidents/${incidentId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        status,
+        expected_version: expectedVersion,
+        reason,
+      }),
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      const detail =
+        errJson?.detail || `API error ${res.status}: ${res.statusText}`;
+      return { data: null, error: detail };
+    }
+    const data = (await res.json()) as Incident;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error:
+        err instanceof Error
+          ? err.message
+          : "Failed to update incident status",
     };
   }
 }

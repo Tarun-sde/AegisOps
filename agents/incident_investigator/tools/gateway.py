@@ -386,3 +386,87 @@ class ReadOnlyToolGateway:
                 "error": f"Trace query failed: {err}",
                 "trace_id": trace_id,
             }
+
+    def get_recent_deployments(
+        self, repository: str | None = None, limit: int = 5
+    ) -> dict[str, Any]:
+        """Retrieve recent software deployments and commit metadata for authorized repository.
+
+        Args:
+            repository: Optional repository override (must match authorized service repository).
+            limit: Maximum number of deployment/commit records to retrieve (1-5).
+        """
+        t0 = time.perf_counter()
+        self._check_budget()
+        args = {"repository": repository, "limit": limit}
+
+        limit = max(1, min(limit, 5))
+
+        # 1. Resolve authorized service repository
+        authorized_repo = "AegisOps/shop-api"
+        env = "staging"
+        if self.db_session and self.scope.service_id:
+            from apps.api.app.models import Service
+
+            svc = self.db_session.get(Service, self.scope.service_id)
+            if svc:
+                if svc.github_repo:
+                    authorized_repo = svc.github_repo
+                env = svc.environment
+
+        # 2. Enforce strict repository boundary (T7 Cross-tenant protection)
+        if repository and repository.strip().lower() != authorized_repo.strip().lower():
+            latency = (time.perf_counter() - t0) * 1000
+            self._record_execution(
+                "get_recent_deployments", args, "error", latency, "UNAUTHORIZED_REPOSITORY"
+            )
+            return {
+                "trust": "UNTRUSTED_SOURCE",
+                "error": (
+                    f"Access denied: repository '{repository}' is outside the authorized "
+                    f"scope for service '{self.scope.service_id}'. Authorized: '{authorized_repo}'."
+                ),
+                "deployments": [],
+            }
+
+        try:
+            from apps.api.app.integrations.github import ScopedGitHubClient
+
+            client = ScopedGitHubClient()
+            deployments = client.get_recent_deployments(
+                authorized_repo, environment=env, limit=limit
+            )
+
+            snippet = json.dumps(deployments)
+            if len(snippet) > MAX_PAYLOAD_BYTES:
+                snippet = snippet[:MAX_PAYLOAD_BYTES]
+
+            now_utc = datetime.now(UTC)
+            ev_id = f"ev_deploy_{hashlib.sha256(snippet.encode('utf-8')).hexdigest()[:8]}"
+            self._persist_evidence(
+                evidence_id=ev_id,
+                source="deployments",
+                observed_at=now_utc,
+                locator=f"github:repo:{authorized_repo}:deployments",
+                redacted_snippet=snippet,
+                query_metadata={"repository": authorized_repo, "environment": env, "limit": limit},
+            )
+            latency = (time.perf_counter() - t0) * 1000
+            self._record_execution("get_recent_deployments", args, "success", latency)
+            return {
+                "trust": "UNTRUSTED_SOURCE",
+                "repository": authorized_repo,
+                "environment": env,
+                "deployment_count": len(deployments),
+                "deployments": deployments,
+                "evidence_id": ev_id,
+            }
+        except Exception as err:
+            latency = (time.perf_counter() - t0) * 1000
+            self._record_execution("get_recent_deployments", args, "error", latency, "GITHUB_ERROR")
+            return {
+                "trust": "UNTRUSTED_SOURCE",
+                "error": f"Deployment context query failed: {err}",
+                "deployments": [],
+                "limitation": "Deployment metadata unavailable from upstream provider",
+            }

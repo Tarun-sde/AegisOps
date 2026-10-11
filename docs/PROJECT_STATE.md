@@ -1,56 +1,58 @@
 # AegisOps — Current Project State
 
 **Updated:** 2026-10-11  
-**Current phase:** Phase 3 (Production-Oriented Authentication, RBAC, Multi-Tenant Security & Distributed Tracing)
-**Overall state:** `PHASE 3 IMPLEMENTED AND VERIFIED LOCALLY; 98/98 UNIT TESTS PASSING; PHASE 4 LOCKED`
-**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Phase 3; `docs/PHASE_REPORTS/PHASE_3_VERIFICATION.md`; `docs/ADR/ADR-023-phase3-auth-rbac-tracing.md`; DEC-267–DEC-276.
+**Current phase:** Phase 4 (Richer Incident Correlation, Lifecycle Management & GitHub Read-Only Integration)
+**Overall state:** `PHASE 4 IMPLEMENTED AND VERIFIED LOCALLY; 107/107 UNIT TESTS PASSING; PHASE 5 UNLOCKED`
+**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Phase 4; `docs/PHASE_REPORTS/PHASE_4_VERIFICATION.md`; `docs/ADR/ADR-024-incident-lifecycle-correlation-github.md`; DEC-277–DEC-282.
 
 ---
 
-## Implemented and verified in Phase 3
+## Implemented and verified in Phase 4
 
-- [x] **Secure Authentication & Session Lifecycle (DEC-267, ADR-023):**
-  - Standard library `hashlib.scrypt` password hashing with random 16-byte salt and constant-time comparison (`secrets.compare_digest`).
-  - Opaque server-side session tokens stored as SHA-256 hashes in `user_sessions`.
-  - Transported via `HttpOnly`, `SameSite="lax"`, secure cookie (`aegisops_session`) with dual Bearer token fallback.
-  - Endpoints: `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/me`.
-- [x] **Double-Submit CSRF Cookie Protection (DEC-268):**
-  - `aegisops_csrf` cookie issued on session creation; mutating HTTP requests (`POST`, `PUT`, `PATCH`, `DELETE`) verified against `x-csrf-token` header.
-- [x] **Centralized 4-Tier RBAC & Multi-Tenant Query Scoping (DEC-269, DEC-270):**
-  - Role hierarchy: `owner` (4) > `admin` (3) > `member` (2) > `viewer` (1) enforced via `TenantContext`.
-  - Viewer role strictly prohibited from creating/updating services, verifying connectors, or triggering/cancelling investigations (403 Forbidden).
-  - Multi-tenant application-level query scoping: tenant A queries cannot access tenant B services, incidents, or members (404/403).
-- [x] **Service Inventory & SSRF-Guarded Connector Verification (DEC-271):**
-  - Full CRUD on `/api/v1/services` with environment tiers (`production`, `staging`, `development`).
-  - `POST /api/v1/services/{id}/verify-connection` tests healthcheck endpoints with real latency measurement.
-  - Deterministic `validate_connector_url` rejects AWS metadata (`169.254.169.254`), Google metadata (`metadata.google.internal`), loopback (`127.0.0.0/8`), and private IP ranges.
-- [x] **Grafana Tempo Distributed Tracing (DEC-272, DEC-273, DEC-274, DEC-275):**
-  - Added Grafana Tempo 2.7.1 to `docker-compose.observability.yml` and `infra/tempo/tempo.yaml`.
-  - OpenTelemetry Collector dual-pipeline configured to route traces to Tempo (`tempo:4317`).
-  - Express `shop-api` extracts/generates W3C `traceparent`, injects `trace_id` into logs and headers (`x-trace-id`), and exports OTLP JSON spans.
-  - `GET /api/v1/traces/{trace_id}` validates 32-hex trace ID format, queries Tempo, and normalizes span trees.
-  - Google ADK `ReadOnlyToolGateway` tool `get_trace_summary` bounds payloads to 32KB, registers spans into evidence ledger (`ev_trace_...`), and logs execution.
-- [x] **Database Migration & Backward Compatibility (DEC-276):**
-  - Alembic revision `0005_phase3_auth_rbac_tracing.py` creates `users`, `user_sessions`, `memberships`, `audit_events`, and adds foreign keys.
-  - Automatic backfill seeds demo organization `AegisOps Demo` and demo user `demo@aegisops.local` (password `aegisops-demo-password`).
-- [x] **Frontend Authentication, Onboarding & Trace Waterfall (apps/web):**
-  - Client component `/login` with Sign In / Register toggle and CSRF cookie propagation.
-  - Client component `/onboarding` with service registration and live SSRF-guarded connector test.
-  - Client component `TraceViewer` with interactive 32-hex lookup and waterfall timeline bars embedded in incident detail page.
-- [x] **Comprehensive Test Verification:**
-  - 9 Phase 3 security/RBAC/tracing tests passing in `apps/api/tests/test_auth_rbac_tracing.py`.
-  - All 98 non-integration unit tests passing across Phase 0–3 (`pytest -q -m 'not integration'`).
-  - Full TypeScript and ESLint checks passing cleanly in `apps/web` and `examples/shop-api`.
+- [x] **Auditable 6-State Incident Lifecycle Machine (DEC-277, ADR-024):**
+  - Explicit state transition matrix: `OPEN -> ACKNOWLEDGED -> MITIGATING -> RESOLVED -> CLOSED`, with `REOPENED` support.
+  - Optimistic concurrency control via monotonic `version` counter preventing lost updates and race conditions (HTTP 409 Conflict).
+  - RBAC authorization enforcement: Viewers rejected from mutating status (HTTP 403 Forbidden).
+  - Append-only `incident_events` audit records (`incident_status_changed`, `incident_resolved`, `incident_closed`, `incident_reopened`).
+  - Endpoints: `PATCH /api/v1/incidents/{incident_id}` with `expected_version` and optional `reason`.
+- [x] **Deterministic Multi-Alert Correlation Engine (DEC-278, ADR-024):**
+  - Correlates incoming Alertmanager alerts within a bounded 30-minute episode window.
+  - Groups alerts matching `organization_id`, `service_id`, and `environment` into an active incident episode.
+  - Duplicate delivery deduplication: identical fingerprint alerts record `alert_firing_duplicate` and do not increment correlated alert count or create duplicate incidents.
+  - Distinct alert correlation: distinct alerts on same service elevate severity and increment `correlated_alert_count` with explainable event reason.
+  - Strict negative boundaries: alerts from different organizations, different services, different environments, or outside the 30-minute window never merge.
+  - Idempotent resolution handling: duplicate resolved alerts skip duplicate increments.
+- [x] **Sample Application Release Instrumentation (DEC-279, ADR-024):**
+  - Updated `examples/shop-api` with verified deployment version metadata.
+  - Gauge `shop_api_build_info` exposing `version`, `commit_sha`, `environment`, and `build_id`.
+  - Added endpoints `GET /version` and `POST /fault/release` for controlled bad-release simulation (`0.1.1-buggy`).
+  - Structured logs and OTLP spans carry actual release revision attributes.
+- [x] **Scoped GitHub Read-Only Integration (DEC-280, ADR-024):**
+  - `ScopedGitHubClient` using standard library `urllib.request` with strictly read-only scopes.
+  - Token isolation: secrets never leak to client bundles, logs, or agent prompts.
+  - API resilience: bounded pagination (max 5 records), timeouts (5s), rate-limit handling (`x-ratelimit-remaining`), offline fallback.
+  - Fallback: if GitHub Deployments API lacks records or errors out, gracefully falls back to verified commit history labeled as `commit history only`.
+- [x] **Deployment-Aware Google ADK Investigation & Evidence Validation (DEC-281, DEC-282):**
+  - Registered `get_recent_deployments` tool on `ReadOnlyToolGateway` with server-enforced service-to-repository scoping (T7 defense).
+  - Anti-hallucination evidence validator (`validator.py`): rejects unverified deployment citations, enforces that deployment precedence is temporal correlation and not automated proof without corroborating telemetry.
+  - Support for contradictory observations: logs/traces showing independent root cause override deployment timing assumptions.
+- [x] **Frontend Incident Detail Lifecycle & Deployment UI (apps/web):**
+  - `LifecycleControls`: interactive status buttons, version indicator, optional justification comment, optimistic locking error handling.
+  - `DeploymentContext`: verified deployment card showing commit SHA, repository, environment, and honest fallback when disconnected.
+  - Enhanced timeline event badges with color coding for correlated alerts, lifecycle transitions, and duplicates.
+- [x] **Database Migration & Tests:**
+  - Alembic revision `0006_phase4_lifecycle_correlation_github.py` adding `version`, `environment`, `correlated_alert_count` to `incidents`; and `github_repo`, `current_version`, `current_commit_sha` to `services`.
+  - 107 unit tests passing across Phase 0–4 (`pytest -q -m 'not integration'`).
+  - Clean TypeScript typecheck (`tsc --noEmit`), ESLint, and Node tests.
 
 ---
 
 ## Untested / Blocked / Deferred (Strict Phase Boundaries)
 
-- [ ] **GitHub Deployment / Commit Correlation:** `DEFERRED TO PHASE 4`.
-- [ ] **Runbook RAG with pgvector and Lexical Search:** `DEFERRED TO PHASE 4`.
-- [ ] **Cross-Incident Fingerprint Clustering & Correlation:** `DEFERRED TO PHASE 4`.
-- [ ] **Multi-Agent Specialist Swarm:** `DEFERRED TO PHASE 5`.
+- [ ] **Runbook RAG with pgvector and Lexical Search:** `UNLOCKED IN PHASE 5`.
+- [ ] **Multi-Agent Specialist Swarm:** `DEFERRED TO PHASE 5 / 6`.
 - [ ] **Automated Remediation / n8n Internal Workflows:** `DEFERRED TO PHASES 6–7`.
+- [ ] **Automated Production Remediation / Actions:** `OUT OF SCOPE FOR V1`.
 
 ---
 

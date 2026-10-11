@@ -242,11 +242,22 @@ class IncidentRead(BaseModel):
     title: str
     severity: str
     status: str
+    environment: str = "staging"
+    version: int = 1
+    correlated_alert_count: int = 1
     fingerprint: str
     started_at: datetime
     resolved_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class IncidentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = Field(min_length=1, max_length=32)
+    reason: str | None = Field(default=None, max_length=1000)
+    expected_version: int | None = Field(default=None, ge=1)
 
 
 class IncidentEventRead(BaseModel):
@@ -442,6 +453,9 @@ class ServiceRead(BaseModel):
     environment: str
     description: str | None = None
     status: str
+    github_repo: str | None = None
+    current_version: str | None = None
+    current_commit_sha: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -450,6 +464,7 @@ class ServiceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     environment: str = "staging"
     description: str | None = None
+    github_repo: str | None = None
 
 
 class ServiceUpdate(BaseModel):
@@ -457,6 +472,22 @@ class ServiceUpdate(BaseModel):
     environment: str | None = None
     description: str | None = None
     status: str | None = None
+    github_repo: str | None = None
+    current_version: str | None = None
+    current_commit_sha: str | None = None
+
+
+class DeploymentRecordRead(BaseModel):
+    deployment_id: str
+    repository: str
+    commit_sha: str
+    version: str | None = None
+    environment: str = "staging"
+    deployed_at: datetime
+    source: str = "github"
+    is_deployment: bool = True
+    message: str | None = None
+    author: str | None = None
 
 
 class ServiceVerifyRequest(BaseModel):

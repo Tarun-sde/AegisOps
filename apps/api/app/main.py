@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import uuid
@@ -30,7 +31,14 @@ from apps.api.app.auth import (
     validate_connector_url,
     verify_password,
 )
+from apps.api.app.correlation import correlate_alert
 from apps.api.app.db import get_db
+from apps.api.app.integrations.github import ScopedGitHubClient
+from apps.api.app.lifecycle import (
+    ConcurrencyConflictError,
+    InvalidTransitionError,
+    transition_incident,
+)
 from apps.api.app.models import (
     AlertEvent,
     EvidenceItem,
@@ -46,12 +54,14 @@ from apps.api.app.models import (
 from apps.api.app.schemas import (
     AlertmanagerWebhookPayload,
     AuthResponse,
+    DeploymentRecordRead,
     EvidenceItemRead,
     EvidenceListResponse,
     HypothesisRead,
     IncidentEventRead,
     IncidentListResponse,
     IncidentRead,
+    IncidentUpdate,
     InvestigationRunCreate,
     InvestigationRunDetailRead,
     InvestigationRunRead,
@@ -72,6 +82,8 @@ from apps.api.app.schemas import (
 )
 from apps.api.app.telemetry.tempo import TempoClient, validate_trace_id
 from apps.worker.tasks import run_investigation_task
+
+logger = logging.getLogger("aegisops.api")
 
 
 class Health(BaseModel):
@@ -725,22 +737,40 @@ def verify_alertmanager_auth(
         )
 
 
-def get_or_create_demo_scope(session: Session) -> tuple[uuid.UUID, uuid.UUID]:
-    org = session.scalar(select(Organization).where(Organization.name == "AegisOps Demo"))
+def resolve_webhook_target_service(
+    session: Session, alert_labels: dict[str, str]
+) -> tuple[uuid.UUID, uuid.UUID, str]:
+    """Resolve organization and service for incoming alert, creating demo scopes if missing."""
+    org_name = alert_labels.get("organization")
+    org = None
+    if org_name:
+        org = session.scalar(select(Organization).where(Organization.name == org_name))
+    if not org:
+        org = session.scalar(select(Organization).order_by(Organization.created_at.asc()))
     if not org:
         org = Organization(name="AegisOps Demo")
         session.add(org)
         session.flush()
 
+    service_name = alert_labels.get("service") or alert_labels.get("app") or "shop-api"
     svc = session.scalar(
-        select(Service).where(Service.organization_id == org.id, Service.name == "shop-api")
+        select(Service).where(
+            Service.organization_id == org.id,
+            Service.name == service_name,
+        )
     )
     if not svc:
-        svc = Service(organization_id=org.id, name="shop-api")
+        env = alert_labels.get("environment") or alert_labels.get("env") or "staging"
+        svc = Service(organization_id=org.id, name=service_name, environment=env)
         session.add(svc)
         session.flush()
 
-    return org.id, svc.id
+    return org.id, svc.id, svc.environment
+
+
+def get_or_create_demo_scope(session: Session) -> tuple[uuid.UUID, uuid.UUID]:
+    org_id, svc_id, _ = resolve_webhook_target_service(session, {"service": "shop-api"})
+    return org_id, svc_id
 
 
 @app.post("/api/v1/webhooks/alertmanager", status_code=status.HTTP_200_OK)
@@ -757,13 +787,14 @@ async def alertmanager_webhook(
             detail="Payload exceeds maximum permitted size of 512KB",
         )
 
-    org_id, svc_id = get_or_create_demo_scope(db)
-    now_utc = datetime.now(UTC)
     created_count = 0
     resolved_count = 0
     duplicate_count = 0
+    correlated_count = 0
 
     for alert in payload.alerts:
+        org_id, svc_id, env = resolve_webhook_target_service(db, alert.labels)
+
         payload_hash = hashlib.sha256(
             f"{alert.fingerprint}:{alert.startsAt}:{alert.status}".encode()
         ).hexdigest()
@@ -783,83 +814,23 @@ async def alertmanager_webhook(
         )
         db.add(alert_event)
 
-        # Look up existing open incident for active episode deduplication
-        existing_incident = db.scalar(
-            select(Incident)
-            .where(
-                Incident.organization_id == org_id,
-                Incident.service_id == svc_id,
-                Incident.fingerprint == alert.fingerprint,
-                Incident.status == "open",
-            )
-            .with_for_update()
+        # Correlate alert into incident via deterministic correlation engine
+        _inc, action = correlate_alert(
+            db=db,
+            org_id=org_id,
+            svc_id=svc_id,
+            alert=alert,
+            environment=env,
+            actor="alertmanager",
         )
-
-        if alert.status == "firing":
-            if existing_incident:
-                duplicate_count += 1
-                existing_incident.updated_at = now_utc
-                dup_event = IncidentEvent(
-                    incident_id=existing_incident.id,
-                    event_type="alert_firing_duplicate",
-                    actor="alertmanager",
-                    occurred_at=now_utc,
-                    payload={
-                        "fingerprint": alert.fingerprint,
-                        "starts_at": alert.startsAt.isoformat(),
-                    },
-                )
-                db.add(dup_event)
-            else:
-                created_count += 1
-                title = (
-                    alert.annotations.get("summary")
-                    or f"High error rate on {alert.labels.get('service', 'shop-api')}"
-                )
-                new_incident = Incident(
-                    organization_id=org_id,
-                    service_id=svc_id,
-                    title=title,
-                    severity=alert.labels.get("severity", "critical"),
-                    status="open",
-                    fingerprint=alert.fingerprint,
-                    started_at=alert.startsAt,
-                )
-                db.add(new_incident)
-                db.flush()
-
-                init_event = IncidentEvent(
-                    incident_id=new_incident.id,
-                    event_type="incident_created",
-                    actor="alertmanager",
-                    occurred_at=alert.startsAt,
-                    payload={
-                        "summary": title,
-                        "description": alert.annotations.get("description", ""),
-                        "labels": alert.labels,
-                        "generatorURL": alert.generatorURL,
-                    },
-                )
-                db.add(init_event)
-
-        elif alert.status == "resolved":
-            if existing_incident:
-                resolved_count += 1
-                existing_incident.status = "resolved"
-                existing_incident.resolved_at = alert.endsAt or now_utc
-                existing_incident.updated_at = now_utc
-
-                resolved_event = IncidentEvent(
-                    incident_id=existing_incident.id,
-                    event_type="incident_resolved",
-                    actor="alertmanager",
-                    occurred_at=alert.endsAt or now_utc,
-                    payload={
-                        "resolved_at": (alert.endsAt or now_utc).isoformat(),
-                        "fingerprint": alert.fingerprint,
-                    },
-                )
-                db.add(resolved_event)
+        if action == "created":
+            created_count += 1
+        elif action == "duplicate":
+            duplicate_count += 1
+        elif action == "correlated":
+            correlated_count += 1
+        elif action == "resolved":
+            resolved_count += 1
 
     db.commit()
     return {
@@ -868,6 +839,7 @@ async def alertmanager_webhook(
         "incidents_created": created_count,
         "incidents_resolved": resolved_count,
         "duplicates_skipped": duplicate_count,
+        "alerts_correlated": correlated_count,
     }
 
 
@@ -923,6 +895,133 @@ def get_incident(
             detail=f"Incident '{incident_id}' not found",
         )
     return IncidentRead.model_validate(incident)
+
+
+@app.patch("/api/v1/incidents/{incident_id}", response_model=IncidentRead)
+def update_incident(
+    incident_id: uuid.UUID,
+    payload: IncidentUpdate,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> IncidentRead:
+    if not context.can("member"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Viewers cannot modify incident status.",
+        )
+    incident = db.scalar(
+        select(Incident)
+        .where(
+            Incident.id == incident_id,
+            Incident.organization_id == context.organization.id,
+        )
+        .with_for_update()
+    )
+    if not incident:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Incident '{incident_id}' not found",
+        )
+
+    old_status = incident.status
+    try:
+        transition_incident(
+            incident,
+            target_status=payload.status,
+            actor=context.user.email,
+            reason=payload.reason,
+            expected_version=payload.expected_version,
+            db=db,
+        )
+        db.commit()
+        db.refresh(incident)
+
+        log_audit_event(
+            db,
+            organization_id=context.organization.id,
+            actor_id=context.user.id,
+            resource_type="incident",
+            resource_id=str(incident.id),
+            action=f"incident.{incident.status}",
+            result="success",
+            metadata={
+                "from_status": old_status,
+                "to_status": incident.status,
+                "reason": payload.reason or "",
+                "version": incident.version,
+            },
+        )
+        return IncidentRead.model_validate(incident)
+    except InvalidTransitionError as err:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(err),
+        ) from err
+    except ConcurrencyConflictError as err:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(err),
+        ) from err
+
+
+@app.get(
+    "/api/v1/services/{service_id}/deployments",
+    response_model=list[DeploymentRecordRead],
+)
+def get_service_deployments(
+    service_id: uuid.UUID,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    limit: Annotated[int, Query(ge=1, le=10)] = 5,
+) -> list[DeploymentRecordRead]:
+    service = db.scalar(
+        select(Service).where(
+            Service.id == service_id,
+            Service.organization_id == context.organization.id,
+        )
+    )
+    if not service:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Service '{service_id}' not found",
+        )
+
+    repo = service.github_repo or "AegisOps/shop-api"
+    client = ScopedGitHubClient()
+    try:
+        raw_deployments = client.get_recent_deployments(
+            repo, environment=service.environment, limit=limit
+        )
+        records = []
+        for d in raw_deployments:
+            deployed_at_val = d.get("deployed_at")
+            if isinstance(deployed_at_val, str):
+                deployed_at_dt = datetime.fromisoformat(deployed_at_val.replace("Z", "+00:00"))
+            elif isinstance(deployed_at_val, datetime):
+                deployed_at_dt = deployed_at_val
+            else:
+                deployed_at_dt = datetime.now(UTC)
+
+            records.append(
+                DeploymentRecordRead(
+                    deployment_id=str(d.get("deployment_id", "")),
+                    repository=d.get("repository", repo),
+                    commit_sha=d.get("commit_sha", ""),
+                    version=d.get("version"),
+                    environment=d.get("environment", service.environment),
+                    deployed_at=deployed_at_dt,
+                    source=d.get("source", "github"),
+                    is_deployment=bool(d.get("is_deployment", True)),
+                    message=d.get("message"),
+                    author=d.get("author"),
+                )
+            )
+        return records
+    except Exception as err:
+        logger.warning("Failed to fetch deployments for %s: %s", repo, err)
+        return []
 
 
 @app.get("/api/v1/incidents/{incident_id}/events", response_model=list[IncidentEventRead])

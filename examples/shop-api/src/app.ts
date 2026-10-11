@@ -6,14 +6,64 @@ import express, {
 } from "express";
 import {
   Counter,
+  Gauge,
   Histogram,
   Registry,
   collectDefaultMetrics,
 } from "prom-client";
 
+// Release metadata state
+let serviceVersion = process.env.SERVICE_VERSION || "0.1.0";
+let gitCommitSha =
+  process.env.GIT_COMMIT_SHA || "a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4";
+let deploymentTimestamp =
+  process.env.DEPLOYMENT_TIMESTAMP || new Date().toISOString();
+let buildId = process.env.BUILD_ID || "build-local-1";
+const environment = process.env.NODE_ENV || "development";
+
 // Prometheus metrics registry
 export const registry = new Registry();
 collectDefaultMetrics({ register: registry });
+
+export const shopApiBuildInfo = new Gauge({
+  name: "shop_api_build_info",
+  help: "Shop API release build and deployment metadata",
+  labelNames: ["version", "commit_sha", "environment"],
+  registers: [registry],
+});
+shopApiBuildInfo.set(
+  { version: serviceVersion, commit_sha: gitCommitSha, environment },
+  1,
+);
+
+export function getReleaseMetadata() {
+  return {
+    service: "shop-api",
+    version: serviceVersion,
+    commit_sha: gitCommitSha,
+    deployment_timestamp: deploymentTimestamp,
+    build_id: buildId,
+    environment,
+  };
+}
+
+export function simulateRelease(
+  newVersion: string,
+  newSha: string,
+  causeFault: boolean = false,
+): void {
+  serviceVersion = newVersion;
+  gitCommitSha = newSha;
+  deploymentTimestamp = new Date().toISOString();
+  shopApiBuildInfo.reset();
+  shopApiBuildInfo.set(
+    { version: serviceVersion, commit_sha: gitCommitSha, environment },
+    1,
+  );
+  if (causeFault) {
+    setCheckoutFault(true);
+  }
+}
 
 export const httpRequestsTotal = new Counter({
   name: "http_requests_total",
@@ -230,7 +280,8 @@ async function exportOtlpTrace(
             resource: {
               attributes: [
                 { key: "service.name", value: { stringValue: "shop-api" } },
-                { key: "service.version", value: { stringValue: "0.1.0" } },
+                { key: "service.version", value: { stringValue: serviceVersion } },
+                { key: "service.commit_sha", value: { stringValue: gitCommitSha } },
                 {
                   key: "deployment.environment",
                   value: { stringValue: process.env.NODE_ENV || "development" },
@@ -355,7 +406,7 @@ app.use((request: Request, response: Response, next: NextFunction) => {
         (isError ? "GATEWAY_TIMEOUT" : undefined),
       error_code: response.locals.errorCode,
       exception_class: response.locals.exceptionClass,
-      version: "0.1.0",
+      version: serviceVersion,
       trace_id: traceId,
       span_id: spanId,
     };
@@ -391,10 +442,13 @@ app.use((request: Request, response: Response, next: NextFunction) => {
 app.get("/healthz", (_request: Request, response: Response) => {
   response.json({
     status: "ok",
-    service: "shop-api",
-    version: "0.1.0",
     fault_active: isCheckoutFaultActive(),
+    ...getReleaseMetadata(),
   });
+});
+
+app.get("/version", (_request: Request, response: Response) => {
+  response.json(getReleaseMetadata());
 });
 
 // A1: Product catalog
@@ -482,6 +536,30 @@ app.post("/fault/reset", (request: Request, response: Response) => {
   }
   setCheckoutFault(false);
   response.json({ fault_active: false });
+});
+
+// Phase 4: Controlled broken-release simulation endpoint
+app.post("/fault/release", (request: Request, response: Response) => {
+  if (process.env.NODE_ENV === "production") {
+    response
+      .status(403)
+      .json({ error: "Fault injection forbidden in production" });
+    return;
+  }
+  const secret = request.headers["x-demo-fault-secret"] || request.body?.secret;
+  if (secret !== DEMO_FAULT_SECRET) {
+    response.status(401).json({ error: "Unauthorized fault control" });
+    return;
+  }
+  const version = request.body?.version || "0.1.1-buggy";
+  const commitSha =
+    request.body?.commit_sha || "badf00d1234567890abcdef1234567890abcdef1";
+  simulateRelease(version, commitSha, true);
+  response.json({
+    status: "broken_release_simulated",
+    release: getReleaseMetadata(),
+    fault_active: true,
+  });
 });
 
 app.get("/fault/status", (_request: Request, response: Response) => {

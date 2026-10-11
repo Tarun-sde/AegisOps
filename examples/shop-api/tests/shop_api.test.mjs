@@ -98,8 +98,66 @@ test("shop-api comprehensive test suite", async () => {
     assert.ok(metricsText.includes('status_code="500"'));
     assert.ok(metricsText.includes('status_code="201"'));
     assert.ok(metricsText.includes("http_request_duration_seconds"));
+    assert.ok(metricsText.includes("shop_api_build_info"));
 
-    // 10. Redaction helper
+    // 10. Phase 4: Version endpoint & release metadata
+    const versionRes = await fetch(`${base}/version`);
+    assert.equal(versionRes.status, 200);
+    const versionJson = await versionRes.json();
+    assert.equal(versionJson.service, "shop-api");
+    assert.ok(versionJson.version);
+    assert.ok(versionJson.commit_sha);
+    assert.ok(versionJson.deployment_timestamp);
+
+    // 11. Phase 4: Controlled broken release simulation
+    const brokenReleaseRes = await fetch(`${base}/fault/release`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-demo-fault-secret": "aegisops-demo-fault-secret",
+      },
+      body: JSON.stringify({
+        version: "0.1.1-buggy",
+        commit_sha: "badf00d1234567890abcdef1234567890abcdef1",
+      }),
+    });
+    assert.equal(brokenReleaseRes.status, 200);
+    const brokenReleaseJson = await brokenReleaseRes.json();
+    assert.equal(brokenReleaseJson.status, "broken_release_simulated");
+    assert.equal(brokenReleaseJson.release.version, "0.1.1-buggy");
+    assert.equal(
+      brokenReleaseJson.release.commit_sha,
+      "badf00d1234567890abcdef1234567890abcdef1",
+    );
+    assert.equal(brokenReleaseJson.fault_active, true);
+
+    // Checkout fails under broken release
+    const brokenCheckoutRes = await fetch(`${base}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: [{ id: "prod-1", quantity: 1 }] }),
+    });
+    assert.equal(brokenCheckoutRes.status, 500);
+
+    // Healthz reflects broken release version
+    const updatedHealthRes = await fetch(`${base}/healthz`);
+    const updatedHealthJson = await updatedHealthRes.json();
+    assert.equal(updatedHealthJson.version, "0.1.1-buggy");
+    assert.equal(
+      updatedHealthJson.commit_sha,
+      "badf00d1234567890abcdef1234567890abcdef1",
+    );
+
+    // Reset back to normal
+    await fetch(`${base}/fault/reset`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-demo-fault-secret": "aegisops-demo-fault-secret",
+      },
+    });
+
+    // 12. Redaction helper
     const sensitiveObj = {
       user: "alice",
       token: "secret-token-123",

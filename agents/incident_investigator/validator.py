@@ -93,6 +93,36 @@ def validate_claim_support(
                 "metric counters alone without diagnostic logs or traces."
             )
 
+        # Check 4: Deployment and release causal claim verification
+        deployment_keywords = [
+            "deployment",
+            "release",
+            "commit",
+            "bad release",
+            "broken release",
+            "regressed in commit",
+            "bad deployment",
+        ]
+        claims_deployment_cause = any(kw in cause_lower for kw in deployment_keywords)
+        if claims_deployment_cause:
+            has_deploy_evidence = "deployments" in sources or any(
+                ref_id.startswith("ev_deploy_") for ref_id in supporting_refs
+            )
+            if not has_deploy_evidence:
+                raise ValueError(
+                    "Claim support rejected: Hypothesis asserts deployment or commit causation "
+                    "without citing deployment or commit evidence."
+                )
+            # High confidence deployment causation requires corroborating diagnostic telemetry
+            has_diagnostic_telemetry = (
+                "logs" in sources or "traces" in sources or "metrics" in sources
+            )
+            if hypothesis.confidence == "high" and not has_diagnostic_telemetry:
+                raise ValueError(
+                    "Claim support rejected: High confidence deployment causation requires "
+                    "corroborating diagnostic error telemetry (logs, traces, or metrics)."
+                )
+
 
 def validate_evidence(
     result: InvestigationResult,

@@ -84,6 +84,35 @@ def telemetry_http(request, monkeypatch):
             data = {"resultType": "vector", "result": metrics}
         elif (url.netloc, url.path) == ("loki.test", "/loki/api/v1/query_range"):
             data = {"resultType": "streams", "result": logs}
+        elif url.netloc == "api.github.com":
+            if state == "unavailable":
+                raise urllib.error.URLError(
+                    ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused")
+                )
+            if "/deployments" in url.path:
+                deploy_list = [
+                    {
+                        "id": 101,
+                        "sha": "c0ffee1",
+                        "ref": "main",
+                        "environment": "staging",
+                        "created_at": "2026-10-11T12:00:00Z",
+                        "description": "Deploy release v1.4.2",
+                    }
+                ]
+                return BytesIO(json.dumps(deploy_list).encode())
+            elif "/commits" in url.path:
+                commit_list = [
+                    {
+                        "sha": "c0ffee1",
+                        "commit": {
+                            "message": "fix(checkout): update payment retry handler",
+                            "author": {"name": "Test Author", "date": "2026-10-11T12:00:00Z"},
+                        },
+                    }
+                ]
+                return BytesIO(json.dumps(commit_list).encode())
+            return BytesIO(b"[]")
         else:
             pytest.fail("Unexpected telemetry URL")
         if state == "unavailable":

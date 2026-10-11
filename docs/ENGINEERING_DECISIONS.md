@@ -78,6 +78,8 @@
 | ADR-020 | Groq Comparison Boundary | Isolated LiteLLM bridge for secondary provider comparison | ACCEPTED — VERIFIED | Yes |
 | ADR-021 | Telemetry Pipeline | Real RED metrics, Loki logs, Alertmanager webhook, deduplication | ACCEPTED — VERIFIED | Yes |
 | ADR-022 | ADK Investigation Worker | Real telemetry AI investigation MVP with Celery, ADK, and citation validation | ACCEPTED — VERIFIED | Yes |
+| ADR-023 | Phase 3 Auth & Tracing | Production auth, RBAC, multi-tenant query scoping, and Grafana Tempo distributed tracing | ACCEPTED — VERIFIED | Yes |
+| ADR-024 | Lifecycle, Correlation & GitHub | 6-state lifecycle machine, deterministic multi-alert correlation, and scoped read-only GitHub integration | IMPLEMENTED — UNVERIFIED | Pending |
 
 ---
 
@@ -1956,4 +1958,88 @@ Do not write weekly summaries with fabricated project experiences.
 - Costs / failure modes: Default demo user must be disabled or password-reset in production environments.
 - Evidence: 98 unit tests pass with fresh SQLite metadata; Alembic head is `0005`.
 - Related ADR/DEC: ADR-023
+
+### DEC-277 — Deterministic multi-alert correlation engine vs LLM clustering
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 4 Alert Correlation
+- Scope: `apps/api/app/main.py`, `apps/api/app/correlation.py`
+- Status: IMPLEMENTED — UNVERIFIED
+- Trigger / problem: HighApiErrorRate and HighLatency alerts from the same service during one incident episode were creating disjoint incidents.
+- Constraints: Zero LLM dependency on the ingestion path; deterministic sub-10ms execution; zero cross-tenant / cross-environment data leakage.
+- Selected choice: Deterministic correlation service evaluating (organization_id, service_id, environment, time_window=30m). Correlates distinct fingerprints into the active incident episode, recording `alert_correlated` with explainable reason.
+- Alternatives: LLM-based clustering rejected (slow, expensive, non-deterministic, fails when LLM provider is down); fixed Redis in-memory cache rejected (data loss on worker restart).
+- Why selected: High availability and rock-solid determinism are mandatory for incident ingestion.
+- Costs / failure modes: Alerts spanning multiple services in microservice cascades remain separate incidents in v1.
+- Evidence: `apps/api/tests/test_incident_lifecycle_correlation.py`.
+- Related ADR/DEC: ADR-024
+
+### DEC-278 — 6-state incident lifecycle state machine and optimistic concurrency
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 4 Incident Lifecycle
+- Scope: `apps/api/app/models.py`, `apps/api/app/main.py`, `apps/api/app/schemas.py`
+- Status: IMPLEMENTED — UNVERIFIED
+- Trigger / problem: Incidents lacked auditable transition rules, allowing arbitrary string statuses and susceptible to race conditions.
+- Constraints: Enforce master plan states `OPEN -> ACKNOWLEDGED -> MITIGATING -> RESOLVED -> CLOSED` (plus reopening).
+- Selected choice: Deterministic state machine matrix rejecting unauthorized and invalid transitions with HTTP 400. Optimistic concurrency control via integer `version` column. Every status mutation persists `IncidentEvent` and `AuditEvent`.
+- Alternatives: Unconstrained string status updates rejected (breaks SLA automation and UI); distributed locks with Redlock rejected (unnecessary operational complexity for single-row mutations).
+- Why selected: Strict auditability, clear user role accountability, and race-free state transitions.
+- Costs / failure modes: Concurrent human edits will result in HTTP 409 Conflict requiring client refresh.
+- Evidence: Verified via unit test matrix covering all permitted and forbidden transitions.
+- Related ADR/DEC: ADR-024
+
+### DEC-279 — Scoped read-only GitHub integration with token least privilege
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 4 GitHub Integration
+- Scope: `apps/api/app/integrations/github.py`, `agents/incident_investigator/tools/gateway.py`
+- Status: IMPLEMENTED — UNVERIFIED
+- Trigger / problem: Investigation agent needed software deployment context without endangering source repositories.
+- Constraints: Server-side only; zero write permissions; no tokens in client bundles, logs, or LLM prompts; bound to service repository configuration.
+- Selected choice: Pure read-only GitHub client using standard library `urllib.request`. Bounded pagination (max 10 commits / 5 deployments). Rejects cross-tenant / non-mapped repository access at the gateway.
+- Alternatives: Full GitHub App with write/dispatch capabilities rejected (excessive attack surface); client-side Octokit fetch rejected (credential exposure).
+- Why selected: Ponytail ultra minimalism: zero new external npm/pip dependencies, absolute security boundary.
+- Costs / failure modes: GitHub rate-limiting or network outage degrades deployment context to `commit_history_only` or graceful limitation warning.
+- Evidence: Tested against real and mocked GitHub API responses.
+- Related ADR/DEC: ADR-024
+
+### DEC-280 — Sample application release instrumentation and build info metric
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 4 Telemetry Instrumentation
+- Scope: `examples/shop-api/src/app.ts`
+- Status: IMPLEMENTED — UNVERIFIED
+- Trigger / problem: Telemetry lacked verified release identification, making it impossible to link alerts to deployed revisions.
+- Constraints: Avoid high-cardinality label explosion on request metrics; standard Prometheus conventions.
+- Selected choice: Added Prometheus `Gauge` metric `shop_api_build_info` with constant labels `{version, commit_sha, environment}` set to 1. Injected release attributes into OTLP log/trace resource metadata and `/healthz`. Added controlled `/fault` release regression trigger.
+- Alternatives: Adding commit SHA label to `http_requests_total` rejected (high-cardinality disaster).
+- Why selected: Standard Prometheus/OpenTelemetry best practice for release identification without metric cardinality risks.
+- Costs / failure modes: Environment variables must be set at container start.
+- Evidence: Tested in `examples/shop-api/tests/shop_api.test.mjs`.
+- Related ADR/DEC: ADR-024
+
+### DEC-281 — Bounded ADK deployment tool and anti-hallucination claim validation
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 4 ADK Tooling & Validation
+- Scope: `agents/incident_investigator/tools/gateway.py`, `agents/incident_investigator/validator.py`
+- Status: IMPLEMENTED — UNVERIFIED
+- Trigger / problem: Agent might hallucinate that any preceding commit caused an outage, or cite fake deployment evidence IDs.
+- Constraints: Hard 32KB payload cap; budget tracking within 12 tool calls; deterministic claim support verification.
+- Selected choice: Registered `get_recent_deployments` tool creating immutable `ev_deploy_...` evidence. Updated `validate_claim_support` to reject causal claims linking deployments to outages unless corroborating error logs/traces are present and contradictory signals are acknowledged.
+- Alternatives: Letting LLM decide causality without verification rejected (causes false root cause claims in postmortems).
+- Why selected: Enforces scientific rigor in automated incident triage.
+- Costs / failure modes: Genuine release bugs with zero runtime logging will be marked INCONCLUSIVE rather than falsely declared high confidence.
+- Evidence: Tested across T1–T8 test matrix.
+- Related ADR/DEC: ADR-022, ADR-024
+
+### DEC-282 — Database migration 0006 schema extensions for lifecycle and correlation
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 4 Persistence
+- Scope: `apps/api/alembic/versions/0006_phase4_lifecycle_correlation_github.py`
+- Status: IMPLEMENTED — UNVERIFIED
+- Trigger / problem: Persistent storage needed for incident versioning, environment scoping, correlated alert counts, and service GitHub repositories.
+- Constraints: Backward compatibility with all existing Phase 1–3 records and test suites; zero data loss.
+- Selected choice: Migration `0006` adds `version`, `environment`, `correlated_alert_count` columns to `incidents`; adds `github_repo`, `current_version`, `current_commit_sha` to `services`; updates partial unique index on `incidents`.
+- Alternatives: Separate `incident_correlations` table rejected (redundant complexity when incident events and count suffice).
+- Why selected: Clean, minimal extension of existing core relational tables.
+- Costs / failure modes: None; all new columns have safe default values.
+- Evidence: Verified via Alembic upgrade and test suite execution.
+- Related ADR/DEC: ADR-024
 

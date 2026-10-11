@@ -115,6 +115,9 @@ class Service(Base):
     environment: Mapped[str] = mapped_column(String(32), default="staging")
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="active")
+    github_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    current_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    current_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -153,8 +156,8 @@ class Incident(Base):
             "service_id",
             "fingerprint",
             unique=True,
-            postgresql_where=text("status = 'open'"),
-            sqlite_where=text("status = 'open'"),
+            postgresql_where=text("status in ('open', 'reopened')"),
+            sqlite_where=text("status in ('open', 'reopened')"),
         ),
     )
 
@@ -163,7 +166,10 @@ class Incident(Base):
     service_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("services.id"), index=True)
     title: Mapped[str] = mapped_column(String(255))
     severity: Mapped[str] = mapped_column(String(32))
-    status: Mapped[str] = mapped_column(String(32))  # open | resolved
+    status: Mapped[str] = mapped_column(String(32))  # Lifecycle: open -> resolved -> closed
+    environment: Mapped[str] = mapped_column(String(32), default="staging")
+    version: Mapped[int] = mapped_column(default=1)
+    correlated_alert_count: Mapped[int] = mapped_column(default=1)
     fingerprint: Mapped[str] = mapped_column(String(64), index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
