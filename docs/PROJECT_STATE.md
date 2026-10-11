@@ -1,82 +1,52 @@
 # AegisOps — Current Project State
 
 **Updated:** 2026-10-11  
-**Current phase:** Phase 2 (CI isolation repair — local verification complete, hosted verification blocked)
-**Overall state:** `PHASE 2 CI REPAIR VERIFIED LOCALLY; HOSTED GATE BLOCKED BY GIT AUTHENTICATION; PHASE 3 LOCKED`
-**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Phase 2; `docs/PHASE_REPORTS/PHASE_2_VERIFICATION.md`; `docs/ADR/ADR-022-adk-investigation-worker.md`; DEC-251–DEC-266.
+**Current phase:** Phase 3 (Production-Oriented Authentication, RBAC, Multi-Tenant Security & Distributed Tracing)
+**Overall state:** `PHASE 3 IMPLEMENTED AND VERIFIED LOCALLY; 98/98 UNIT TESTS PASSING; PHASE 4 LOCKED`
+**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Phase 3; `docs/PHASE_REPORTS/PHASE_3_VERIFICATION.md`; `docs/ADR/ADR-023-phase3-auth-rbac-tracing.md`; DEC-267–DEC-276.
 
 ---
 
-## Implemented and verified in Phase 2 (Including Corrective Fix)
+## Implemented and verified in Phase 3
 
-- [x] **Causal Grounding & S01 Diagnosis Accuracy (DEC-261):**
-  - Eliminated false "Database Connection Pool Exhaustion" diagnosis for S01 (`S01_CHECKOUT_500`).
-  - S01 correctly diagnoses controlled application exception / payment processing gateway timeout on `/checkout` (`CHECKOUT_GATEWAY_TIMEOUT`).
-  - Shop API error telemetry enriched with structured `error_category`, `error_code`, and `exception_class`.
-  - Hypotheses grounded in actual evidence ledger snippets; generic HTTP 500 metrics prevented from proving database exhaustion without DB logs.
-- [x] **Separation of Citation Integrity and Causal Claim Support (DEC-262):**
-  - Deterministic citation integrity (`validate_citation_integrity`): verifies existence, run ownership, and tenant bounds.
-  - Causal claim support (`validate_claim_support`): verifies observations genuinely justify claims, prevents generic metric leaps, and flags explicit contradictions.
-- [x] **Strict Qualitative Confidence Contract (DEC-263):**
-  - Standardized public confidence contract strictly to `low | medium | high` (no uncalibrated floats or percentages).
-  - Added `unverified_assumptions` list to hypotheses to communicate epistemic uncertainty.
-  - Alembic migration `0004_qualitative_confidence.py` applied; API validators safely coerce legacy database records without data corruption.
-  - Next.js UI updated with qualitative badges ("High", "Medium", "Low") and unverified assumption callouts.
-- [x] **Explicit Execution Mode Architecture & No Silent Fallback (DEC-264):**
-  - Explicit configuration `AEGISOPS_AGENT_MODE=offline|live` with `execution_mode` and `provider` persisted in database.
-  - Deterministic offline ADK runner explicitly labeled as `provider="offline"` for predictable, zero-cost CI testing.
-  - Live Gemini mode connects directly to Google GenAI; missing credentials or quota exhaustion (429) raise explicit errors and fail cleanly without silent fallback to offline mock.
-- [x] **Targeted Investigation Quality Test Suite (`agents/incident_investigator/tests/test_investigation_quality.py`):**
-  - Covers scenarios T01 through T10 (controlled exception, DB pool exhaustion fixture, honest inconclusive, misleading logs resistance, fabricated citations, cross-run citations, offline authenticity, live smoke test, missing credentials, confidence contract).
-- [x] **Asynchronous Investigation Worker (`apps/worker/`):**
-  - Celery application connected to Redis broker (`redis://redis:6379/0`).
-  - Durable background task `run_investigation_task` orchestrating the investigation lifecycle.
-  - Active-run idempotency guard preventing duplicate concurrent investigations on the same incident.
-  - Worker container deployed and running healthily in `docker-compose.yml`.
-- [x] **Google ADK Single-Agent Runner (`agents/incident_investigator/`):**
-  - Google ADK 2.11.0 `Agent`, `Runner.run_async`, and `ToolContext` integration.
-  - Bounded tool execution (12-call budget, 32KB payload truncation, read-only Prometheus/Loki access).
-  - Pre-export sensitive secret regex redaction in `tools/redaction.py`.
-- [x] **FastAPI Investigation Endpoints & Evidence Explorer (`apps/api/`):**
-  - Complete REST API for dispatching, inspecting, and cancelling investigations with paginated evidence explorer.
-- [x] **Next.js AI Investigation Dashboard (`apps/web/`):**
-  - Interactive `InvestigationPanel` with qualitative badges, execution mode indicator ("OFFLINE" vs "LIVE"), and tool audit trail.
-- [x] **Decoupled 4-Gate End-to-End Verification (`scripts/verify_phase2_e2e.py`):**
-  - 28/28 checks passing: Infrastructure Correctness (16/16), Diagnostic Correctness (5/5), Model Execution Authenticity (3/3), Security & Invariants (4/4).
-
----
-
-## Implemented and verified in Phase 1 (Baseline Preserved)
-
-- [x] Instrumented Node.js Express service (`examples/shop-api`) with RED metrics and structured JSON logging.
-- [x] Controlled demo fault injection `S01_CHECKOUT_500` via authenticated endpoint.
-- [x] Observability stack: Prometheus v3.2.1, Alertmanager v0.28.1, Loki 3.4.2, OTel Collector Contrib 0.120.0.
-- [x] Prometheus alert rule `HighApiErrorRate` with volume guard, tested via `promtool`.
-- [x] Webhook receiver `POST /api/v1/webhooks/alertmanager` with timing-safe authentication and episode deduplication via PostgreSQL partial unique index `uq_open_incident_fingerprint`.
-- [x] Incident feed and detail pages in Next.js dashboard.
-- [x] Full Phase 1 E2E regression verification passing (`scripts/verify_phase1_e2e.py`).
-
----
-
-## Implemented and verified in Phase 0 (Baseline Preserved)
-
-- [x] Repository toolchain and dependency locks (Python 3.14.7, uv, Node.js 22.23.1, npm 10.9.8).
-- [x] Core domain contracts and deterministic citation validation engine (`validate_evidence`).
-- [x] FastAPI control plane baseline (`/healthz`, `/readyz`).
-- [x] PostgreSQL 18 with `pgvector` 0.8.7 and Redis 8.10.2 container foundation.
-- [x] Frontend dashboard shell with dark console styling and accessible navigation.
-- [x] Google ADK 2.11.0 spike with read-only tools and citation-grounded outputs.
-- [x] Live Gemini 3.5 Flash and Groq `gpt-oss-120b` verification on confirmed Free tier.
+- [x] **Secure Authentication & Session Lifecycle (DEC-267, ADR-023):**
+  - Standard library `hashlib.scrypt` password hashing with random 16-byte salt and constant-time comparison (`secrets.compare_digest`).
+  - Opaque server-side session tokens stored as SHA-256 hashes in `user_sessions`.
+  - Transported via `HttpOnly`, `SameSite="lax"`, secure cookie (`aegisops_session`) with dual Bearer token fallback.
+  - Endpoints: `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/me`.
+- [x] **Double-Submit CSRF Cookie Protection (DEC-268):**
+  - `aegisops_csrf` cookie issued on session creation; mutating HTTP requests (`POST`, `PUT`, `PATCH`, `DELETE`) verified against `x-csrf-token` header.
+- [x] **Centralized 4-Tier RBAC & Multi-Tenant Query Scoping (DEC-269, DEC-270):**
+  - Role hierarchy: `owner` (4) > `admin` (3) > `member` (2) > `viewer` (1) enforced via `TenantContext`.
+  - Viewer role strictly prohibited from creating/updating services, verifying connectors, or triggering/cancelling investigations (403 Forbidden).
+  - Multi-tenant application-level query scoping: tenant A queries cannot access tenant B services, incidents, or members (404/403).
+- [x] **Service Inventory & SSRF-Guarded Connector Verification (DEC-271):**
+  - Full CRUD on `/api/v1/services` with environment tiers (`production`, `staging`, `development`).
+  - `POST /api/v1/services/{id}/verify-connection` tests healthcheck endpoints with real latency measurement.
+  - Deterministic `validate_connector_url` rejects AWS metadata (`169.254.169.254`), Google metadata (`metadata.google.internal`), loopback (`127.0.0.0/8`), and private IP ranges.
+- [x] **Grafana Tempo Distributed Tracing (DEC-272, DEC-273, DEC-274, DEC-275):**
+  - Added Grafana Tempo 2.7.1 to `docker-compose.observability.yml` and `infra/tempo/tempo.yaml`.
+  - OpenTelemetry Collector dual-pipeline configured to route traces to Tempo (`tempo:4317`).
+  - Express `shop-api` extracts/generates W3C `traceparent`, injects `trace_id` into logs and headers (`x-trace-id`), and exports OTLP JSON spans.
+  - `GET /api/v1/traces/{trace_id}` validates 32-hex trace ID format, queries Tempo, and normalizes span trees.
+  - Google ADK `ReadOnlyToolGateway` tool `get_trace_summary` bounds payloads to 32KB, registers spans into evidence ledger (`ev_trace_...`), and logs execution.
+- [x] **Database Migration & Backward Compatibility (DEC-276):**
+  - Alembic revision `0005_phase3_auth_rbac_tracing.py` creates `users`, `user_sessions`, `memberships`, `audit_events`, and adds foreign keys.
+  - Automatic backfill seeds demo organization `AegisOps Demo` and demo user `demo@aegisops.local` (password `aegisops-demo-password`).
+- [x] **Frontend Authentication, Onboarding & Trace Waterfall (apps/web):**
+  - Client component `/login` with Sign In / Register toggle and CSRF cookie propagation.
+  - Client component `/onboarding` with service registration and live SSRF-guarded connector test.
+  - Client component `TraceViewer` with interactive 32-hex lookup and waterfall timeline bars embedded in incident detail page.
+- [x] **Comprehensive Test Verification:**
+  - 9 Phase 3 security/RBAC/tracing tests passing in `apps/api/tests/test_auth_rbac_tracing.py`.
+  - All 98 non-integration unit tests passing across Phase 0–3 (`pytest -q -m 'not integration'`).
+  - Full TypeScript and ESLint checks passing cleanly in `apps/web` and `examples/shop-api`.
 
 ---
 
 ## Untested / Blocked / Deferred (Strict Phase Boundaries)
 
-**Developer authorization gate:** Phase 2 deterministic repair checks pass locally, but the latest hosted foundation job failed. Phase 3 remains **LOCKED** pending hosted verification and explicit developer authorization. The earlier live Gemini quota blocker is separate.
-
-- [ ] **Distributed Tracing Investigation with Grafana Tempo:** `DEFERRED TO PHASE 3`.
-- [ ] **GitHub Deployment / Commit Correlation:** `DEFERRED TO PHASE 3`.
-- [ ] **Full Product Auth / RBAC and Multi-Tenant Sessions:** `DEFERRED TO PHASE 3`.
+- [ ] **GitHub Deployment / Commit Correlation:** `DEFERRED TO PHASE 4`.
 - [ ] **Runbook RAG with pgvector and Lexical Search:** `DEFERRED TO PHASE 4`.
 - [ ] **Cross-Incident Fingerprint Clustering & Correlation:** `DEFERRED TO PHASE 4`.
 - [ ] **Multi-Agent Specialist Swarm:** `DEFERRED TO PHASE 5`.

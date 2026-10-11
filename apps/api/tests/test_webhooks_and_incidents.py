@@ -7,8 +7,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from apps.api.app.auth import create_user_session
 from apps.api.app.main import app, get_db
-from apps.api.app.models import Base, Organization, Service
+from apps.api.app.models import Base, Membership, Organization, Service, User
 
 # Isolated in-memory SQLite for fast, self-contained unit tests
 test_engine = create_engine(
@@ -22,18 +23,36 @@ TestingSessionLocal = sessionmaker(bind=test_engine, autoflush=False, autocommit
 @pytest.fixture(autouse=True)
 def setup_test_db():
     Base.metadata.create_all(bind=test_engine)
-    # Seed Demo Org and Service
+    # Seed Demo Org, Service, User, and Session for authenticated test client
     with TestingSessionLocal() as db:
         org = Organization(name="AegisOps Demo")
         db.add(org)
         db.flush()
         svc = Service(organization_id=org.id, name="shop-api")
         db.add(svc)
-        db.commit()
+        db.flush()
+        user = User(
+            email="demo@aegisops.local",
+            hashed_password="hash",
+            salt="salt",
+            name="Demo User",
+            is_active=True,
+        )
+        db.add(user)
+        db.flush()
+        membership = Membership(
+            user_id=user.id,
+            organization_id=org.id,
+            role="owner",
+        )
+        db.add(membership)
+        raw_token, _ = create_user_session(db, user.id)
+        client.cookies.set("aegisops_session", raw_token)
 
     app.dependency_overrides[get_db] = override_get_db
     yield
 
+    client.cookies.clear()
     app.dependency_overrides.pop(get_db, None)
     Base.metadata.drop_all(bind=test_engine)
 

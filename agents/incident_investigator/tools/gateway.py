@@ -315,3 +315,74 @@ class ReadOnlyToolGateway:
                 "error": f"Loki query failed: {err}",
                 "records": [],
             }
+
+    def get_trace_summary(self, trace_id: str) -> dict[str, Any]:
+        """Retrieve bounded distributed trace spans for the specified trace ID from Tempo."""
+        t0 = time.perf_counter()
+        self._check_budget()
+        args = {"trace_id": trace_id}
+        try:
+            from apps.api.app.telemetry.tempo import TempoClient, validate_trace_id
+
+            clean_id = validate_trace_id(trace_id)
+            client = TempoClient()
+            summary = client.get_trace_summary(clean_id)
+
+            if not summary:
+                latency = (time.perf_counter() - t0) * 1000
+                self._record_execution(
+                    "get_trace_summary", args, "error", latency, "TRACE_NOT_FOUND"
+                )
+                return {
+                    "trust": "UNTRUSTED_SOURCE",
+                    "error": f"Trace '{clean_id}' not found in Tempo",
+                    "trace_id": clean_id,
+                }
+
+            spans_data = [
+                {
+                    "span_id": s.span_id,
+                    "parent_span_id": s.parent_span_id,
+                    "name": s.name,
+                    "service": s.service_name,
+                    "duration_ms": s.duration_ms,
+                    "status_code": s.status_code,
+                    "attributes": redact_sensitive_text(json.dumps(s.attributes)),
+                }
+                for s in summary.spans[:20]
+            ]
+            snippet = json.dumps(spans_data)
+            if len(snippet) > MAX_PAYLOAD_BYTES:
+                snippet = snippet[:MAX_PAYLOAD_BYTES]
+
+            now_utc = datetime.now(UTC)
+            ev_id = f"ev_trace_{hashlib.sha256(snippet.encode('utf-8')).hexdigest()[:8]}"
+            self._persist_evidence(
+                evidence_id=ev_id,
+                source="traces",
+                observed_at=now_utc,
+                locator=f"tempo:trace:{clean_id}",
+                redacted_snippet=snippet,
+                query_metadata={"trace_id": clean_id, "span_count": summary.span_count},
+            )
+            latency = (time.perf_counter() - t0) * 1000
+            self._record_execution("get_trace_summary", args, "success", latency)
+            return {
+                "trust": "UNTRUSTED_SOURCE",
+                "trace_id": clean_id,
+                "service_name": summary.service_name,
+                "root_operation": summary.root_operation,
+                "duration_ms": summary.duration_ms,
+                "span_count": summary.span_count,
+                "error_span_count": summary.error_span_count,
+                "spans": spans_data,
+                "evidence_id": ev_id,
+            }
+        except Exception as err:
+            latency = (time.perf_counter() - t0) * 1000
+            self._record_execution("get_trace_summary", args, "error", latency, "TEMPO_ERROR")
+            return {
+                "trust": "UNTRUSTED_SOURCE",
+                "error": f"Trace query failed: {err}",
+                "trace_id": trace_id,
+            }

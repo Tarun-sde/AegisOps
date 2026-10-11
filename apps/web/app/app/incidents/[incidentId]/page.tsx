@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getIncident, getIncidentEvents } from "../../../lib/api";
 import { InvestigationPanel } from "./investigation-panel";
+import { TraceViewer } from "./trace-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -221,6 +222,8 @@ export default async function IncidentDetailPage({ params }: PageProps) {
           </div>
         )}
       </section>
+
+      <TraceViewer />
     </main>
   );
 }

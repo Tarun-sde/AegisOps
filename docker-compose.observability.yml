@@ -54,6 +54,22 @@ services:
       timeout: 3s
       retries: 10
 
+  tempo:
+    image: grafana/tempo:2.7.1
+    profiles: [lab, observability]
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./infra/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+    ports: ["127.0.0.1:3200:3200"]
+    mem_limit: 128m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, wget, --spider, -q, "http://127.0.0.1:3200/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.120.0@sha256:85ac41c2db88d0df9bd6145e608a3cb023f5d8443868adbfbbf66efb51087917
     profiles: [lab, observability]
@@ -66,6 +82,7 @@ services:
     cap_drop: [ALL]
     depends_on:
       loki: {condition: service_healthy}
+      tempo: {condition: service_healthy}
     healthcheck:
       test: [CMD, "/otelcol-contrib", "validate", "--config=/etc/otelcol-contrib/config.yaml"]
       interval: 10s

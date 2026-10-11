@@ -26,8 +26,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           >
             <Link href="/app">Workspace</Link>
             <Link href="/app/incidents">Incidents</Link>
+            <Link href="/onboarding">Onboarding</Link>
+            <Link href="/login">Sign in</Link>
           </nav>
-          <span className="badge">Phase 1 · Telemetry &amp; Ingestion</span>
+          <span className="badge">Phase 3 · Security &amp; Tracing</span>
         </header>
         {children}
         <footer>

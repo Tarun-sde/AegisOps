@@ -1815,3 +1815,145 @@ Do not write weekly summaries with fabricated project experiences.
 - Hosted observation: run 38118992591 at 3c6db7d remains completed/failure; downstream gates skipped. User-supplied detailed logs are distinguished from API-inspected run/step metadata. Authentication is required to publish and inspect a new exact-commit run.
 - Publication evidence: repair commit `8bb82eb8de817e9cb680f1ddf7bb6d87a64c019a`; actual push exited 128 (missing HTTPS username/credentials). Final public API refresh hit TLS unexpected EOF (curl 35); earlier successful exact-run observations remain the evidence. No hosted repair run exists from this push attempt.
 - Final evidence: fresh API Docker build completed (exit 0); fresh image without mounts and with `--network none`: 89 passed / 3 deselected; exact isolated Compose recipe: 2 passed / 1 opt-in live smoke skipped / 89 deselected. Dedicated verification services stopped, volumes retained. Public GitHub retry succeeded and reconfirmed the original failed run. No hosted repair success claim.
+
+### DEC-267 — Standard library scrypt and opaque hashed session tokens
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 3 Authentication
+- Scope: `apps/api/app/auth.py`, `apps/api/app/models.py`, `apps/api/app/main.py`
+- Status: VERIFIED
+- Trigger / problem: User authentication must be secure and durable without unpinned third-party authentication services or heavyweight JWT dependencies.
+- Constraints: Follow ponytail ultra: standard library solutions preferred; no unvetted cryptography packages; zero plaintext credentials in PostgreSQL.
+- Selected choice: Password hashing using standard library `hashlib.scrypt` with per-user 16-byte random salt and constant-time verification (`secrets.compare_digest`). Sessions use opaque 32-byte URL-safe tokens stored SHA-256 hashed in `user_sessions`, transported via `HttpOnly`, `SameSite="lax"` cookies.
+- Alternatives: Auth0/Clerk/Firebase SaaS rejected (external network dependency); unpinned JWT/PyJWT rejected (stateless revocation problems, unnecessary algorithm complexity).
+- Why selected: Zero external dependencies; immune to token forgery; server controls instant session revocation.
+- Costs / failure modes: Database lookup required per request (mitigated by index on `token_hash`).
+- Evidence: 9 Phase 3 tests pass in `apps/api/tests/test_auth_rbac_tracing.py`.
+- Interview answer: We chose server-side opaque session tokens stored as SHA-256 hashes over JWTs. This gives us instant server-side revocation on logout without token blacklists or unpinned crypto dependencies.
+- Related ADR/DEC: ADR-023, DEC-133
+
+### DEC-268 — Double-submit CSRF cookie validation for mutating browser requests
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 3 Security
+- Scope: `apps/api/app/auth.py`
+- Status: VERIFIED
+- Trigger / problem: Cookie-authenticated browser sessions are vulnerable to Cross-Site Request Forgery (CSRF).
+- Constraints: Do not break programmatic Bearer token API requests.
+- Selected choice: Double-submit CSRF cookie pattern (`aegisops_csrf`). Mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`) with cookie authentication must include matching `x-csrf-token` header. Constant-time comparison via `secrets.compare_digest`.
+- Alternatives: Synchronizer token pattern stored in session state rejected (extra DB write); Origin/Referer header checking alone rejected (incomplete browser support).
+- Why selected: Stateless, robust defense against cross-origin forged requests.
+- Costs / failure modes: Single-page application must read cookie and include header on mutations.
+- Evidence: `test_csrf_protection_on_mutating_requests` verifies rejection without header and success with valid token.
+- Related ADR/DEC: ADR-023
+
+### DEC-269 — Centralized four-tier role-based access control (RBAC)
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 3 Authorization
+- Scope: `apps/api/app/auth.py`, `apps/api/app/models.py`
+- Status: VERIFIED
+- Trigger / problem: Organizations need distinct permission tiers for administrative vs read-only users.
+- Constraints: Deterministic enforcement in FastAPI dependency pipeline.
+- Selected choice: Centralized hierarchy: `owner` (4) > `admin` (3) > `member` (2) > `viewer` (1). Evaluated via `TenantContext.can(role)`. Mutating endpoints require `admin` or `member`; `viewer` is strictly read-only.
+- Alternatives: Complex fine-grained ACL permissions engine rejected (over-engineering for v1).
+- Why selected: Simple, auditable numeric hierarchy covering all product operations.
+- Costs / failure modes: Roles are rigid per organization; custom role definitions deferred to future phases.
+- Evidence: `test_rbac_role_hierarchy_and_permissions` verifies viewer blocked from service creation, verification, and investigation triggers.
+- Related ADR/DEC: ADR-023
+
+### DEC-270 — Application-level multi-tenant query scoping
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 3 Multi-Tenancy
+- Scope: `apps/api/app/main.py`, `apps/api/app/models.py`
+- Status: VERIFIED
+- Trigger / problem: In a multi-tenant platform, tenant A must never view or mutate tenant B's incidents, services, or investigation evidence.
+- Constraints: Preserve simple connection pooling and SQLite compatibility in tests.
+- Selected choice: Application-level scoping via `TenantContext` dependency injecting active `organization_id` into all database queries (`filter(Service.organization_id == context.organization.id)`).
+- Alternatives: PostgreSQL Row-Level Security (RLS) evaluated; deferred as defense-in-depth to keep connection pooling and test runner lightweight.
+- Why selected: Immediate, testable cross-tenant isolation in application code.
+- Costs / failure modes: Developers must remember to scope queries; mitigated by mandatory `TenantContext` dependency.
+- Evidence: `test_cross_tenant_isolation` verifies tenant A receives 404/403 on tenant B assets.
+- Related ADR/DEC: ADR-023
+
+### DEC-271 — SSRF guard for external service healthcheck connectors
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 3 Security
+- Scope: `apps/api/app/auth.py`, `apps/api/app/main.py`
+- Status: VERIFIED
+- Trigger / problem: Operator-configured connector healthcheck verification endpoints could be exploited to scan internal infrastructure or access cloud instance metadata.
+- Constraints: Allow local demo hostnames (`shop-api`, `localhost`) in local development while blocking malicious targets.
+- Selected choice: Deterministic `validate_connector_url` parses hostname and resolves IPs, explicitly blocking cloud metadata (`169.254.169.254`, `metadata.google.internal`), loopback addresses, link-local IPs, and private RFC 1918 subnets when `allow_local_demo=False`.
+- Alternatives: Relying on network firewalls rejected (application-level defense-in-depth required).
+- Why selected: Prevents SSRF attacks directly before HTTP request execution.
+- Costs / failure modes: Legitimate custom internal DNS hostnames in private clouds require explicit allowlisting.
+- Evidence: `test_ssrf_validator_guards` verifies rejection of metadata IPs, loopback, and private ranges.
+- Related ADR/DEC: ADR-023
+
+### DEC-272 — Grafana Tempo integration and trace validation
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 3 Distributed Tracing
+- Scope: `apps/api/app/telemetry/tempo.py`, `apps/api/app/main.py`
+- Status: VERIFIED
+- Trigger / problem: Operators and AI agents need root-cause span traces to explain latency spikes and service dependency failures.
+- Constraints: Native HTTP/JSON integration without bulky vendor SDKs; strict input validation.
+- Selected choice: `TempoClient` queries Grafana Tempo HTTP API (`/api/traces/{trace_id}`). Endpoint validates trace IDs as exact 32-character hexadecimal strings to prevent path traversal or injection. Normalizes span hierarchy and bounds result to top 20 spans.
+- Alternatives: Querying Tempo directly from the browser rejected (exposes internal observability ports).
+- Why selected: Control plane owns authorization and response normalization.
+- Costs / failure modes: Tempo cold-start query latency bounded by 5.0s timeout.
+- Evidence: `test_distributed_tracing_endpoint_and_gateway` verifies trace validation and span tree normalization.
+- Related ADR/DEC: ADR-023
+
+### DEC-273 — Bounded distributed trace tool for ADK investigation agent
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 3 AI Agent Tooling
+- Scope: `agents/incident_investigator/tools/gateway.py`, `agents/incident_investigator/agent.py`
+- Status: VERIFIED
+- Trigger / problem: AI agent must be able to inspect distributed traces during incident triage without exhausting token limits or hallucinating spans.
+- Constraints: Hard 32KB payload cap; budget tracking against the 12-call ceiling; evidence persistence.
+- Selected choice: Added `get_trace_summary(trace_id)` to `ReadOnlyToolGateway`. Redacts sensitive span attributes, enforces payload truncation, registers an immutable `ev_trace_...` evidence item in `evidence_items`, and records execution duration in `tool_executions`.
+- Alternatives: Raw span dump rejected (token overflow); synthetic trace generator rejected (must query real Tempo).
+- Why selected: Consistent with Phase 2 evidence provenance architecture.
+- Costs / failure modes: Traces with >20 spans are truncated to the most relevant root/error spans.
+- Evidence: Verified in `test_distributed_tracing_endpoint_and_gateway` with evidence ledger persistence check.
+- Related ADR/DEC: ADR-022, ADR-023
+
+### DEC-274 — Express microservice W3C trace propagation and OTLP trace export
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 3 Telemetry
+- Scope: `examples/shop-api/src/app.ts`
+- Status: VERIFIED
+- Trigger / problem: Application requests must emit real distributed trace telemetry linked to structured logs.
+- Constraints: Ponytail ultra: standard library `node:crypto` for trace ID and span ID generation; zero new npm dependencies.
+- Selected choice: Implemented W3C `traceparent` extraction and generation in request middleware. Injects `trace_id` into `StructuredLog` and response headers (`x-trace-id`, `x-span-id`). Asynchronously exports OTLP JSON spans to OpenTelemetry Collector (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`).
+- Alternatives: Installing `@opentelemetry/sdk-trace-node` rejected (heavy dependency tree; ~40 packages).
+- Why selected: Lightweight native implementation preserves minimal footprint and compiles cleanly.
+- Costs / failure modes: Manual span creation required for internal DB/sub-operations.
+- Evidence: `npm test` in `examples/shop-api` passes with real `trace_id` in logs and headers.
+- Related ADR/DEC: ADR-023
+
+### DEC-275 — Dual-pipeline OpenTelemetry Collector routing
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 3 Observability Infrastructure
+- Scope: `infra/otel-collector/config.yaml`, `docker-compose.observability.yml`, `infra/tempo/tempo.yaml`
+- Status: VERIFIED
+- Trigger / problem: Collector must accept OTLP telemetry and route logs to Loki and traces to Tempo.
+- Constraints: Maintain existing Loki pipeline and healthchecks.
+- Selected choice: Added `otlp/tempo` exporter (`tempo:4317`) and traces pipeline in `config.yaml`. Added Grafana Tempo 2.7.1 service to `docker-compose.observability.yml` with healthcheck.
+- Alternatives: Running separate trace collector rejected (resource duplication).
+- Why selected: Unified telemetry gateway for all operational signals.
+- Costs / failure modes: Tempo container adds ~40MB memory footprint to observability profile.
+- Evidence: Validated against `otelcol-contrib` config schema.
+- Related ADR/DEC: ADR-021, ADR-023
+
+### DEC-276 — Alembic migration 0005 backward-compatible schema backfill
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 3 Persistence
+- Scope: `apps/api/alembic/versions/0005_phase3_auth_rbac_tracing.py`
+- Status: VERIFIED
+- Trigger / problem: Introducing mandatory `organization_id` on `services` and `investigation_runs` must not break existing Phase 1 and 2 records or tests.
+- Constraints: Pure forward migration with idempotent downgrade.
+- Selected choice: Migration `0005` creates `users`, `user_sessions`, `memberships`, `audit_events`. Automatically backfills a default `AegisOps Demo` organization and seeds default demo user `demo@aegisops.local` with `owner` role.
+- Alternatives: Requiring manual seed scripts rejected (breaks clean DB bootstrap).
+- Why selected: Zero-friction upgrade path for development and CI environments.
+- Costs / failure modes: Default demo user must be disabled or password-reset in production environments.
+- Evidence: 98 unit tests pass with fresh SQLite metadata; Alembic head is `0005`.
+- Related ADR/DEC: ADR-023
+

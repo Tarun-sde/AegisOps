@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from agents.incident_investigator.investigator import execute_investigation
+from apps.api.app.auth import create_user_session
 from apps.api.app.db import get_db
 from apps.api.app.main import app
 from apps.api.app.models import (
@@ -17,9 +18,11 @@ from apps.api.app.models import (
     EvidenceItem,
     Incident,
     InvestigationRun,
+    Membership,
     Organization,
     Service,
     ToolExecution,
+    User,
 )
 
 test_engine = create_engine(
@@ -46,12 +49,30 @@ def setup_test_db():
         org = Organization(name="AegisOps Demo")
         db.add(org)
         db.flush()
+        user = User(
+            email="demo@aegisops.local",
+            hashed_password="hash",
+            salt="salt",
+            name="Demo User",
+            is_active=True,
+        )
+        db.add(user)
+        db.flush()
+        membership = Membership(
+            user_id=user.id,
+            organization_id=org.id,
+            role="owner",
+        )
+        db.add(membership)
         svc = Service(organization_id=org.id, name="shop-api")
         db.add(svc)
+        raw_token, _ = create_user_session(db, user.id)
+        client.cookies.set("aegisops_session", raw_token)
         db.commit()
 
     yield
 
+    client.cookies.clear()
     app.dependency_overrides.pop(get_db, None)
     Base.metadata.drop_all(bind=test_engine)
 

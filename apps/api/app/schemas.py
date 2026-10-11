@@ -370,3 +370,138 @@ class EvidenceListResponse(BaseModel):
     total: int
     page: int
     size: int
+
+
+# --- Phase 3 Schemas: Auth, RBAC, Services, Audit, Traces ---
+
+
+class UserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    email: str
+    name: str
+    is_active: bool
+    created_at: datetime
+
+
+class OrganizationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    created_at: datetime
+
+
+class OrganizationCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class MembershipRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    user_id: UUID
+    organization_id: UUID
+    role: str
+    created_at: datetime
+    organization_name: str | None = None
+    user_email: str | None = None
+
+
+class MemberAddRequest(BaseModel):
+    email: str
+    role: Literal["owner", "admin", "member", "viewer"] = "member"
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    name: str = ""
+
+
+class AuthResponse(BaseModel):
+    user: UserRead
+    active_organization: OrganizationRead | None = None
+    role: str | None = None
+    organizations: list[OrganizationRead] = []
+    csrf_token: str | None = None
+
+
+class ServiceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    name: str
+    environment: str
+    description: str | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ServiceCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    environment: str = "staging"
+    description: str | None = None
+
+
+class ServiceUpdate(BaseModel):
+    name: str | None = None
+    environment: str | None = None
+    description: str | None = None
+    status: str | None = None
+
+
+class ServiceVerifyRequest(BaseModel):
+    url: str
+
+
+class ServiceVerifyResponse(BaseModel):
+    success: bool
+    message: str
+    status_code: int | None = None
+    latency_ms: float | None = None
+
+
+class AuditEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID | None = None
+    actor_id: UUID | None = None
+    resource_type: str
+    resource_id: str | None = None
+    action: str
+    result: str
+    metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="event_metadata")
+    created_at: datetime
+
+
+class SpanRead(BaseModel):
+    span_id: str
+    trace_id: str
+    parent_span_id: str | None = None
+    name: str
+    service_name: str
+    start_time_unix_nano: int
+    end_time_unix_nano: int
+    duration_ms: float
+    status_code: str = "UNSET"
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
+
+class TraceSummaryRead(BaseModel):
+    trace_id: str
+    service_name: str
+    root_operation: str
+    duration_ms: float
+    span_count: int
+    error_span_count: int
+    spans: list[SpanRead]

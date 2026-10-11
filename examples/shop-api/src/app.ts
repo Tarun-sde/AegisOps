@@ -111,6 +111,8 @@ export interface StructuredLog {
   error_code?: string;
   exception_class?: string;
   version: string;
+  trace_id?: string;
+  span_id?: string;
 }
 
 async function exportOtlpLog(logObj: StructuredLog): Promise<void> {
@@ -144,6 +146,8 @@ async function exportOtlpLog(logObj: StructuredLog): Promise<void> {
                     timeUnixNano: String(BigInt(Date.now()) * 1000000n),
                     severityText: logObj.level.toUpperCase(),
                     body: { stringValue: logObj.message },
+                    ...(logObj.trace_id ? { traceId: logObj.trace_id } : {}),
+                    ...(logObj.span_id ? { spanId: logObj.span_id } : {}),
                     attributes: [
                       {
                         key: "http.route",
@@ -204,6 +208,63 @@ async function exportOtlpLog(logObj: StructuredLog): Promise<void> {
   }
 }
 
+async function exportOtlpTrace(
+  traceId: string,
+  spanId: string,
+  parentSpanId: string | undefined,
+  name: string,
+  startNano: bigint,
+  endNano: bigint,
+  statusCode: number,
+  attributes: Array<{ key: string; value: Record<string, unknown> }>,
+): Promise<void> {
+  const endpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+  if (!endpoint) return;
+  try {
+    await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resourceSpans: [
+          {
+            resource: {
+              attributes: [
+                { key: "service.name", value: { stringValue: "shop-api" } },
+                { key: "service.version", value: { stringValue: "0.1.0" } },
+                {
+                  key: "deployment.environment",
+                  value: { stringValue: process.env.NODE_ENV || "development" },
+                },
+              ],
+            },
+            scopeSpans: [
+              {
+                scope: { name: "shop-api.tracer" },
+                spans: [
+                  {
+                    traceId,
+                    spanId,
+                    ...(parentSpanId ? { parentSpanId } : {}),
+                    name,
+                    kind: 2,
+                    startTimeUnixNano: String(startNano),
+                    endTimeUnixNano: String(endNano),
+                    status: { code: statusCode >= 500 ? 2 : 1 },
+                    attributes,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(1500),
+    });
+  } catch {
+    // ponytail: fire-and-forget trace export
+  }
+}
+
 export const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "64kb" }));
@@ -231,6 +292,24 @@ app.use((request: Request, response: Response, next: NextFunction) => {
   const requestId =
     (request.headers["x-request-id"] as string) || crypto.randomUUID();
   response.setHeader("x-request-id", requestId);
+
+  // W3C TraceContext extraction or generation
+  const traceParent = request.headers["traceparent"] as string | undefined;
+  let traceId: string;
+  let parentSpanId: string | undefined;
+  if (
+    traceParent &&
+    /^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/i.test(traceParent)
+  ) {
+    const parts = traceParent.split("-");
+    traceId = parts[1].toLowerCase();
+    parentSpanId = parts[2].toLowerCase();
+  } else {
+    traceId = crypto.randomBytes(16).toString("hex");
+  }
+  const spanId = crypto.randomBytes(8).toString("hex");
+  response.setHeader("x-trace-id", traceId);
+  response.setHeader("x-span-id", spanId);
 
   response.on("finish", () => {
     const end = process.hrtime.bigint();
@@ -277,6 +356,8 @@ app.use((request: Request, response: Response, next: NextFunction) => {
       error_code: response.locals.errorCode,
       exception_class: response.locals.exceptionClass,
       version: "0.1.0",
+      trace_id: traceId,
+      span_id: spanId,
     };
 
     const redacted = redactSensitive(logEntry) as StructuredLog;
@@ -286,6 +367,21 @@ app.use((request: Request, response: Response, next: NextFunction) => {
       console.log(JSON.stringify(redacted));
     }
     void exportOtlpLog(redacted);
+    void exportOtlpTrace(
+      traceId,
+      spanId,
+      parentSpanId,
+      `${request.method} ${route}`,
+      start,
+      end,
+      response.statusCode,
+      [
+        { key: "http.method", value: { stringValue: request.method } },
+        { key: "http.route", value: { stringValue: route } },
+        { key: "http.status_code", value: { intValue: response.statusCode } },
+        { key: "request.id", value: { stringValue: requestId } },
+      ],
+    );
   });
 
   next();

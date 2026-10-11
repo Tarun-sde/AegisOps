@@ -391,6 +391,7 @@ async def run_investigation_agent(
             gateway.get_incident_snapshot,
             gateway.query_service_metrics,
             gateway.search_service_logs,
+            gateway.get_trace_summary,
         ],
         output_schema=InvestigationResult,
         generate_content_config=types.GenerateContentConfig(

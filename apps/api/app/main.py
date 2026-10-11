@@ -2,12 +2,13 @@ import asyncio
 import hashlib
 import hmac
 import os
+import secrets
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 import psycopg
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
@@ -15,6 +16,20 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, selectinload
 from starlette.responses import JSONResponse
 
+from apps.api.app.auth import (
+    TenantContext,
+    clear_auth_cookies,
+    create_user_session,
+    extract_raw_token,
+    get_current_user,
+    get_tenant_context,
+    hash_password,
+    log_audit_event,
+    revoke_user_session,
+    set_auth_cookies,
+    validate_connector_url,
+    verify_password,
+)
 from apps.api.app.db import get_db
 from apps.api.app.models import (
     AlertEvent,
@@ -22,12 +37,15 @@ from apps.api.app.models import (
     Incident,
     IncidentEvent,
     InvestigationRun,
+    Membership,
     Organization,
     Service,
     ToolExecution,
+    User,
 )
 from apps.api.app.schemas import (
     AlertmanagerWebhookPayload,
+    AuthResponse,
     EvidenceItemRead,
     EvidenceListResponse,
     HypothesisRead,
@@ -37,8 +55,22 @@ from apps.api.app.schemas import (
     InvestigationRunCreate,
     InvestigationRunDetailRead,
     InvestigationRunRead,
+    LoginRequest,
+    MemberAddRequest,
+    MembershipRead,
+    OrganizationCreate,
+    OrganizationRead,
+    RegisterRequest,
+    ServiceCreate,
+    ServiceRead,
+    ServiceUpdate,
+    ServiceVerifyRequest,
+    ServiceVerifyResponse,
     ToolExecutionRead,
+    TraceSummaryRead,
+    UserRead,
 )
+from apps.api.app.telemetry.tempo import TempoClient, validate_trace_id
 from apps.worker.tasks import run_investigation_task
 
 
@@ -98,6 +130,578 @@ async def readyz() -> JSONResponse:
         {"status": "ready" if ready else "unavailable", "checks": checks},
         status_code=200 if ready else 503,
     )
+
+
+# --- Phase 3: Authentication & Session Lifecycle ---
+
+
+@app.post("/api/v1/auth/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+def register(
+    payload: RegisterRequest,
+    response: Response,
+    request: Request,
+    db: DbSession,
+) -> AuthResponse:
+    email_clean = payload.email.strip().lower()
+    if not email_clean or "@" not in email_clean:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Valid email address is required.",
+        )
+    if len(payload.password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters long.",
+        )
+
+    existing = db.scalar(select(User).where(User.email == email_clean))
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A user with this email already exists.",
+        )
+
+    pwd_hash, salt = hash_password(payload.password)
+    user = User(
+        email=email_clean,
+        hashed_password=pwd_hash,
+        salt=salt,
+        name=payload.name.strip() or email_clean.split("@")[0],
+    )
+    db.add(user)
+    db.flush()
+
+    org_name = f"{user.name}'s Workspace"
+    org = Organization(name=org_name)
+    db.add(org)
+    db.flush()
+
+    membership = Membership(
+        user_id=user.id,
+        organization_id=org.id,
+        role="owner",
+    )
+    db.add(membership)
+    db.flush()
+
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("user-agent")
+    raw_token, session = create_user_session(db, user.id, ip, ua)
+    csrf_token = set_auth_cookies(response, raw_token)
+
+    log_audit_event(
+        db,
+        organization_id=org.id,
+        actor_id=user.id,
+        resource_type="user",
+        resource_id=str(user.id),
+        action="user.registered",
+        result="success",
+        metadata={"email": email_clean},
+        ip_address=ip,
+    )
+
+    return AuthResponse(
+        user=UserRead.model_validate(user),
+        active_organization=OrganizationRead.model_validate(org),
+        role="owner",
+        organizations=[OrganizationRead.model_validate(org)],
+        csrf_token=csrf_token,
+    )
+
+
+@app.post("/api/v1/auth/login", response_model=AuthResponse)
+def login(
+    payload: LoginRequest,
+    response: Response,
+    request: Request,
+    db: DbSession,
+) -> AuthResponse:
+    email_clean = payload.email.strip().lower()
+    user = db.scalar(select(User).where(User.email == email_clean))
+
+    ip = request.client.host if request.client else None
+    if not user or not verify_password(payload.password, user.hashed_password, user.salt):
+        log_audit_event(
+            db,
+            organization_id=None,
+            actor_id=user.id if user else None,
+            resource_type="auth",
+            resource_id=email_clean,
+            action="user.login_failed",
+            result="failure",
+            metadata={"reason": "invalid_credentials"},
+            ip_address=ip,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account is deactivated.",
+        )
+
+    memberships = db.scalars(
+        select(Membership)
+        .where(Membership.user_id == user.id)
+        .order_by(Membership.created_at.asc())
+    ).all()
+
+    active_org: Organization | None = None
+    role: str | None = None
+    all_orgs: list[OrganizationRead] = []
+
+    if memberships:
+        org_ids = [m.organization_id for m in memberships]
+        orgs = db.scalars(select(Organization).where(Organization.id.in_(org_ids))).all()
+        org_map = {o.id: o for o in orgs}
+        all_orgs = [OrganizationRead.model_validate(o) for o in orgs]
+        active_org = org_map.get(memberships[0].organization_id)
+        role = memberships[0].role
+
+    ua = request.headers.get("user-agent")
+    raw_token, session = create_user_session(db, user.id, ip, ua)
+    csrf_token = set_auth_cookies(response, raw_token)
+
+    log_audit_event(
+        db,
+        organization_id=active_org.id if active_org else None,
+        actor_id=user.id,
+        resource_type="auth",
+        resource_id=str(user.id),
+        action="user.login",
+        result="success",
+        ip_address=ip,
+    )
+
+    return AuthResponse(
+        user=UserRead.model_validate(user),
+        active_organization=OrganizationRead.model_validate(active_org) if active_org else None,
+        role=role,
+        organizations=all_orgs,
+        csrf_token=csrf_token,
+    )
+
+
+@app.post("/api/v1/auth/logout")
+def logout(
+    request: Request,
+    response: Response,
+    db: DbSession,
+) -> dict[str, str]:
+    raw_token = extract_raw_token(request)
+    if raw_token:
+        revoke_user_session(db, raw_token)
+    clear_auth_cookies(response)
+    return {"status": "logged_out"}
+
+
+@app.get("/api/v1/me", response_model=AuthResponse)
+def get_me(
+    current_user: Annotated[User, Depends(get_current_user)],
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    db: DbSession,
+) -> AuthResponse:
+    memberships = db.scalars(
+        select(Membership)
+        .where(Membership.user_id == current_user.id)
+        .order_by(Membership.created_at.asc())
+    ).all()
+    org_ids = [m.organization_id for m in memberships]
+    orgs = db.scalars(select(Organization).where(Organization.id.in_(org_ids))).all()
+    all_orgs = [OrganizationRead.model_validate(o) for o in orgs]
+
+    return AuthResponse(
+        user=UserRead.model_validate(current_user),
+        active_organization=OrganizationRead.model_validate(context.organization),
+        role=context.role,
+        organizations=all_orgs,
+    )
+
+
+# --- Phase 3: Organizations & Memberships ---
+
+
+@app.get("/api/v1/organizations", response_model=list[OrganizationRead])
+def list_organizations(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: DbSession,
+) -> list[OrganizationRead]:
+    memberships = db.scalars(select(Membership).where(Membership.user_id == current_user.id)).all()
+    org_ids = [m.organization_id for m in memberships]
+    orgs = db.scalars(select(Organization).where(Organization.id.in_(org_ids))).all()
+    return [OrganizationRead.model_validate(o) for o in orgs]
+
+
+@app.post(
+    "/api/v1/organizations",
+    response_model=OrganizationRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_organization(
+    payload: OrganizationCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: DbSession,
+) -> OrganizationRead:
+    org = Organization(name=payload.name.strip())
+    db.add(org)
+    db.flush()
+
+    membership = Membership(
+        user_id=current_user.id,
+        organization_id=org.id,
+        role="owner",
+    )
+    db.add(membership)
+    db.commit()
+    db.refresh(org)
+
+    log_audit_event(
+        db,
+        organization_id=org.id,
+        actor_id=current_user.id,
+        resource_type="organization",
+        resource_id=str(org.id),
+        action="organization.created",
+        result="success",
+        metadata={"name": org.name},
+    )
+    return OrganizationRead.model_validate(org)
+
+
+@app.get("/api/v1/organizations/{org_id}/members", response_model=list[MembershipRead])
+def list_organization_members(
+    org_id: uuid.UUID,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    db: DbSession,
+) -> list[MembershipRead]:
+    if context.organization.id != org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot access membership details of another organization.",
+        )
+    memberships = db.scalars(
+        select(Membership)
+        .where(Membership.organization_id == org_id)
+        .options(selectinload(Membership.user))
+    ).all()
+    results = []
+    for m in memberships:
+        mr = MembershipRead.model_validate(m)
+        mr.user_email = m.user.email if m.user else None
+        mr.organization_name = context.organization.name
+        results.append(mr)
+    return results
+
+
+@app.post(
+    "/api/v1/organizations/{org_id}/members",
+    response_model=MembershipRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_organization_member(
+    org_id: uuid.UUID,
+    payload: MemberAddRequest,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    db: DbSession,
+) -> MembershipRead:
+    if context.organization.id != org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot modify membership of another organization.",
+        )
+    if not context.can("admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owners and admins can invite members.",
+        )
+
+    target_email = payload.email.strip().lower()
+    target_user = db.scalar(select(User).where(User.email == target_email))
+    if not target_user:
+        pwd_hash, salt = hash_password(secrets.token_urlsafe(16))
+        target_user = User(
+            email=target_email,
+            hashed_password=pwd_hash,
+            salt=salt,
+            name=target_email.split("@")[0],
+        )
+        db.add(target_user)
+        db.flush()
+
+    existing_membership = db.scalar(
+        select(Membership).where(
+            Membership.user_id == target_user.id,
+            Membership.organization_id == org_id,
+        )
+    )
+    if existing_membership:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"User '{target_email}' is already a member of this organization.",
+        )
+
+    membership = Membership(
+        user_id=target_user.id,
+        organization_id=org_id,
+        role=payload.role,
+    )
+    db.add(membership)
+    db.commit()
+    db.refresh(membership)
+
+    log_audit_event(
+        db,
+        organization_id=org_id,
+        actor_id=context.user.id,
+        resource_type="membership",
+        resource_id=str(membership.id),
+        action="membership.created",
+        result="success",
+        metadata={"user_email": target_email, "role": payload.role},
+    )
+
+    mr = MembershipRead.model_validate(membership)
+    mr.user_email = target_email
+    mr.organization_name = context.organization.name
+    return mr
+
+
+# --- Phase 3: Services & Connectors ---
+
+
+@app.get("/api/v1/services", response_model=list[ServiceRead])
+def list_services(
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    db: DbSession,
+) -> list[ServiceRead]:
+    services = db.scalars(
+        select(Service)
+        .where(Service.organization_id == context.organization.id)
+        .order_by(Service.created_at.desc())
+    ).all()
+    return [ServiceRead.model_validate(s) for s in services]
+
+
+@app.post("/api/v1/services", response_model=ServiceRead, status_code=status.HTTP_201_CREATED)
+def create_service(
+    payload: ServiceCreate,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    db: DbSession,
+) -> ServiceRead:
+    if not context.can("admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators and owners can register new services.",
+        )
+    existing = db.scalar(
+        select(Service).where(
+            Service.organization_id == context.organization.id,
+            Service.name == payload.name.strip(),
+        )
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Service '{payload.name}' already exists in this organization.",
+        )
+
+    service = Service(
+        organization_id=context.organization.id,
+        name=payload.name.strip(),
+        environment=payload.environment,
+        description=payload.description,
+        status="active",
+    )
+    db.add(service)
+    db.commit()
+    db.refresh(service)
+
+    log_audit_event(
+        db,
+        organization_id=context.organization.id,
+        actor_id=context.user.id,
+        resource_type="service",
+        resource_id=str(service.id),
+        action="service.created",
+        result="success",
+        metadata={"name": service.name, "environment": service.environment},
+    )
+    return ServiceRead.model_validate(service)
+
+
+@app.get("/api/v1/services/{service_id}", response_model=ServiceRead)
+def get_service(
+    service_id: uuid.UUID,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    db: DbSession,
+) -> ServiceRead:
+    service = db.scalar(
+        select(Service).where(
+            Service.id == service_id,
+            Service.organization_id == context.organization.id,
+        )
+    )
+    if not service:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Service '{service_id}' not found.",
+        )
+    return ServiceRead.model_validate(service)
+
+
+@app.patch("/api/v1/services/{service_id}", response_model=ServiceRead)
+def update_service(
+    service_id: uuid.UUID,
+    payload: ServiceUpdate,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    db: DbSession,
+) -> ServiceRead:
+    if not context.can("admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators and owners can update services.",
+        )
+    service = db.scalar(
+        select(Service).where(
+            Service.id == service_id,
+            Service.organization_id == context.organization.id,
+        )
+    )
+    if not service:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Service '{service_id}' not found.",
+        )
+
+    if payload.name is not None:
+        service.name = payload.name.strip()
+    if payload.environment is not None:
+        service.environment = payload.environment
+    if payload.description is not None:
+        service.description = payload.description
+    if payload.status is not None:
+        service.status = payload.status
+    service.updated_at = datetime.now(UTC)
+
+    db.commit()
+    db.refresh(service)
+
+    log_audit_event(
+        db,
+        organization_id=context.organization.id,
+        actor_id=context.user.id,
+        resource_type="service",
+        resource_id=str(service.id),
+        action="service.updated",
+        result="success",
+    )
+    return ServiceRead.model_validate(service)
+
+
+@app.post("/api/v1/services/{service_id}/verify-connection", response_model=ServiceVerifyResponse)
+def verify_service_connection(
+    service_id: uuid.UUID,
+    payload: ServiceVerifyRequest,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    db: DbSession,
+) -> ServiceVerifyResponse:
+    if not context.can("admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators and owners can verify connector endpoints.",
+        )
+    service = db.scalar(
+        select(Service).where(
+            Service.id == service_id,
+            Service.organization_id == context.organization.id,
+        )
+    )
+    if not service:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Service '{service_id}' not found.",
+        )
+
+    try:
+        validated_url = validate_connector_url(payload.url)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"SSRF Protection: {e}",
+        ) from e
+
+    import time
+    import urllib.request
+
+    t0 = time.perf_counter()
+    try:
+        req = urllib.request.Request(
+            validated_url, headers={"User-Agent": "AegisOps-Connector/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as res:
+            latency_ms = (time.perf_counter() - t0) * 1000
+            st_code = res.status
+            success = 200 <= st_code < 400
+            log_audit_event(
+                db,
+                organization_id=context.organization.id,
+                actor_id=context.user.id,
+                resource_type="connector",
+                resource_id=str(service.id),
+                action="integration.connection_verified",
+                result="success" if success else "failure",
+                metadata={"url": validated_url, "status_code": st_code},
+            )
+            return ServiceVerifyResponse(
+                success=success,
+                message=f"Endpoint responded with HTTP {st_code}",
+                status_code=st_code,
+                latency_ms=round(latency_ms, 2),
+            )
+    except Exception as e:
+        latency_ms = (time.perf_counter() - t0) * 1000
+        log_audit_event(
+            db,
+            organization_id=context.organization.id,
+            actor_id=context.user.id,
+            resource_type="connector",
+            resource_id=str(service.id),
+            action="integration.connection_verified",
+            result="failure",
+            metadata={"url": validated_url, "error": str(e)},
+        )
+        return ServiceVerifyResponse(
+            success=False,
+            message=f"Connection failed: {e}",
+            latency_ms=round(latency_ms, 2),
+        )
+
+
+# --- Phase 3: Distributed Tracing ---
+
+
+@app.get("/api/v1/traces/{trace_id}", response_model=TraceSummaryRead)
+def get_trace(
+    trace_id: str,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> TraceSummaryRead:
+    try:
+        clean_id = validate_trace_id(trace_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+    client = TempoClient()
+    summary = client.get_trace_summary(clean_id)
+    if not summary:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Trace '{clean_id}' not found in Tempo or has no spans.",
+        )
+    return summary
 
 
 # --- Phase 1: Webhook & Incident Management ---
@@ -270,13 +874,16 @@ async def alertmanager_webhook(
 @app.get("/api/v1/incidents", response_model=IncidentListResponse)
 def list_incidents(
     db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     severity: Annotated[str | None, Query()] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> IncidentListResponse:
-    query = select(Incident)
-    count_query = select(func.count(Incident.id))
+    query = select(Incident).where(Incident.organization_id == context.organization.id)
+    count_query = select(func.count(Incident.id)).where(
+        Incident.organization_id == context.organization.id
+    )
 
     if status_filter:
         query = query.where(Incident.status == status_filter)
@@ -299,8 +906,17 @@ def list_incidents(
 
 
 @app.get("/api/v1/incidents/{incident_id}", response_model=IncidentRead)
-def get_incident(incident_id: uuid.UUID, db: DbSession) -> IncidentRead:
-    incident = db.scalar(select(Incident).where(Incident.id == incident_id))
+def get_incident(
+    incident_id: uuid.UUID,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> IncidentRead:
+    incident = db.scalar(
+        select(Incident).where(
+            Incident.id == incident_id,
+            Incident.organization_id == context.organization.id,
+        )
+    )
     if not incident:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -310,8 +926,17 @@ def get_incident(incident_id: uuid.UUID, db: DbSession) -> IncidentRead:
 
 
 @app.get("/api/v1/incidents/{incident_id}/events", response_model=list[IncidentEventRead])
-def get_incident_events(incident_id: uuid.UUID, db: DbSession) -> list[IncidentEventRead]:
-    incident = db.scalar(select(Incident).where(Incident.id == incident_id))
+def get_incident_events(
+    incident_id: uuid.UUID,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> list[IncidentEventRead]:
+    incident = db.scalar(
+        select(Incident).where(
+            Incident.id == incident_id,
+            Incident.organization_id == context.organization.id,
+        )
+    )
     if not incident:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -334,10 +959,21 @@ def get_incident_events(incident_id: uuid.UUID, db: DbSession) -> list[IncidentE
 def create_investigation(
     incident_id: uuid.UUID,
     db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
     payload: InvestigationRunCreate | None = None,
 ) -> InvestigationRunRead:
+    if not context.can("member"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Viewers cannot launch investigations.",
+        )
     body = payload or InvestigationRunCreate()
-    incident = db.scalar(select(Incident).where(Incident.id == incident_id))
+    incident = db.scalar(
+        select(Incident).where(
+            Incident.id == incident_id,
+            Incident.organization_id == context.organization.id,
+        )
+    )
     if not incident:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -348,6 +984,7 @@ def create_investigation(
     active_run = db.scalar(
         select(InvestigationRun).where(
             InvestigationRun.incident_id == incident_id,
+            InvestigationRun.organization_id == context.organization.id,
             InvestigationRun.status.in_(
                 ["QUEUED", "COLLECTING_CONTEXT", "INVESTIGATING", "VALIDATING"]
             ),
@@ -374,6 +1011,17 @@ def create_investigation(
     db.commit()
     db.refresh(run)
 
+    log_audit_event(
+        db,
+        organization_id=context.organization.id,
+        actor_id=context.user.id,
+        resource_type="investigation",
+        resource_id=str(run.id),
+        action="investigation.started",
+        result="success",
+        metadata={"incident_id": str(incident.id), "model": model_name, "mode": mode},
+    )
+
     # Dispatch asynchronous background task
     try:
         run_investigation_task.delay(str(run.id))
@@ -394,10 +1042,25 @@ def create_investigation(
 def list_incident_investigations(
     incident_id: uuid.UUID,
     db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> list[InvestigationRunRead]:
+    incident = db.scalar(
+        select(Incident).where(
+            Incident.id == incident_id,
+            Incident.organization_id == context.organization.id,
+        )
+    )
+    if not incident:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Incident '{incident_id}' not found",
+        )
     runs = db.scalars(
         select(InvestigationRun)
-        .where(InvestigationRun.incident_id == incident_id)
+        .where(
+            InvestigationRun.incident_id == incident_id,
+            InvestigationRun.organization_id == context.organization.id,
+        )
         .order_by(desc(InvestigationRun.created_at))
     ).all()
     return [InvestigationRunRead.model_validate(r) for r in runs]
@@ -410,6 +1073,7 @@ def list_incident_investigations(
 def get_investigation(
     investigation_id: uuid.UUID,
     db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> InvestigationRunDetailRead:
     run = db.scalar(
         select(InvestigationRun)
@@ -417,7 +1081,10 @@ def get_investigation(
             selectinload(InvestigationRun.hypotheses),
             selectinload(InvestigationRun.evidence_items),
         )
-        .where(InvestigationRun.id == investigation_id)
+        .where(
+            InvestigationRun.id == investigation_id,
+            InvestigationRun.organization_id == context.organization.id,
+        )
     )
     if not run:
         raise HTTPException(
@@ -455,8 +1122,14 @@ def get_investigation(
 def get_investigation_events(
     investigation_id: uuid.UUID,
     db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> list[ToolExecutionRead]:
-    run = db.scalar(select(InvestigationRun).where(InvestigationRun.id == investigation_id))
+    run = db.scalar(
+        select(InvestigationRun).where(
+            InvestigationRun.id == investigation_id,
+            InvestigationRun.organization_id == context.organization.id,
+        )
+    )
     if not run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -478,10 +1151,16 @@ def get_investigation_events(
 def get_investigation_evidence(
     investigation_id: uuid.UUID,
     db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ) -> EvidenceListResponse:
-    run = db.scalar(select(InvestigationRun).where(InvestigationRun.id == investigation_id))
+    run = db.scalar(
+        select(InvestigationRun).where(
+            InvestigationRun.id == investigation_id,
+            InvestigationRun.organization_id == context.organization.id,
+        )
+    )
     if not run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -491,12 +1170,18 @@ def get_investigation_evidence(
     count_query = (
         select(func.count())
         .select_from(EvidenceItem)
-        .where(EvidenceItem.run_id == investigation_id)
+        .where(
+            EvidenceItem.run_id == investigation_id,
+            EvidenceItem.organization_id == context.organization.id,
+        )
     )
     total = db.scalar(count_query) or 0
     items = db.scalars(
         select(EvidenceItem)
-        .where(EvidenceItem.run_id == investigation_id)
+        .where(
+            EvidenceItem.run_id == investigation_id,
+            EvidenceItem.organization_id == context.organization.id,
+        )
         .order_by(EvidenceItem.created_at.desc())
         .offset((page - 1) * size)
         .limit(size)
@@ -511,8 +1196,17 @@ def get_investigation_evidence(
 
 
 @app.get("/api/v1/evidence/{evidence_id}", response_model=EvidenceItemRead)
-def get_evidence_item(evidence_id: str, db: DbSession) -> EvidenceItemRead:
-    item = db.scalar(select(EvidenceItem).where(EvidenceItem.evidence_id == evidence_id))
+def get_evidence_item(
+    evidence_id: str,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> EvidenceItemRead:
+    item = db.scalar(
+        select(EvidenceItem).where(
+            EvidenceItem.evidence_id == evidence_id,
+            EvidenceItem.organization_id == context.organization.id,
+        )
+    )
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -528,8 +1222,19 @@ def get_evidence_item(evidence_id: str, db: DbSession) -> EvidenceItemRead:
 def cancel_investigation(
     investigation_id: uuid.UUID,
     db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> InvestigationRunRead:
-    run = db.scalar(select(InvestigationRun).where(InvestigationRun.id == investigation_id))
+    if not context.can("member"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Viewers cannot cancel investigations.",
+        )
+    run = db.scalar(
+        select(InvestigationRun).where(
+            InvestigationRun.id == investigation_id,
+            InvestigationRun.organization_id == context.organization.id,
+        )
+    )
     if not run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -541,5 +1246,15 @@ def cancel_investigation(
         run.completed_at = datetime.now(UTC)
         db.commit()
         db.refresh(run)
+
+        log_audit_event(
+            db,
+            organization_id=context.organization.id,
+            actor_id=context.user.id,
+            resource_type="investigation",
+            resource_id=str(run.id),
+            action="investigation.cancelled",
+            result="success",
+        )
 
     return InvestigationRunRead.model_validate(run)
