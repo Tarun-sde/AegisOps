@@ -741,9 +741,7 @@ export async function updateIncidentStatus(
     return {
       data: null,
       error:
-        err instanceof Error
-          ? err.message
-          : "Failed to update incident status",
+        err instanceof Error ? err.message : "Failed to update incident status",
     };
   }
 }

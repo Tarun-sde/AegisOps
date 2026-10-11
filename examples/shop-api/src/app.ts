@@ -280,8 +280,14 @@ async function exportOtlpTrace(
             resource: {
               attributes: [
                 { key: "service.name", value: { stringValue: "shop-api" } },
-                { key: "service.version", value: { stringValue: serviceVersion } },
-                { key: "service.commit_sha", value: { stringValue: gitCommitSha } },
+                {
+                  key: "service.version",
+                  value: { stringValue: serviceVersion },
+                },
+                {
+                  key: "service.commit_sha",
+                  value: { stringValue: gitCommitSha },
+                },
                 {
                   key: "deployment.environment",
                   value: { stringValue: process.env.NODE_ENV || "development" },

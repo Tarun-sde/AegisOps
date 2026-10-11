@@ -12,7 +12,11 @@ interface PageProps {
   params: Promise<{ incidentId: string }>;
 }
 
-function getEventBadgeStyle(eventType: string): { bg: string; border: string; color: string } {
+function getEventBadgeStyle(eventType: string): {
+  bg: string;
+  border: string;
+  color: string;
+} {
   switch (eventType) {
     case "alert_correlated":
       return { bg: "#1f2233", border: "#3b4870", color: "#a4b9f2" };
@@ -64,7 +68,9 @@ export default async function IncidentDetailPage({ params }: PageProps) {
   const { data: events } = await getIncidentEvents(incidentId);
 
   const isCritical = incident.severity.toLowerCase() === "critical";
-  const isOpen = incident.status.toLowerCase() === "open" || incident.status.toLowerCase() === "reopened";
+  const isOpen =
+    incident.status.toLowerCase() === "open" ||
+    incident.status.toLowerCase() === "reopened";
 
   return (
     <main id="main">
@@ -134,16 +140,23 @@ export default async function IncidentDetailPage({ params }: PageProps) {
               <strong>Incident ID:</strong> <code>{incident.id}</code>
             </li>
             <li>
-              <strong>Environment:</strong> <code style={{ color: "#79c0ff" }}>{incident.environment || "staging"}</code>
+              <strong>Environment:</strong>{" "}
+              <code style={{ color: "#79c0ff" }}>
+                {incident.environment || "staging"}
+              </code>
             </li>
             <li>
-              <strong>Correlated Alerts:</strong> <strong style={{ color: "#e6edf3" }}>{incident.correlated_alert_count || 1}</strong>
+              <strong>Correlated Alerts:</strong>{" "}
+              <strong style={{ color: "#e6edf3" }}>
+                {incident.correlated_alert_count || 1}
+              </strong>
             </li>
             <li>
               <strong>Fingerprint:</strong> <code>{incident.fingerprint}</code>
             </li>
             <li>
-              <strong>State Version:</strong> <code>v{incident.version || 1}</code>
+              <strong>State Version:</strong>{" "}
+              <code>v{incident.version || 1}</code>
             </li>
             <li>
               <strong>Started:</strong>{" "}
@@ -165,8 +178,9 @@ export default async function IncidentDetailPage({ params }: PageProps) {
           <p className="eyebrow">Phase 4 Investigation Subsystem</p>
           <h2 id="ai-title">Google ADK Incident Investigator</h2>
           <p style={{ color: "#9eaeb2", fontSize: "0.9rem", lineHeight: 1.6 }}>
-            Autonomous investigation agent integrating verified service metrics, structured logs, distributed traces,
-            and authorized GitHub deployment context with anti-hallucination evidence validation.
+            Autonomous investigation agent integrating verified service metrics,
+            structured logs, distributed traces, and authorized GitHub
+            deployment context with anti-hallucination evidence validation.
           </p>
           <div
             style={{
@@ -248,7 +262,11 @@ export default async function IncidentDetailPage({ params }: PageProps) {
                   }}
                 >
                   <div
-                    style={{ display: "flex", gap: "12px", alignItems: "center" }}
+                    style={{
+                      display: "flex",
+                      gap: "12px",
+                      alignItems: "center",
+                    }}
                   >
                     <span
                       className="badge"

@@ -37,11 +37,27 @@ export function DeploymentContext({
   }, [serviceId]);
 
   return (
-    <section aria-labelledby="deployment-context-title" className="panel" style={{ marginTop: "24px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+    <section
+      aria-labelledby="deployment-context-title"
+      className="panel"
+      style={{ marginTop: "24px" }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "12px",
+        }}
+      >
         <div>
-          <p className="eyebrow" style={{ margin: 0 }}>Scoped GitHub Read-Only Integration</p>
-          <h2 id="deployment-context-title" style={{ margin: "4px 0" }}>Verified Deployment Context</h2>
+          <p className="eyebrow" style={{ margin: 0 }}>
+            Scoped GitHub Read-Only Integration
+          </p>
+          <h2 id="deployment-context-title" style={{ margin: "4px 0" }}>
+            Verified Deployment Context
+          </h2>
         </div>
         <span
           className="badge"
@@ -56,10 +72,19 @@ export function DeploymentContext({
         </span>
       </div>
 
-      <p style={{ color: "#8b949e", fontSize: "0.85rem", marginTop: "6px", lineHeight: 1.5 }}>
-        Server-scoped repository metadata retrieved via least-privilege GitHub read adapter.
+      <p
+        style={{
+          color: "#8b949e",
+          fontSize: "0.85rem",
+          marginTop: "6px",
+          lineHeight: 1.5,
+        }}
+      >
+        Server-scoped repository metadata retrieved via least-privilege GitHub
+        read adapter.
         <em style={{ color: "#d29922", marginLeft: "6px" }}>
-          Note: Deployment timing is correlation context, not automated root cause proof.
+          Note: Deployment timing is correlation context, not automated root
+          cause proof.
         </em>
       </p>
 
@@ -70,19 +95,48 @@ export function DeploymentContext({
       )}
 
       {error && (
-        <div style={{ marginTop: "12px", padding: "8px 12px", background: "#211a1d", border: "1px solid #63333e", borderRadius: "6px", color: "#f85149", fontSize: "0.85rem" }}>
-          <strong>GitHub Integration Warning:</strong> {error} (investigator will fall back to local telemetry).
+        <div
+          style={{
+            marginTop: "12px",
+            padding: "8px 12px",
+            background: "#211a1d",
+            border: "1px solid #63333e",
+            borderRadius: "6px",
+            color: "#f85149",
+            fontSize: "0.85rem",
+          }}
+        >
+          <strong>GitHub Integration Warning:</strong> {error} (investigator
+          will fall back to local telemetry).
         </div>
       )}
 
       {!loading && !error && deployments.length === 0 && (
-        <div style={{ marginTop: "12px", padding: "12px", background: "#0d1117", border: "1px dashed #30363d", borderRadius: "6px", color: "#8b949e", fontSize: "0.85rem" }}>
-          No deployments or recent commits recorded for this service. Telemetry-only investigation active.
+        <div
+          style={{
+            marginTop: "12px",
+            padding: "12px",
+            background: "#0d1117",
+            border: "1px dashed #30363d",
+            borderRadius: "6px",
+            color: "#8b949e",
+            fontSize: "0.85rem",
+          }}
+        >
+          No deployments or recent commits recorded for this service.
+          Telemetry-only investigation active.
         </div>
       )}
 
       {!loading && deployments.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "16px" }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+            marginTop: "16px",
+          }}
+        >
           {deployments.map((dep) => (
             <div
               key={dep.deployment_id}
@@ -99,7 +153,9 @@ export function DeploymentContext({
               }}
             >
               <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: "8px" }}
+                >
                   <span
                     className="badge"
                     style={{
@@ -115,24 +171,52 @@ export function DeploymentContext({
                     {dep.repository}
                   </strong>
                   {dep.version && (
-                    <span style={{ color: "#d2a8ff", fontSize: "0.85rem", fontWeight: 600 }}>
+                    <span
+                      style={{
+                        color: "#d2a8ff",
+                        fontSize: "0.85rem",
+                        fontWeight: 600,
+                      }}
+                    >
                       v{dep.version}
                     </span>
                   )}
-                  <code style={{ fontSize: "0.8rem", color: "#79c0ff", background: "#161b22", padding: "2px 6px", borderRadius: "4px" }}>
+                  <code
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "#79c0ff",
+                      background: "#161b22",
+                      padding: "2px 6px",
+                      borderRadius: "4px",
+                    }}
+                  >
                     {dep.commit_sha.substring(0, 7)}
                   </code>
                 </div>
                 {dep.message && (
-                  <p style={{ margin: "4px 0 0 0", color: "#8b949e", fontSize: "0.8rem" }}>
+                  <p
+                    style={{
+                      margin: "4px 0 0 0",
+                      color: "#8b949e",
+                      fontSize: "0.8rem",
+                    }}
+                  >
                     {dep.message}
                   </p>
                 )}
               </div>
 
-              <div style={{ textAlign: "right", fontSize: "0.8rem", color: "#8b949e" }}>
+              <div
+                style={{
+                  textAlign: "right",
+                  fontSize: "0.8rem",
+                  color: "#8b949e",
+                }}
+              >
                 <div>{new Date(dep.deployed_at).toLocaleString()}</div>
-                <div style={{ fontSize: "0.75rem", color: "#58a6ff" }}>via {dep.source}</div>
+                <div style={{ fontSize: "0.75rem", color: "#58a6ff" }}>
+                  via {dep.source}
+                </div>
               </div>
             </div>
           ))}
