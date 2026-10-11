@@ -123,6 +123,16 @@ def validate_claim_support(
                     "corroborating diagnostic error telemetry (logs, traces, or metrics)."
                 )
 
+        # Check 5: Runbooks & historical incidents are supporting context, not standalone proof
+        if hypothesis.confidence == "high" and sources.issubset(
+            {"runbooks", "historical_incidents"}
+        ):
+            raise ValueError(
+                "Claim support rejected: High confidence causal claim cannot rely solely on "
+                "runbook documentation or historical incidents without corroborating "
+                "runtime telemetry (logs, metrics, or traces)."
+            )
+
 
 def validate_evidence(
     result: InvestigationResult,

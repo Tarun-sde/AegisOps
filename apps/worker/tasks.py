@@ -28,3 +28,30 @@ def run_investigation_task(self: Any, run_id_str: str) -> dict[str, Any]:
         raise
     finally:
         db.close()
+
+
+@celery_app.task(name="aegisops.ingest_document", bind=True, max_retries=2)  # type: ignore[untyped-decorator]
+def ingest_document_task(self: Any, document_id_str: str) -> dict[str, Any]:
+    """Celery background task for asynchronous document validation, chunking, and embedding."""
+    import asyncio
+
+    from apps.api.app.rag.service import DocumentIngestionService
+
+    logger.info(f"Starting Celery document ingestion task for document {document_id_str}")
+    doc_id = UUID(document_id_str)
+    db = SessionLocal()
+    try:
+        service = DocumentIngestionService(db)
+        doc = asyncio.run(service.process_document_ingestion(doc_id))
+        return {
+            "document_id": str(doc.id),
+            "status": doc.status,
+            "filename": doc.filename,
+            "version": doc.version,
+            "chunk_count": len(doc.chunks) if doc.chunks else 0,
+        }
+    except Exception as exc:
+        logger.exception(f"Unhandled error in document ingestion task for {document_id_str}: {exc}")
+        raise
+    finally:
+        db.close()

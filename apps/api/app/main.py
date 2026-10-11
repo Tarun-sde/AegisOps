@@ -6,14 +6,14 @@ import os
 import secrets
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from sqlalchemy import desc, func, select
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.orm import Session, selectinload
 from starlette.responses import JSONResponse
 
@@ -51,6 +51,9 @@ from apps.api.app.models import (
     ToolExecution,
     User,
 )
+from apps.api.app.rag.models import Document
+from apps.api.app.rag.retrieval import HybridRetrievalService
+from apps.api.app.rag.service import DocumentIngestionService, ValidationError
 from apps.api.app.schemas import (
     AlertmanagerWebhookPayload,
     AuthResponse,
@@ -71,6 +74,12 @@ from apps.api.app.schemas import (
     OrganizationCreate,
     OrganizationRead,
     RegisterRequest,
+    RetrievedChunkRead,
+    RunbookListResponse,
+    RunbookRead,
+    RunbookSearchRequest,
+    RunbookSearchResult,
+    RunbookUploadRequest,
     ServiceCreate,
     ServiceRead,
     ServiceUpdate,
@@ -81,7 +90,7 @@ from apps.api.app.schemas import (
     UserRead,
 )
 from apps.api.app.telemetry.tempo import TempoClient, validate_trace_id
-from apps.worker.tasks import run_investigation_task
+from apps.worker.tasks import ingest_document_task, run_investigation_task
 
 logger = logging.getLogger("aegisops.api")
 
@@ -1357,3 +1366,296 @@ def cancel_investigation(
         )
 
     return InvestigationRunRead.model_validate(run)
+
+
+# --- Phase 5 RAG Runbook Endpoints ---
+
+
+def _doc_to_read(doc: Document, chunk_count: int | None = None) -> RunbookRead:
+    count = chunk_count if chunk_count is not None else (len(doc.chunks) if doc.chunks else 0)
+    return RunbookRead(
+        id=doc.id,
+        organization_id=doc.organization_id,
+        service_id=doc.service_id,
+        filename=doc.filename,
+        title=doc.title,
+        content_type=doc.content_type,
+        checksum=doc.checksum,
+        version=doc.version,
+        status=doc.status,
+        embedding_model_id=doc.embedding_model_id,
+        embedding_dimension=doc.embedding_dimension,
+        chunk_count=count,
+        error_code=doc.error_code,
+        error_message=doc.error_message,
+        created_at=doc.created_at,
+        updated_at=doc.updated_at,
+        indexed_at=doc.indexed_at,
+        deleted_at=doc.deleted_at,
+    )
+
+
+@app.get("/api/v1/runbooks", response_model=RunbookListResponse)
+def list_runbooks(
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    service_id: uuid.UUID | None = None,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> RunbookListResponse:
+    conditions = [
+        Document.organization_id == context.organization.id,
+        Document.deleted_at.is_(None),
+    ]
+    if service_id is not None:
+        conditions.append(Document.service_id == service_id)
+
+    total = db.scalar(select(func.count(Document.id)).where(and_(*conditions))) or 0
+    docs = list(
+        db.scalars(
+            select(Document)
+            .where(and_(*conditions))
+            .options(selectinload(Document.chunks))
+            .order_by(Document.updated_at.desc())
+            .offset(offset)
+            .limit(limit)
+        ).all()
+    )
+
+    items = [_doc_to_read(d) for d in docs]
+    return RunbookListResponse(
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.post("/api/v1/runbooks", response_model=RunbookRead, status_code=status.HTTP_201_CREATED)
+async def upload_runbook(
+    payload: RunbookUploadRequest,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> RunbookRead:
+    if not context.can("member"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Viewers cannot upload runbooks.",
+        )
+    if payload.service_id:
+        svc = db.scalar(
+            select(Service).where(
+                Service.id == payload.service_id,
+                Service.organization_id == context.organization.id,
+            )
+        )
+        if not svc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Service '{payload.service_id}' not found in organization",
+            )
+
+    service = DocumentIngestionService(db)
+    try:
+        doc = service.create_pending_document(
+            organization_id=context.organization.id,
+            filename=payload.filename,
+            content=payload.content,
+            service_id=payload.service_id,
+            created_by=context.user.id,
+            title=payload.title,
+        )
+    except ValidationError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve),
+        ) from ve
+
+    # Ingestion dispatch
+    use_celery = os.environ.get("AEGISOPS_USE_CELERY", "1") == "1"
+    dispatched_async = False
+    if use_celery:
+        try:
+            ingest_document_task.delay(str(doc.id))
+            dispatched_async = True
+        except Exception as exc:
+            logger.warning(
+                f"Could not enqueue Celery document ingestion ({exc}); executing synchronously"
+            )
+
+    if not dispatched_async:
+        doc = await service.process_document_ingestion(doc.id)
+
+    log_audit_event(
+        db,
+        organization_id=context.organization.id,
+        actor_id=context.user.id,
+        resource_type="runbook",
+        resource_id=str(doc.id),
+        action="runbook.uploaded",
+        result="success",
+        metadata={"filename": doc.filename, "version": doc.version},
+    )
+    return _doc_to_read(doc)
+
+
+@app.get("/api/v1/runbooks/{runbook_id}", response_model=RunbookRead)
+def get_runbook(
+    runbook_id: uuid.UUID,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> RunbookRead:
+    doc = db.scalar(
+        select(Document)
+        .where(
+            Document.id == runbook_id,
+            Document.organization_id == context.organization.id,
+            Document.deleted_at.is_(None),
+        )
+        .options(selectinload(Document.chunks))
+    )
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Runbook '{runbook_id}' not found",
+        )
+    return _doc_to_read(doc)
+
+
+@app.delete("/api/v1/runbooks/{runbook_id}")
+def delete_runbook(
+    runbook_id: uuid.UUID,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> dict[str, Any]:
+    if not context.can("member"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Viewers cannot delete runbooks.",
+        )
+    service = DocumentIngestionService(db)
+    success = service.soft_delete_document(runbook_id, context.organization.id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Runbook '{runbook_id}' not found or already deleted",
+        )
+
+    log_audit_event(
+        db,
+        organization_id=context.organization.id,
+        actor_id=context.user.id,
+        resource_type="runbook",
+        resource_id=str(runbook_id),
+        action="runbook.deleted",
+        result="success",
+    )
+    return {"status": "deleted", "id": str(runbook_id)}
+
+
+@app.post("/api/v1/runbooks/{runbook_id}/reindex", response_model=RunbookRead)
+async def reindex_runbook(
+    runbook_id: uuid.UUID,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> RunbookRead:
+    if not context.can("member"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Viewers cannot reindex runbooks.",
+        )
+    doc = db.scalar(
+        select(Document).where(
+            Document.id == runbook_id,
+            Document.organization_id == context.organization.id,
+            Document.deleted_at.is_(None),
+        )
+    )
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Runbook '{runbook_id}' not found",
+        )
+
+    service = DocumentIngestionService(db)
+    doc = await service.process_document_ingestion(doc.id)
+
+    log_audit_event(
+        db,
+        organization_id=context.organization.id,
+        actor_id=context.user.id,
+        resource_type="runbook",
+        resource_id=str(doc.id),
+        action="runbook.reindexed",
+        result="success",
+    )
+    return _doc_to_read(doc)
+
+
+@app.get("/api/v1/runbooks/{runbook_id}/versions", response_model=list[RunbookRead])
+def get_runbook_versions(
+    runbook_id: uuid.UUID,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> list[RunbookRead]:
+    target = db.scalar(
+        select(Document).where(
+            Document.id == runbook_id,
+            Document.organization_id == context.organization.id,
+        )
+    )
+    if not target:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Runbook '{runbook_id}' not found",
+        )
+
+    versions = list(
+        db.scalars(
+            select(Document)
+            .where(
+                Document.organization_id == context.organization.id,
+                Document.filename == target.filename,
+            )
+            .options(selectinload(Document.chunks))
+            .order_by(Document.version.desc())
+        ).all()
+    )
+    return [_doc_to_read(d) for d in versions]
+
+
+@app.post("/api/v1/runbooks/search", response_model=RunbookSearchResult)
+async def search_runbooks(
+    payload: RunbookSearchRequest,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> RunbookSearchResult:
+    retrieval_service = HybridRetrievalService(db)
+    res = await retrieval_service.search(
+        organization_id=context.organization.id,
+        query=payload.query,
+        service_id=payload.service_id,
+        limit=payload.limit,
+        mode=payload.mode,
+    )
+    return RunbookSearchResult(
+        query=res.query,
+        mode=res.mode,
+        results=[
+            RetrievedChunkRead(
+                evidence_id=c.evidence_id,
+                document_id=c.document_id,
+                chunk_id=c.chunk_id,
+                document_version=c.document_version,
+                title=c.title,
+                section_title=c.section_title,
+                section_path=c.section_path,
+                content=c.content,
+                content_hash=c.content_hash,
+                relevance_score=c.relevance_score,
+                source_type=c.source_type,
+            )
+            for c in res.results
+        ],
+        total_candidates=res.total_candidates,
+    )

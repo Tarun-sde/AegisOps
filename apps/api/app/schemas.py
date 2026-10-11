@@ -57,7 +57,16 @@ class Incident(Contract):
 
 class Evidence(Scope):
     evidence_id: Identifier
-    source: Literal["synthetic", "logs", "metrics", "traces", "deployments", "runbooks", "alert"]
+    source: Literal[
+        "synthetic",
+        "logs",
+        "metrics",
+        "traces",
+        "deployments",
+        "runbooks",
+        "historical_incidents",
+        "alert",
+    ]
     observed_at: Timestamp
     redacted_snippet: Annotated[str, Field(min_length=1, max_length=32000)]
     locator: Text
@@ -536,3 +545,71 @@ class TraceSummaryRead(BaseModel):
     span_count: int
     error_span_count: int
     spans: list[SpanRead]
+
+
+# --- Phase 5 RAG Schemas ---
+
+
+class RunbookUploadRequest(BaseModel):
+    filename: Annotated[str, Field(min_length=1, max_length=255)]
+    content: Annotated[str, Field(min_length=1, max_length=5242880)]  # max 5MB text
+    title: Annotated[str | None, Field(max_length=255)] = None
+    service_id: UUID | None = None
+
+
+class RunbookRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    service_id: UUID | None = None
+    filename: str
+    title: str
+    content_type: str
+    checksum: str
+    version: int
+    status: str
+    embedding_model_id: str
+    embedding_dimension: int
+    chunk_count: int = 0
+    error_code: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    indexed_at: datetime | None = None
+    deleted_at: datetime | None = None
+
+
+class RunbookListResponse(BaseModel):
+    items: list[RunbookRead]
+    total: int
+    limit: int
+    offset: int
+
+
+class RunbookSearchRequest(BaseModel):
+    query: Annotated[str, Field(min_length=1, max_length=500)]
+    service_id: UUID | None = None
+    limit: Annotated[int, Field(ge=1, le=20)] = 5
+    mode: Literal["hybrid", "vector", "keyword"] = "hybrid"
+
+
+class RetrievedChunkRead(BaseModel):
+    evidence_id: str
+    document_id: str
+    chunk_id: str
+    document_version: int
+    title: str
+    section_title: str
+    section_path: str
+    content: str
+    content_hash: str
+    relevance_score: float
+    source_type: str = "runbook"
+
+
+class RunbookSearchResult(BaseModel):
+    query: str
+    mode: str
+    results: list[RetrievedChunkRead]
+    total_candidates: int

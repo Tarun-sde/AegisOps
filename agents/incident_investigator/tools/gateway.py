@@ -470,3 +470,237 @@ class ReadOnlyToolGateway:
                 "deployments": [],
                 "limitation": "Deployment metadata unavailable from upstream provider",
             }
+
+    def retrieve_runbook(
+        self, question: str, service_context: str | None = None, limit: int = 5
+    ) -> dict[str, Any]:
+        """Tenant-scoped hybrid retrieval of operational runbooks and troubleshooting documentation.
+
+        Returns relevant document excerpts with citation evidence IDs (ev_runbook_...).
+        Guidance in runbooks is OPERATIONAL CONTEXT, not proof of incident causality.
+        """
+        t0 = time.perf_counter()
+        self._check_budget()
+        bound_limit = max(1, min(limit, 5))
+        safe_question = (question or "").strip()[:500]
+        args: dict[str, Any] = {
+            "question": safe_question,
+            "service_context": service_context,
+            "limit": bound_limit,
+        }
+
+        if not safe_question:
+            latency = (time.perf_counter() - t0) * 1000
+            self._record_execution("retrieve_runbook", args, "error", latency, "EMPTY_QUERY")
+            return {
+                "trust": "UNTRUSTED_SOURCE",
+                "query": "",
+                "count": 0,
+                "chunks": [],
+                "note": "Question was empty; no runbook retrieved.",
+            }
+
+        try:
+            if not self.db_session:
+                latency = (time.perf_counter() - t0) * 1000
+                self._record_execution("retrieve_runbook", args, "error", latency, "NO_DB_SESSION")
+                return {
+                    "trust": "UNTRUSTED_SOURCE",
+                    "query": safe_question,
+                    "count": 0,
+                    "chunks": [],
+                    "limitation": "Database session unavailable for runbook retrieval",
+                }
+
+            import asyncio
+            import concurrent.futures
+
+            from apps.api.app.rag.retrieval import HybridRetrievalService
+
+            retrieval_service = HybridRetrievalService(self.db_session)
+
+            # Resolve service_id if provided or default to scope service
+            target_service_id = self.scope.service_id
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    res = pool.submit(
+                        asyncio.run,
+                        retrieval_service.search(
+                            organization_id=self.scope.organization_id,
+                            query=safe_question,
+                            service_id=target_service_id,
+                            limit=bound_limit,
+                            mode="hybrid",
+                        ),
+                    ).result()
+            else:
+                res = asyncio.run(
+                    retrieval_service.search(
+                        organization_id=self.scope.organization_id,
+                        query=safe_question,
+                        service_id=target_service_id,
+                        limit=bound_limit,
+                        mode="hybrid",
+                    )
+                )
+
+            chunk_outputs: list[dict[str, Any]] = []
+            now_utc = datetime.now(UTC)
+
+            for chunk in res.results:
+                ev_id = chunk.evidence_id
+                snippet = f"[{chunk.title} > {chunk.section_path}]\n{chunk.content}"
+                if len(snippet) > MAX_PAYLOAD_BYTES:
+                    snippet = snippet[:MAX_PAYLOAD_BYTES]
+
+                self._persist_evidence(
+                    evidence_id=ev_id,
+                    source="runbooks",
+                    observed_at=now_utc,
+                    locator=f"runbook:{chunk.document_id}:{chunk.chunk_id}#{chunk.section_title}",
+                    redacted_snippet=snippet,
+                    query_metadata={
+                        "query": safe_question,
+                        "relevance_score": chunk.relevance_score,
+                        "document_version": chunk.document_version,
+                    },
+                )
+                chunk_outputs.append(
+                    {
+                        "evidence_id": ev_id,
+                        "document_id": chunk.document_id,
+                        "title": chunk.title,
+                        "section": chunk.section_title,
+                        "section_path": chunk.section_path,
+                        "document_version": chunk.document_version,
+                        "relevance_score": chunk.relevance_score,
+                        "snippet": chunk.content[:2000],
+                    }
+                )
+
+            latency = (time.perf_counter() - t0) * 1000
+            self._record_execution("retrieve_runbook", args, "success", latency)
+            return {
+                "trust": "UNTRUSTED_SOURCE",
+                "query": safe_question,
+                "retrieval_mode": res.mode,
+                "count": len(chunk_outputs),
+                "chunks": chunk_outputs,
+                "usage_policy": (
+                    "Operational guidance must be verified against current metrics, logs, "
+                    "and traces. Precedence in documentation is not proof of causality."
+                ),
+            }
+
+        except Exception as err:
+            logger.exception(f"Runbook retrieval error: {err}")
+            latency = (time.perf_counter() - t0) * 1000
+            self._record_execution("retrieve_runbook", args, "error", latency, "RETRIEVAL_ERROR")
+            return {
+                "trust": "UNTRUSTED_SOURCE",
+                "query": safe_question,
+                "error": f"Runbook retrieval failed: {err}",
+                "chunks": [],
+                "limitation": "Runbook knowledge base unavailable during investigation",
+            }
+
+    def get_related_incidents(self, symptoms: str = "", limit: int = 5) -> dict[str, Any]:
+        """Tenant-scoped search for historically resolved incidents matching symptom patterns.
+
+        Returns prior incident summaries with evidence IDs (ev_hist_...).
+        Prior resolution is correlation context, not proof of identical root cause.
+        """
+        t0 = time.perf_counter()
+        self._check_budget()
+        bound_limit = max(1, min(limit, 5))
+        safe_symptoms = (symptoms or "").strip()[:500]
+        args: dict[str, Any] = {"symptoms": safe_symptoms, "limit": bound_limit}
+
+        if not self.db_session:
+            latency = (time.perf_counter() - t0) * 1000
+            self._record_execution("get_related_incidents", args, "error", latency, "NO_DB_SESSION")
+            return {
+                "trust": "UNTRUSTED_SOURCE",
+                "count": 0,
+                "incidents": [],
+                "limitation": "Database session unavailable for historical incident lookup",
+            }
+
+        try:
+            from apps.api.app.rag.related_incidents import RelatedIncidentService
+
+            service = RelatedIncidentService(self.db_session)
+            current_inc_id = self.incident.id if self.incident else None
+            results = service.get_related_incidents(
+                organization_id=self.scope.organization_id,
+                service_id=self.scope.service_id,
+                symptoms=safe_symptoms,
+                exclude_incident_id=current_inc_id,
+                limit=bound_limit,
+            )
+
+            now_utc = datetime.now(UTC)
+            incident_outputs: list[dict[str, Any]] = []
+
+            for inc in results:
+                ev_id = inc.evidence_id
+                snippet = (
+                    f"[{inc.title} - Severity: {inc.severity} - Status: {inc.status}]\n"
+                    f"Match Reason: {inc.match_reason}\n"
+                    f"Resolved: {inc.resolved_at or 'N/A'}\n"
+                    f"Outcome Summary: {inc.resolution_summary or 'No documented summary'}"
+                )
+                if len(snippet) > MAX_PAYLOAD_BYTES:
+                    snippet = snippet[:MAX_PAYLOAD_BYTES]
+
+                self._persist_evidence(
+                    evidence_id=ev_id,
+                    source="historical_incidents",
+                    observed_at=now_utc,
+                    locator=f"incident:{inc.incident_id}",
+                    redacted_snippet=snippet,
+                    query_metadata={"symptoms": safe_symptoms, "match_reason": inc.match_reason},
+                )
+                incident_outputs.append(
+                    {
+                        "evidence_id": ev_id,
+                        "incident_id": inc.incident_id,
+                        "title": inc.title,
+                        "severity": inc.severity,
+                        "status": inc.status,
+                        "started_at": inc.started_at,
+                        "resolved_at": inc.resolved_at,
+                        "match_reason": inc.match_reason,
+                        "resolution_summary": inc.resolution_summary,
+                    }
+                )
+
+            latency = (time.perf_counter() - t0) * 1000
+            self._record_execution("get_related_incidents", args, "success", latency)
+            return {
+                "trust": "UNTRUSTED_SOURCE",
+                "count": len(incident_outputs),
+                "incidents": incident_outputs,
+                "note": (
+                    "Historical similarities provide diagnostic hypotheses, not proof of causation."
+                ),
+            }
+
+        except Exception as err:
+            logger.exception(f"Related incidents lookup error: {err}")
+            latency = (time.perf_counter() - t0) * 1000
+            self._record_execution(
+                "get_related_incidents", args, "error", latency, "INCIDENT_LOOKUP_ERROR"
+            )
+            return {
+                "trust": "UNTRUSTED_SOURCE",
+                "error": f"Related incident query failed: {err}",
+                "incidents": [],
+                "limitation": "Historical incident repository query failed",
+            }

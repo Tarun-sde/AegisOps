@@ -1,8 +1,8 @@
-# Architecture — Design Baseline
+# Architecture — Implementation Baseline
 
-**Status:** `DESIGN ONLY`  
+**Status:** `IMPLEMENTED & VERIFIED (Phases 0–5)`  
 **Canonical source:** Master implementation plan §§3–5, 7–9, 14.  
-**Related decisions:** ADR-001 through ADR-016 in `ENGINEERING_DECISIONS.md`.
+**Related decisions:** ADR-001 through ADR-025 in `ENGINEERING_DECISIONS.md`.
 
 ```mermaid
 flowchart TD

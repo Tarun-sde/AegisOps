@@ -745,3 +745,191 @@ export async function updateIncidentStatus(
     };
   }
 }
+
+export interface Runbook {
+  id: string;
+  organization_id: string;
+  service_id: string | null;
+  filename: string;
+  title: string;
+  content_type: string;
+  checksum: string;
+  version: number;
+  status: string;
+  embedding_model_id: string;
+  embedding_dimension: number;
+  error_code: string | null;
+  error_message: string | null;
+  chunk_count: number;
+  created_at: string;
+  updated_at: string;
+  indexed_at: string | null;
+}
+
+export interface RunbookListResponse {
+  items: Runbook[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export interface RetrievedChunk {
+  evidence_id: string;
+  document_id: string;
+  chunk_id: string;
+  document_version: number;
+  title: string;
+  section_title: string;
+  section_path: string;
+  content: string;
+  content_hash: string;
+  relevance_score: number;
+  source_type: string;
+}
+
+export interface RunbookSearchResult {
+  query: string;
+  mode: string;
+  count: number;
+  results: RetrievedChunk[];
+}
+
+export async function getRunbooks(): Promise<{
+  data: RunbookListResponse | null;
+  error: string | null;
+}> {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/runbooks`, {
+      cache: "no-store",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      return {
+        data: null,
+        error: errJson?.detail || `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as RunbookListResponse;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to fetch runbooks",
+    };
+  }
+}
+
+export async function uploadRunbook(payload: {
+  filename: string;
+  content: string;
+  title?: string;
+  service_id?: string;
+}): Promise<{ data: Runbook | null; error: string | null }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/runbooks`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      return {
+        data: null,
+        error: errJson?.detail || `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as Runbook;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to upload runbook",
+    };
+  }
+}
+
+export async function deleteRunbook(
+  id: string,
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/runbooks/${id}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      return {
+        success: false,
+        error: errJson?.detail || `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    return { success: true, error: null };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to delete runbook",
+    };
+  }
+}
+
+export async function reindexRunbook(
+  id: string,
+): Promise<{ data: Runbook | null; error: string | null }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/runbooks/${id}/reindex`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      return {
+        data: null,
+        error: errJson?.detail || `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as Runbook;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to reindex runbook",
+    };
+  }
+}
+
+export async function searchRunbooks(
+  query: string,
+  mode: string = "hybrid",
+  limit: number = 5,
+): Promise<{ data: RunbookSearchResult | null; error: string | null }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/runbooks/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({ query, mode, limit }),
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      return {
+        data: null,
+        error: errJson?.detail || `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as RunbookSearchResult;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to search runbooks",
+    };
+  }
+}

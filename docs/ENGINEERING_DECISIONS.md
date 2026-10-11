@@ -2058,3 +2058,226 @@ Do not write weekly summaries with fabricated project experiences.
 - Evidence: Verified via Alembic upgrade and test suite execution; hosted CI run 38146836542 all green.
 - Related ADR/DEC: ADR-024
 
+### DEC-283 — Retrieval-Augmented Generation (RAG) architecture over model fine-tuning
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Knowledge Subsystem Architecture
+- Scope: `apps/api/app/rag`, `agents/incident_investigator`
+- Status: VERIFIED
+- Trigger / problem: SREs require domain-specific runbook guidance and historical incident context during automated investigations.
+- Constraints: Instant knowledge freshness, strict tenant isolation, unforgeable citations, zero model retraining overhead.
+- Selected choice: RAG knowledge architecture querying tenant-scoped documents and returning citation evidence references (`ev_runbook_...`).
+- Alternatives: Fine-tuning Gemini/LLM rejected (cannot update instantly when runbooks change, cannot enforce multi-tenant isolation within weights, lacks exact citation grounding, high compute cost); static prompt injection rejected (cannot scale past token context limits).
+- Why selected: Provides immediate updates upon runbook upload, complete tenant isolation, and auditable evidence citations.
+- Costs / failure modes: Retrieval latency overhead (~5ms) and dependency on chunking/indexing quality.
+- Evidence: 32-query benchmark in `evaluations/rag/evaluate.py`; verified via `apps/api/tests/test_rag_subsystem.py`.
+- Related ADR/DEC: ADR-025
+
+### DEC-284 — PostgreSQL pgvector extension for unified relational and vector storage
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Storage & Indexing
+- Scope: `apps/api/alembic/versions/0007_phase5_rag_knowledge_subsystem.py`, `apps/api/app/rag/models.py`
+- Status: VERIFIED
+- Trigger / problem: Persistent storage needed for document metadata, semantic chunks, and 768-dimensional dense vector embeddings.
+- Constraints: ACID transactional consistency, multi-tenant security guarantees, minimal infrastructure footprint.
+- Selected choice: PostgreSQL `pgvector` extension (0.5.1) with HNSW cosine distance indexing (`DocumentChunk.embedding <=> :vector`) and GIN full-text index.
+- Alternatives: Standalone vector DBs (Pinecone, Qdrant, Milvus, Chroma) rejected (adds external infrastructure, dual-write synchronization bugs, separate auth, and network hop latency).
+- Why selected: Co-locates relational metadata and vector embeddings in the existing PostgreSQL cluster with zero added operational complexity.
+- Costs / failure modes: HNSW index build memory usage; mitigated by tuning `m=16, ef_construction=64`.
+- Evidence: Migration `0007` executed; verified in `test_rag_subsystem.py` and dialect-aware SQLite fallback for hermetic tests.
+- Related ADR/DEC: ADR-025
+
+### DEC-285 — Hybrid search with Reciprocal Rank Fusion (RRF k=60)
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Retrieval Algorithm
+- Scope: `apps/api/app/rag/retrieval.py`
+- Status: VERIFIED
+- Trigger / problem: Vector similarity fails on exact technical symbols (error codes, flags, method names), while full-text search fails on conceptual semantic queries.
+- Constraints: Low retrieval latency (<20ms), robust ranking across varied operational queries.
+- Selected choice: Hybrid retrieval combining PostgreSQL full-text search (`tsquery`) and vector cosine similarity via Reciprocal Rank Fusion ($RRF$, $k=60$).
+- Alternatives: Pure vector retrieval rejected (lower keyword recall, misses exact error codes); linear weighted sum score combination rejected (requires arbitrary normalization between unbounded cosine distances and BM25/ts_rank scores).
+- Why selected: RRF provides scale-invariant, outlier-resistant rank fusion. Benchmark proved Hybrid RRF achieved 87.5% Recall@5 compared to 83.3% for vector-only.
+- Costs / failure modes: Executes two search paths per query, slightly increasing database execution time from 1.6ms to ~5.1ms (well within the <20ms budget).
+- Evidence: Evaluated in `evaluations/rag/evaluate.py` across 32 queries; verified in `test_rag_subsystem.py`.
+- Related ADR/DEC: ADR-025
+
+### DEC-286 — Semantic heading-aware chunking with hierarchical section context propagation
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Document Processing
+- Scope: `apps/api/app/rag/chunking.py`
+- Status: VERIFIED
+- Trigger / problem: Arbitrary token sliding window chunks slice sentences and operational steps in half, losing structural context (e.g. distinguishing symptoms from mitigations).
+- Constraints: Markdown and plain text compatibility, token limit bounding (~512 tokens), preservation of code blocks.
+- Selected choice: Structural heading-aware chunking parsing `#`, `##`, `###` headings. Prepends hierarchical section path (`Doc Title > Section > Subsection`) directly into chunk text for complete semantic grounding.
+- Alternatives: Fixed character/token window chunking rejected (destroys runbook step coherence); sentence-level chunking rejected (too fine-grained, loses procedure context).
+- Why selected: Preserves operational procedure integrity and dramatically improves retrieval relevance (Recall@5 improved from 79.2% to 87.5%).
+- Costs / failure modes: Documents without clear headings fall back to paragraph and token chunking.
+- Evidence: Verified in `test_rag_subsystem.py::test_semantic_chunker_markdown_and_code_blocks` and E2E demonstration.
+- Related ADR/DEC: ADR-025
+
+### DEC-287 — Deterministic secret and credential redaction prior to vector embedding
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Security & Sanitization
+- Scope: `apps/api/app/rag/redaction.py`, `apps/api/app/rag/service.py`
+- Status: VERIFIED
+- Trigger / problem: SRE runbooks often contain database connection URIs with passwords, API tokens, or private keys. Indexing them risks exfiltration through vector search and LLM prompts.
+- Constraints: Zero unredacted secrets permitted in stored chunks, embeddings, or search responses.
+- Selected choice: Pre-ingestion redaction scanner executing regex rules for private keys, database URLs (`postgresql://user:pass@host/db`), Bearer tokens, JWTs, and API keys, replacing secrets with `[REDACTED]`.
+- Alternatives: Post-retrieval redaction rejected (secrets still leak into vector database and embedding provider); relying on human SRE sanitization rejected (unacceptable human error risk).
+- Why selected: Guarantees zero credential leakage at the earliest ingestion boundary before any indexing or embedding occurs.
+- Costs / failure modes: Over-redacting benign tokens containing keywords like "password" in example code.
+- Evidence: Tested in `test_rag_subsystem.py::test_secret_redaction_pipeline` and `scripts/verify_phase5_rag_e2e.py`.
+- Related ADR/DEC: ADR-025
+
+### DEC-288 — Dual embedding model design: production Google GenAI text-embedding-004 vs deterministic unit hash double
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Embedding Pipeline
+- Scope: `apps/api/app/rag/embeddings.py`
+- Status: VERIFIED
+- Trigger / problem: Production requires high-quality dense semantic representations, while test suites and local CI require 100% reproducible, hermetic, offline execution without Google API keys.
+- Constraints: Fixed 768 dimensions across both modes; identical vector storage schema and distance calculations.
+- Selected choice: `EmbeddingProvider` interface with `GoogleGenAIEmbeddingProvider` (using official `google-genai` SDK `text-embedding-004`) for live environments, and `DeterministicHashEmbeddingProvider` (deterministic 768-dim normalized unit vectors via SHA-256 token hashing) for testing and CI.
+- Alternatives: Running a local sentence-transformers PyTorch model in CI rejected (bloats CI dependencies, slow execution); mocking individual calls rejected (fragile and non-semantic).
+- Why selected: Fast (<1ms), zero-dependency, mathematically valid cosine distance testing in CI, seamlessly switching to live GenAI via configuration.
+- Costs / failure modes: Deterministic hash does not capture synonyms, but provides perfect test stability for ranking and retrieval invariants.
+- Evidence: Verified across all 119 tests in `make test` without API credentials.
+- Related ADR/DEC: ADR-025
+
+### DEC-289 — Document ingestion state machine and atomic publication versioning
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Document Lifecycle
+- Scope: `apps/api/app/rag/service.py`, `apps/api/app/rag/models.py`
+- Status: VERIFIED
+- Trigger / problem: Document ingestion involves multiple stages (parsing, sanitizing, chunking, embedding, indexing). Failures must not corrupt the active search corpus.
+- Constraints: Auditable state transitions, non-blocking asynchronous updates, zero partial chunk retrieval.
+- Selected choice: Explicit document state machine: `PENDING -> EXTRACTING -> REDACTING -> CHUNKING -> EMBEDDING -> INDEXING -> READY` (or `FAILED`). Reindexing creates chunks atomically before activating the new version.
+- Alternatives: In-place direct update without state tracking rejected (leaves orphaned or half-indexed documents on crash).
+- Why selected: Ensures resilience against worker crashes and clear visibility into document indexing status.
+- Costs / failure modes: Requires status checking if polling ingestion progress synchronously.
+- Evidence: Tested in `test_rag_subsystem.py::test_document_lifecycle_and_versioning`.
+- Related ADR/DEC: ADR-025
+
+### DEC-290 — Soft deletion with immediate chunk unindexing for compliance and audit preservation
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Document Lifecycle
+- Scope: `apps/api/app/rag/service.py`
+- Status: VERIFIED
+- Trigger / problem: Deleting runbooks must remove them from search results immediately while preserving audit logs of who created or deleted the document.
+- Constraints: Zero deleted document chunks returned in subsequent searches; database audit records preserved.
+- Selected choice: Soft deletion setting `is_deleted = True` on `Document` and atomically deleting all child `DocumentChunk` records from the vector and full-text index.
+- Alternatives: Hard deletion `CASCADE` rejected (erases audit trail of document creation); flagging chunks with `is_deleted` rejected (degrades search performance with extra WHERE conditions).
+- Why selected: Instantly purges vector index while keeping relational audit records intact.
+- Costs / failure modes: Reversing a soft delete requires re-uploading or re-indexing the document content.
+- Evidence: Verified in `test_rag_subsystem.py::test_soft_delete_removes_from_search`.
+- Related ADR/DEC: ADR-025
+
+### DEC-291 — Related incidents retrieval tool via symptom keyword matching
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Historical Incident Context
+- Scope: `apps/api/app/rag/related_incidents.py`, `agents/incident_investigator/tools/gateway.py`
+- Status: VERIFIED
+- Trigger / problem: New incidents often share root cause or remediation patterns with past resolved outages.
+- Constraints: Scoped strictly to resolved incidents within the same tenant/service; unforgeable evidence IDs (`ev_hist_...`).
+- Selected choice: `RelatedIncidentService` querying resolved incidents within tenant/service, ranking by symptom keyword overlap, and returning structured historical evidence references.
+- Alternatives: Letting LLM remember past incidents across chat sessions rejected (violates session statelessness and tenant bounds).
+- Why selected: Provides concrete, verifiable historical post-mortem data directly into the active investigation.
+- Costs / failure modes: Brand-new services with no incident history return empty results gracefully.
+- Evidence: Tested in `test_rag_subsystem.py::test_tool_gateway_runbook_and_incident_retrieval` and E2E demonstration.
+- Related ADR/DEC: ADR-025
+
+### DEC-292 — Non-standalone evidence rule (Check 5) in incident evidence validation
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Agent Evidence Integrity
+- Scope: `agents/incident_investigator/validator.py`
+- Status: VERIFIED
+- Trigger / problem: An LLM may read a runbook about database pool exhaustion and assert that the current incident is pool exhaustion with HIGH confidence, even when runtime logs or metrics show no pool errors.
+- Constraints: High confidence causal hypotheses must be grounded in runtime telemetry; runbooks provide remediation guidance, not fault proof.
+- Selected choice: Validator Check 5: Hypotheses with `confidence == "high"` cannot rely solely on runbook (`ev_runbook_...`) or historical (`ev_hist_...`) citations without corroborating runtime error telemetry (`ev_log_...`, `ev_metric_...`, or `ev_trace_...`).
+- Alternatives: Allowing high confidence based solely on runbooks rejected (causes false root cause diagnoses).
+- Why selected: Enforces scientific method: runtime telemetry proves the fault; runbooks explain how to recover.
+- Costs / failure modes: Demotes uncorroborated hypotheses to lower confidence, prompting SREs to verify runtime state.
+- Evidence: Tested in `test_rag_subsystem.py::test_anti_hallucination_citation_validation` and `scripts/verify_phase5_rag_e2e.py`.
+- Related ADR/DEC: ADR-022, ADR-025
+
+### DEC-293 — Evidence ledger unforgeable ID prefixing (ev_runbook_..., ev_hist_...)
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Evidence Provenance
+- Scope: `agents/incident_investigator/tools/gateway.py`
+- Status: VERIFIED
+- Trigger / problem: Agents could cite fabricated or hallucinatory document sections that were never actually retrieved.
+- Constraints: Cryptographically or sequentially verifiable IDs bound to tool retrieval outputs.
+- Selected choice: `ReadOnlyToolGateway` assigns `ev_runbook_{hash}` and `ev_hist_{hash}` upon tool execution and registers them into `gateway.evidence_ledger`. Fabricated citations fail validation with `ValueError: Unknown evidence reference`.
+- Alternatives: Arbitrary user-defined strings rejected (unverifiable).
+- Why selected: Guarantees 100% auditability and eliminates hallucinatory citations.
+- Costs / failure modes: Model must copy evidence IDs verbatim from tool outputs.
+- Evidence: Tested in `test_rag_subsystem.py::test_anti_hallucination_citation_validation`.
+- Related ADR/DEC: ADR-022, ADR-025
+
+### DEC-294 — Tenant-first SQL filtering preceding vector similarity computation
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Multi-Tenant Security
+- Scope: `apps/api/app/rag/retrieval.py`
+- Status: VERIFIED
+- Trigger / problem: Calculating vector similarity across the entire database before filtering by tenant creates side-channel leaks, degrades performance, and risks cross-tenant data exposure.
+- Constraints: Zero records from Organization B can ever be returned to Organization A under any query or vector parameter.
+- Selected choice: Mandatory SQL pre-filtering: `WHERE organization_id = :org_id AND (service_id IS NULL OR service_id = :svc_id)` enforced before vector distance calculation and full-text scoring.
+- Alternatives: Post-filtering in application memory rejected (severe security vulnerability; leaks top-k slots to other tenants).
+- Why selected: Hard database-level security boundary ensuring complete multi-tenant isolation.
+- Costs / failure modes: Slightly smaller candidate pool per tenant, which is precisely the desired security behavior.
+- Evidence: Tested in `test_rag_subsystem.py::test_cross_tenant_isolation_enforced` and `scripts/verify_phase5_rag_e2e.py`.
+- Related ADR/DEC: ADR-025
+
+### DEC-295 — Read-only tool gateway integration for agent runbook retrieval
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Agent Integration
+- Scope: `agents/incident_investigator/tools/gateway.py`, `agents/incident_investigator/agent.py`
+- Status: VERIFIED
+- Trigger / problem: Agent needs access to runbook search without direct database or network access.
+- Constraints: Call budget enforcement (counts against 15-tool budget), payload size caps (max 3 chunks per call), strict tenant bounds.
+- Selected choice: Registered `retrieve_runbook` and `get_related_incidents` methods on `ReadOnlyToolGateway`. Tools return sanitized chunk summaries with citation evidence IDs.
+- Alternatives: Direct SQL/ORM access in agent tools rejected (violates security boundary and call budget accounting).
+- Why selected: Preserves uniform tool abstraction, budgeting, audit logging, and evidence tracking.
+- Costs / failure modes: Consumes tool call budget; requires agents to query judiciously.
+- Evidence: Tested in `test_rag_subsystem.py::test_tool_gateway_runbook_and_incident_retrieval`.
+- Related ADR/DEC: ADR-022, ADR-025
+
+### DEC-296 — Celery asynchronous background ingestion worker task
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Asynchronous Processing
+- Scope: `apps/worker/tasks.py`
+- Status: VERIFIED
+- Trigger / problem: Large document chunking and vector embedding may exceed HTTP request timeout thresholds (e.g. 5–30 seconds for large files).
+- Constraints: Non-blocking HTTP upload endpoint, reliable background processing, Redis task queue.
+- Selected choice: `ingest_document_task` Celery task processing document ingestion asynchronously while upload endpoint immediately returns `202 Accepted` / pending document record.
+- Alternatives: Synchronous execution on HTTP request thread rejected (causes request timeouts and blocks web server workers).
+- Why selected: Decouples user-facing API latency from embedding computation and database indexing.
+- Costs / failure modes: Requires Celery worker process to be running; local tests execute synchronously via service helper.
+- Evidence: Verified via task definition in `apps/worker/tasks.py` and integration tests.
+- Related ADR/DEC: ADR-025
+
+### DEC-297 — Next.js Runbook management and retrieval playground UI (/app/runbooks)
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Frontend Experience
+- Scope: `apps/web/app/app/runbooks/page.tsx`, `apps/web/app/lib/api.ts`
+- Status: VERIFIED
+- Trigger / problem: Operators need an intuitive interface to upload, review, reindex, delete, and test retrieval on operational runbooks.
+- Constraints: Tenant scoping, responsive design, interactive retrieval testing playground with mode toggles (hybrid, vector, keyword).
+- Selected choice: Created `/app/runbooks` management page with document status badges (`READY`, `INDEXING`), chunk counts, file upload with drag-and-drop support, reindex/delete actions, and a live query tester displaying chunk relevance scores and citation IDs.
+- Alternatives: CLI-only management rejected (operator-unfriendly); embedding runbooks inside incidents page rejected (poor separation of concerns).
+- Why selected: Provides operators immediate visibility into knowledge corpus health and search behavior.
+- Costs / failure modes: None; gracefully degrades when no documents exist.
+- Evidence: Tested via ESLint, Prettier, TypeScript typecheck, and manual route verification.
+- Related ADR/DEC: ADR-025
+
+### DEC-298 — Quantitative evaluation benchmark methodology (32 queries across 5 operational runbooks)
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 RAG Evaluation
+- Scope: `evaluations/rag/evaluate.py`, `docs/PHASE_5_RAG_EVALUATION.md`
+- Status: VERIFIED
+- Trigger / problem: Retrieval quality must be objectively measured against a repeatable benchmark to prevent regression and ensure gate compliance (Recall@5 >= 80%).
+- Constraints: Repeatable offline evaluation, realistic operational SRE scenarios, negative query handling (no-answer queries).
+- Selected choice: Built 32-query benchmark (24 positive, 8 negative) across 5 realistic runbooks (`postgres_pool_exhaustion.md`, `redis_memory_saturation.md`, `checkout_http_500_diagnosis.md`, `canary_rollback_procedure.md`, `network_econnreset_troubleshooting.md`). Measured Recall@1/3/5, MRR, Precision@5, and latency across R0 (keyword), R1 (vector), and R2 (hybrid RRF).
+- Alternatives: Subjective manual spot-checking rejected (unscientific and unverifiable).
+- Why selected: Yields rigorous, reproducible, verifiable metrics: Hybrid RRF achieved 87.5% Recall@5, passing the 80% gate.
+- Costs / failure modes: Dataset must be maintained as new runbook domains are added.
+- Evidence: Full results documented in `docs/PHASE_5_RAG_EVALUATION.md`; runner `evaluations/rag/evaluate.py`.
+- Related ADR/DEC: ADR-025

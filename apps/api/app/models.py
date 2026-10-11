@@ -298,3 +298,6 @@ class HypothesisRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     run: Mapped[InvestigationRun] = relationship("InvestigationRun", back_populates="hypotheses")
+
+
+# RAG subsystem models (Phase 5)
