@@ -6,7 +6,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --all-groups
 COPY apps apps
 COPY agents agents
-COPY alembic.ini ./
+COPY alembic.ini conftest.py ./
 RUN useradd --uid 10001 --create-home aegisops
 USER 10001
 ENV PATH="/app/.venv/bin:$PATH"

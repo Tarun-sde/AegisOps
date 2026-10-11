@@ -18,7 +18,6 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from agents.incident_investigator.agent import run_investigation_agent
@@ -36,7 +35,7 @@ from apps.api.app.schemas import (
     Scope,
 )
 
-load_dotenv()
+pytestmark = pytest.mark.usefixtures("telemetry_http")
 
 
 @pytest.fixture
@@ -155,9 +154,7 @@ async def test_t03_insufficient_evidence_inconclusive(run_scope: Scope) -> None:
         redacted_snippet='[{"labels":{"route":"/checkout","status_code":"200"},"value":0.0}]',
     )
 
-    result = await run_investigation_agent(
-        gateway, scenario="inconclusive", execution_mode="offline"
-    )
+    result = await run_investigation_agent(gateway, scenario="supported", execution_mode="offline")
     assert result.status == "inconclusive"
     assert len(result.missing_evidence) >= 1
     assert "No HTTP 500" in result.missing_evidence[0] or "insufficient" in result.summary.lower()
@@ -193,9 +190,8 @@ async def test_t04_misleading_logs_resistance(run_scope: Scope) -> None:
     hypo = result.hypotheses[0]
     # Agent identifies the true payment gateway timeout and qualifies confidence or notes assumption
     assert "payment" in hypo.cause.lower() or "gateway" in hypo.cause.lower()
-    assert hypo.confidence in ("medium", "high")
-    if hypo.confidence == "medium":
-        assert len(hypo.unverified_assumptions) >= 1
+    assert hypo.confidence == "medium"
+    assert len(hypo.unverified_assumptions) >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +266,10 @@ async def test_t07_offline_model_authenticity(run_scope: Scope) -> None:
 # T08 — Live Gemini smoke test (bounded or BLOCKED on quota)
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.skipif(
+    os.environ.get("AEGISOPS_LIVE_TEST") != "1", reason="Live Gemini requires explicit opt-in"
+)
 async def test_t08_live_gemini_smoke_test(run_scope: Scope) -> None:
     api_key = os.environ.get("GOOGLE_API_KEY", "")
     if not api_key:

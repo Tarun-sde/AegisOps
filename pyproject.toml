@@ -31,7 +31,7 @@ package = false
 testpaths = ["apps/api/tests", "agents/incident_investigator/tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
-markers = ["integration: requires the isolated Compose database and Redis"]
+markers = ["integration: requires explicitly enabled infrastructure or live provider access"]
 
 [tool.ruff]
 target-version = "py314"

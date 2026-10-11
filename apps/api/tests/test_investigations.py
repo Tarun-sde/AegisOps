@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import patch
@@ -190,7 +191,12 @@ def test_get_investigation_events_and_evidence():
     assert ev_item_resp.json()["evidence_id"] == evidence_id
 
 
-def test_execute_investigation_lifecycle_offline():
+@pytest.mark.parametrize(
+    "telemetry_http,expected",
+    [("supported", "COMPLETE"), ("empty", "INCONCLUSIVE"), ("unavailable", "INCONCLUSIVE")],
+    indirect=["telemetry_http"],
+)
+def test_execute_investigation_lifecycle_offline(telemetry_http, expected):
     with TestingSessionLocal() as db:
         inc = create_test_incident(db)
         run = InvestigationRun(
@@ -214,12 +220,51 @@ def test_execute_investigation_lifecycle_offline():
             scenario="supported",
         )
 
-        assert finished_run.status == "COMPLETE"
+        assert finished_run.status == expected
         assert finished_run.summary is not None
-        assert finished_run.tool_call_count > 0
-        assert len(finished_run.hypotheses) == 1
-        assert finished_run.hypotheses[0].confidence == "high"
+        assert finished_run.tool_call_count == 3
+        assert finished_run.execution_mode == "offline"
+        assert finished_run.provider == "offline"
+        assert telemetry_http.call_count == 2
+        evidence = db.query(EvidenceItem).filter_by(run_id=run_id).all()
+        executions = db.query(ToolExecution).filter_by(run_id=run_id).all()
+        assert len(executions) == 3
+        for item in evidence:
+            assert item.organization_id == inc.organization_id
+            assert item.service_id == inc.service_id
+            assert item.content_hash == hashlib.sha256(item.redacted_snippet.encode()).hexdigest()
+        if expected == "COMPLETE":
+            assert len(finished_run.hypotheses) == 1
+            hypothesis = finished_run.hypotheses[0]
+            assert hypothesis.confidence == "high"
+            assert "payment processing gateway timeout" in hypothesis.cause
+            assert {item.source for item in evidence} == {"alert", "metrics", "logs"}
+            assert all(item.status == "success" for item in executions)
+            cited_ids = {ref["evidence_id"] for ref in hypothesis.supporting_evidence}
+            assert cited_ids <= {item.evidence_id for item in evidence}
+            assert {item.source for item in evidence if item.evidence_id in cited_ids} == {
+                "metrics",
+                "logs",
+            }
+            metric = next(item for item in evidence if item.source == "metrics")
+            assert metric.locator == "promql:http_5xx_error_rate"
+            assert metric.query_metadata["window_minutes"] == 15
+            log = next(item for item in evidence if item.source == "logs")
+            assert "CHECKOUT_GATEWAY_TIMEOUT" in log.redacted_snippet
+            assert "APPLICATION_EXCEPTION" in log.redacted_snippet
+        else:
+            assert finished_run.hypotheses == []
+            assert finished_run.missing_evidence
+            if any(item.status == "error" for item in executions):
+                assert {item.source for item in evidence} == {"alert"}
+                assert {item.error_category for item in executions if item.status == "error"} == {
+                    "PROMETHEUS_UNAVAILABLE",
+                    "LOKI_UNAVAILABLE",
+                }
 
         # Verify idempotency: re-running does not re-investigate
         rerun = execute_investigation(run_id, db)
-        assert rerun.status == "COMPLETE"
+        assert rerun.status == expected
+        assert telemetry_http.call_count == 2
+        assert db.query(EvidenceItem).filter_by(run_id=run_id).count() == len(evidence)
+        assert db.query(ToolExecution).filter_by(run_id=run_id).count() == 3

@@ -2,7 +2,9 @@
 
 **Date:** 2026-10-11  
 **Phase:** 2 — End-to-End AI Investigation MVP (Corrective Fix)  
-**Correction Status:** `COMPLETE — ALL CORRECTIVE GATES VERIFIED; LIVE GEMINI BLOCKED ON FREE-TIER QUOTA (429 RESOURCE_EXHAUSTED)`  
+**Correction Status:** `CI ISOLATION REPAIR VERIFIED LOCALLY; HOSTED CI BLOCKED BY GIT AUTHENTICATION; PRIOR LIVE GEMINI QUOTA BLOCKER REMAINS SEPARATE`
+> Sections 1–8 retain historical corrective verification evidence. Section 9 records the current CI repair; earlier completion statements do not establish current hosted success.
+
 **Governing Documents:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Phase 2; `AGENTS.md`; `docs/ADR/ADR-022-adk-investigation-worker.md`; `docs/ENGINEERING_DECISIONS.md` (DEC-251–DEC-265).
 
 ---
@@ -263,3 +265,79 @@ Running 3 tests using 1 worker
 | `docs/ADR/ADR-022-adk-investigation-worker.md` | Added Phase 2 Corrective Fix amendment. |
 | `docs/ENGINEERING_DECISIONS.md` | Appended decisions DEC-261 through DEC-265. |
 | `docs/PROJECT_STATE.md` | Updated with Phase 2 Corrective Fix status. |
+
+
+## 9. CI isolation repair — 2026-10-11
+
+### Actual hosted failure
+
+Repository `Tarun-sde/AegisOps`, branch `main`, commit `3c6db7d97b97b7ffa06a175d69488e548ad7f041`.
+[Run 38118992591](https://github.com/Tarun-sde/AegisOps/actions/runs/38118992591), workflow **AegisOps CI**, job **foundation** (`114409640721`), conclusion **failure**.
+
+| Hosted stage | Observed result |
+|---|---|
+| Frozen dependencies | success |
+| Static checks | success |
+| Offline tests and ADK artifacts | failure |
+| Dependency security | skipped |
+| Browser and production build | skipped |
+| Isolated Compose verification | skipped |
+| Cleanup and artifact upload | success |
+
+Public GitHub API run, jobs and annotations were inspected. Annotation: `Process completed with exit code 2.` Full log download returned HTTP 403 without authentication. The detailed CI transcript supplied by the developer reports `3 failed, 81 passed, 1 skipped, 2 deselected, 4 warnings`; it is not represented as independently downloaded logs.
+
+### Three independently reproduced causes
+
+1. `test_execute_investigation_lifecycle_offline`: expected COMPLETE, observed INCONCLUSIVE. SQLite supplies a valid incident/run but no deterministic metrics or diagnostic logs. Real telemetry requests fail in an isolated environment, so the offline model correctly abstains. Lifecycle propagation is correct.
+2. `test_gateway_budget_and_metrics`: expected `evidence_id`, observed an error with empty series. It made an actual localhost Prometheus request. Local sandbox reproduction reported `<urlopen error [Errno 1] Operation not permitted>`; supplied hosted output reported `<urlopen error [Errno 111] Connection refused>`. Neither should produce successful evidence.
+3. `test_offline_investigation_supported_scenario`: expected complete, observed inconclusive. `scenario="supported"` is not diagnostic evidence. The corrected model requires actual error signals; the test supplied none.
+
+Each test failed independently before editing (1 failure per invocation). The implementation's honest INCONCLUSIVE behavior was retained; supported expectations were not weakened.
+
+### Repair and isolation audit
+
+- Root `conftest.py` mocks only `urllib.request.urlopen`, with Prometheus vector and Loki stream wire envelopes. Supported input has a 0.25 error ratio and structured HTTP 500 checkout error with `APPLICATION_EXCEPTION`, `CHECKOUT_GATEWAY_TIMEOUT` and `PaymentGatewayTimeoutException`. Empty and refused responses are separate cases. These are **synthetic test fixtures**, not real telemetry or model accuracy evidence.
+- Gateway tests exercise enum rejection before HTTP, query encoding, float normalization, window metadata clamping, log parsing, evidence generation and the 12-call budget. Connection refusal yields no successful metric/log evidence IDs. Lifecycle tests use real SQLite sessions and verify provenance, hashes, citations, terminal status, tool errors and idempotency.
+- Real ADK Runner, offline model, claim-support and citation validators execute unchanged. Existing fabricated/cross-scope and misleading-evidence tests remain; misleading evidence must qualify confidence. No-data tests now use the same supported scenario label, proving abstention comes from missing evidence.
+- Non-integration tests clear model credentials, select offline mode, block Internet-family socket `connect`/`connect_ex`, and fail teardown for attempted connections even if application code catches the error. Local socketpairs remain available to asyncio. This is a test guard, not a production network policy or protection against arbitrary subprocesses.
+- Removed collection-time `.env` loading. The live smoke test is marked `integration` and requires `AEGISOPS_LIVE_TEST=1`; it receives no HTTP mocks. Normal offline selection never contacts Gemini. No live inference was performed for this repair.
+- Audited API and agent test files; API clients use in-process transport and in-memory SQLite, readiness probes and Celery dispatch are mocked, provider comparisons mock HTTP. There is no `apps/worker/tests/` directory; lifecycle tests cover the orchestration called by the worker, not live Celery delivery. Existing real Compose tests and Phase 1/2 E2E scripts remain intact.
+- `Makefile` includes the root fixture in Ruff checks; API Dockerfile copies it for container test discovery. No workflow job, assertion, security check, production runtime logic, migration or pinned dependency was removed or relaxed.
+- Fixture envelope references checked against pinned upstream sources: [Prometheus v3.2.1 API](https://raw.githubusercontent.com/prometheus/prometheus/v3.2.1/docs/querying/api.md) and [Loki v3.4.2 HTTP API](https://raw.githubusercontent.com/grafana/loki/v3.4.2/docs/sources/reference/loki-http-api.md).
+
+### Local commands and actual results
+
+Host: Python **3.14.7**, Node **22.23.1**, npm **10.9.8**; existing `.tools/bin/uv` **0.13.0**. All uv invocations use `--frozen --all-groups`. `make test`, `make spike`, `make check` each exit 127 (`make: command not found`); equivalent recipe commands were executed directly, without installing a host toolchain.
+
+| Command/check | Actual result |
+|---|---|
+| `UV_CACHE_DIR=.cache/uv .tools/bin/uv sync --frozen --all-groups` | exit 0; 130 packages checked |
+| Same sync with `UV_PROJECT_ENVIRONMENT=/tmp/aegisops-ci-env` | exit 0; fresh environment; initial `--offline` attempt lacked cached Celery wheel, online frozen sync succeeded |
+| `uv run --frozen --all-groups pytest -q -m 'not integration'` in fresh environment | **89 passed, 3 deselected, 4 warnings in 11.47s** |
+| Full fresh-environment suite with pytest collection reversed | **89 passed, 3 deselected, 4 warnings in 5.53s** |
+| Same suite in existing pinned API image, current tests mounted read-only, `docker run --network none` | **89 passed, 3 deselected, 4 warnings in 12.04s** |
+| Lifecycle test alone | **3 passed, 3 warnings in 2.80s** |
+| Gateway budget/metrics test alone | **1 passed, 1 warning in 1.10s** |
+| Supported offline agent test alone | **1 passed, 2 warnings in 1.98s** |
+| Ruff check and format check over `conftest.py apps agents scripts` | exit 0; 39 files formatted |
+| Exact mypy target list in `Makefile` | exit 0; 15 source files |
+| `npm run lint`, `npm run format:check`, `npm run typecheck` | all exit 0 |
+| Both `python -m agents.incident_investigator.spike` recipe commands | exit 0; supported complete and conflicting inconclusive; each 2 model calls / 1 tool call |
+| `npm test` | exit 0; **1 passed, 0 failed** |
+| `npm run test:web` | exit 0; **3 passed in 3.1s**; reused existing local web service |
+| `npm run build` | exit 0; Next.js production and shop-api TypeScript builds |
+| `pip-audit --progress-spinner off`, `npm audit --audit-level=high` | both exit 0; no known vulnerabilities / 0 vulnerabilities |
+| Dedicated Compose verification using existing pinned image and current tests mounted read-only | **2 passed, 1 skipped, 89 deselected, 3 warnings in 7.78s**; migration round-trip and readiness pass; live smoke skipped without opt-in; verification services stopped afterward |
+| `git diff --check` | exit 0 |
+
+The initial sandbox full-suite run stalled in TestClient and was interrupted (exit 130); Node listener tests also failed in the sandbox. Both passed outside it. No production code was changed to accommodate these host restrictions. The fresh environment and disabled-network container independently verify the repaired tests; the original developer virtualenv is not the sole proof.
+
+### Hosted blocker, security and phase readiness
+
+GitHub CLI is absent. `GIT_TERMINAL_PROMPT=0 git push --dry-run origin main` returned `fatal: could not read Username for 'https://github.com': terminal prompts disabled`; `ssh-add -l` reports no identities. Public run inspection works, but authenticated log access and push remain unavailable. The latest inspected hosted run is still the failed run above. No replacement hosted green run is claimed.
+
+DEC-266 and BUG-20261011-001 record this repair; ADR-022 and DEC-253/255/257/261–265 govern unchanged runtime behavior. No new ADR, architectural deviation, paid model call, secret publication or Phase 3 implementation. Production read-only tools, evidence scope validation, claim support, qualitative confidence and explicit live/offline separation remain intact.
+
+Limits: synthetic fixtures prove deterministic wiring, not live diagnostic accuracy. Window tests verify the existing metadata clamp, not historical time-range enforcement; broader service/tenant authorization remains Phase 3 work. Browser checks reused the existing service; they are not a fresh hosted deployment test. Earlier live Gemini quota evidence was not refreshed. Local deterministic gates pass; **the hosted CI gate remains BLOCKED and Phase 3 stays LOCKED**.
+
+After Git authentication is restored: push `main`, inspect the run matching the exact repair commit, wait for every required foundation step to complete, retrieve any new failure logs, and repair further failures before claiming GREEN. Example: `git push origin main`; with authenticated CLI, `gh run list --branch main --commit "$(git rev-parse HEAD)"`, then `gh run watch <run-id> --exit-status` and `gh run view <run-id> --json headSha,conclusion,jobs,url`.

@@ -1,9 +1,9 @@
 # AegisOps — Current Project State
 
 **Updated:** 2026-10-11  
-**Current phase:** Phase 2 (End-to-End AI Investigation MVP — Corrective Fix Complete)  
-**Overall state:** `PHASE 2 COMPLETE — END-TO-END AI INVESTIGATION MVP (ROOT-CAUSE ACCURACY, QUALITATIVE CONFIDENCE & ADK PIPELINE) VERIFIED; PHASE 3 READY FOR AUTHORIZATION`  
-**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Phase 2; `docs/PHASE_REPORTS/PHASE_2_VERIFICATION.md`; `docs/ADR/ADR-022-adk-investigation-worker.md`; DEC-251–DEC-265.
+**Current phase:** Phase 2 (CI isolation repair — local verification complete, hosted verification blocked)
+**Overall state:** `PHASE 2 CI REPAIR VERIFIED LOCALLY; HOSTED GATE BLOCKED BY GIT AUTHENTICATION; PHASE 3 LOCKED`
+**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Phase 2; `docs/PHASE_REPORTS/PHASE_2_VERIFICATION.md`; `docs/ADR/ADR-022-adk-investigation-worker.md`; DEC-251–DEC-266.
 
 ---
 
@@ -72,7 +72,7 @@
 
 ## Untested / Blocked / Deferred (Strict Phase Boundaries)
 
-**Developer authorization gate:** Phase 2 is COMPLETE. Phase 3 remains **LOCKED** until developer explicitly authorizes Phase 3 commencement.
+**Developer authorization gate:** Phase 2 deterministic repair checks pass locally, but the latest hosted foundation job failed. Phase 3 remains **LOCKED** pending hosted verification and explicit developer authorization. The earlier live Gemini quota blocker is separate.
 
 - [ ] **Distributed Tracing Investigation with Grafana Tempo:** `DEFERRED TO PHASE 3`.
 - [ ] **GitHub Deployment / Commit Correlation:** `DEFERRED TO PHASE 3`.
@@ -84,7 +84,7 @@
 
 ---
 
-## Verification Test Summary
+## Historical Verification Test Summary (before CI repair)
 
 | Test Suite | Command | Exit Code | Result |
 |---|---|---|---|
@@ -95,3 +95,15 @@
 | Web Browser E2E Tests | `npm --prefix apps/web test` | 0 | PASSED (3/3 Playwright browser tests passed in 2.7s) |
 | Phase 1 Regression E2E | `.venv/bin/python scripts/verify_phase1_e2e.py` | 0 | PASSED (All 19 acceptance steps verified live) |
 | Phase 2 End-to-End System | `.venv/bin/python scripts/verify_phase2_e2e.py` | 0 | PASSED (All 21 acceptance steps verified live) |
+
+
+## CI repair verification — 2026-10-11 (DEC-266)
+
+- Latest inspected hosted run: [38118992591](https://github.com/Tarun-sde/AegisOps/actions/runs/38118992591), `main`, commit `3c6db7d97b97b7ffa06a175d69488e548ad7f041`: **completed / failure**. Foundation failed at offline tests; security, browser/build and isolated Compose steps were skipped.
+- Root cause: two supported investigation tests supplied no deterministic diagnostic telemetry; the gateway test required real Prometheus. Offline model mode alone does not isolate telemetry. Quality tests also loaded `.env` at collection and included a live Gemini test in offline selection.
+- Repair: shared synthetic HTTP fixtures exercise the actual gateway, ADK and SQLite persistence; missing/refused telemetry stays INCONCLUSIVE. Per-test credential isolation and network guards prevent accidental live calls. Live smoke now requires integration selection and `AEGISOPS_LIVE_TEST=1`. No production diagnosis logic or dependency pins changed.
+- Clean Python 3.14.7 frozen environment: **89 passed, 3 deselected, 4 warnings**. Reverse order: same counts. Existing API image with current tests mounted read-only and `--network none`: same counts. The three deselections are two existing infrastructure tests and the live smoke test; no test was deleted.
+- Original failures independently: lifecycle **3 passed** (supported/empty/refused); gateway **1 passed**; supported agent **1 passed**. Ruff (39 files), mypy (15 files), web lint/format/types, both ADK spikes, Node test (**1 passed**), browser tests (**3 passed**, reused existing web service), production builds and both dependency audits pass.
+- `make` is unavailable on this host; its test/spike/check recipes were executed directly. Isolated Compose migration/readiness checks pass (**2 passed, 1 skipped, 89 deselected**); live smoke is the intentional skip. Fresh Docker image build verification remains in progress.
+- **External blocker:** `gh` absent; HTTPS push has no credential helper/usable credentials, and the SSH agent has no identities. Public GitHub API permits run/step inspection but full log download returns HTTP 403. Hosted repair success cannot be claimed until the commit is pushed and its exact run completes successfully.
+- Full evidence, limitations and resume procedure: [Phase 2 report, CI repair addendum](PHASE_REPORTS/PHASE_2_VERIFICATION.md#9-ci-isolation-repair--2026-10-11).

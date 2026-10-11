@@ -1779,3 +1779,37 @@ Do not write weekly summaries with fabricated project experiences.
 - Related: ADR-014, ADR-022.
 
 
+### DEC-266 — Isolate offline investigation tests at the HTTP boundary
+- Date (UTC): 2026-10-11
+- Phase / work item: Phase 2 hosted CI repair; no Phase 3 work.
+- Scope: root `conftest.py`, gateway/quality/lifecycle tests, pytest markers.
+- Status: ACCEPTED-DESIGN; verification pending.
+- Trigger / problem: Hosted run 38118992591 failed offline tests at commit 3c6db7d97b97b7ffa06a175d69488e548ad7f041. Three tests independently reproduce locally: missing successful metric evidence and two unsupported COMPLETE expectations. Offline model selection does not mock telemetry transport.
+- Constraints: Preserve actual ADK Runner, gateway parsing/budgets, persistence, citation and claim validators, honest INCONCLUSIVE, pins, and read-only production behavior.
+- Selected choice: Share explicitly synthetic Prometheus vector and Loki stream HTTP fixtures across tests, with supported, empty and connection-refused responses. Exercise actual gateway and isolated SQLite persistence. Prevent non-integration tests from making Internet-family socket connections, report attempted connections even when application code catches errors, clear model credentials and select offline mode per test. Remove collection-time dotenv loading. Mark the live smoke test integration and require explicit `AEGISOPS_LIVE_TEST=1`; keep existing real infrastructure tests intact.
+- Alternatives: Starting Compose for unit tests hides missing isolation; replacing entire tool methods skips parsing/validation; changing COMPLETE assertions or teaching production inference a fixture answer bypasses the contract. All rejected. Socket creation itself remains allowed for asyncio's local socketpair.
+- Why selected: Faithful transport responses supply operational evidence without an answer key; per-test fixtures prevent developer services, credentials and test order from affecting results.
+- Costs / failure modes: Synthetic HTTP tests do not verify real backend connectivity or Gemini quality. New network-dependent tests must use the integration marker and explicit prerequisites. Fixture wire shape must track backend upgrades.
+- Evidence level: TESTED reproduction; implementation verification pending. Exact local error for metrics was `Operation not permitted` (sandbox), versus the supplied CI `Connection refused`; both return an empty series and no evidence ID.
+- When to revisit: Telemetry API versions change, another network client bypasses the guard, or real integration behavior differs from fixtures.
+- Interview answer: The offline model still used real telemetry tools, so a developer's running services could mask incomplete tests. We supply synthetic wire responses while exercising the real ADK, parsing and persistence paths, and keep no-data and outage cases distinct from supported diagnoses.
+- Related ADR/DEC: ADR-022; DEC-155/188/189/204/218/221/253/255/257/261–265. No new ADR or production architecture change.
+
+### BUG-20261011-001 — Offline CI relied on local telemetry and credentials
+- Symptom: Hosted foundation job's offline step failed; downstream security/browser/Compose stages skipped. Supplied pytest transcript: 3 failed, 81 passed, 1 skipped, 2 deselected. GitHub API confirms exact run/step; full log download requires authentication (HTTP 403), so that transcript is user-supplied evidence.
+- Reproduction: Run each of `test_execute_investigation_lifecycle_offline`, `test_gateway_budget_and_metrics`, and `test_offline_investigation_supported_scenario` alone using Python 3.14.7; each fails. Frozen sync succeeds (130 packages).
+- Hypotheses tested: Production validator regression versus missing telemetry fixture; inspected real model/gateway/orchestrator and tests. Neither supported test supplies logs/metrics. The gateway success assertion requires live HTTP. Missing evidence correctly yields INCONCLUSIVE before any unsupported cause is produced.
+- Root cause: Tests did not isolate Prometheus/Loki and assumed a supported scenario label supplied diagnostic evidence; it does not. Quality tests preload evidence but still call telemetry. Module-level dotenv loading and an unmarked live test also make the offline suite environment-dependent.
+- Repair: DEC-266; HTTP fixtures, credential/network isolation, explicit live integration selection, and regression assertions for provenance, persistence, no-data, connection refusal, and qualified contradictory evidence.
+- Verification: Pending; results will be appended here and in the Phase 2 report.
+- Prevention / lesson: An offline LLM is not an offline test. Verify transport independence and actual evidence support separately from framework lifecycle completion.
+
+### DEC-266 / BUG-20261011-001 verification addendum
+- Status: VERIFIED LOCALLY; hosted repair verification BLOCKED by missing Git authentication. No new ADR.
+- Evidence: [Phase 2 CI repair report](PHASE_REPORTS/PHASE_2_VERIFICATION.md#9-ci-isolation-repair--2026-10-11) records exact commands/results: fresh frozen Python 3.14.7 suite 89 passed / 3 deselected; reversed order same; existing pinned API container with networking disabled same. Original failures independently pass (3 lifecycle cases, 1 gateway, 1 supported runner). Isolated Compose migration/readiness: 2 passed, 1 intentionally skipped live smoke, 89 deselected. Static checks, spikes, Node/browser tests, production builds and dependency audits pass.
+- Mechanical reach: `Makefile` now lints root `conftest.py`; API Dockerfile copies it so container test discovery sees the same fixtures. These implement DEC-266 rather than introduce another runtime design.
+- Vendor evidence: synthetic wire shapes verified against upstream source at Prometheus v3.2.1 and Loki v3.4.2 tags (links in report).
+- Environment failures: `make` absent (recipes run directly); sandbox TestClient stalled (interrupted) and Node listener tests failed, then passed outside sandbox. Fresh offline sync initially lacked cached Celery; online frozen sync succeeded. No dependency versions were changed. Docker fresh image build downloads remained slow while existing-image verification completed.
+- Security/limits: no production validators, read-only tools, migrations, pins or mode behavior changed; no live model requests or secret disclosure. Test scope checks prove evidence ownership, not completed Phase 3 auth. Metric window test covers existing metadata clamping only.
+- Interview questions now supported: Why can an offline model still need a network? Its tools use real telemetry adapters. Why mock HTTP instead of tool methods? To retain parsing, validation, ADK dispatch and persistence. Does this prove live model quality or hosted green? No; those need independent evidence.
+- Hosted observation: run 38118992591 at 3c6db7d remains completed/failure; downstream gates skipped. User-supplied detailed logs are distinguished from API-inspected run/step metadata. Authentication is required to publish and inspect a new exact-commit run.
