@@ -358,12 +358,15 @@ def create_investigation(
 
     model_name = body.model or os.environ.get("AEGISOPS_AGENT_MODEL", "gemini-3.5-flash")
     prompt_version = body.prompt_version or "phase2-v1"
+    mode = body.execution_mode or os.environ.get("AEGISOPS_AGENT_MODE", "offline").lower()
 
     run = InvestigationRun(
         incident_id=incident.id,
         organization_id=incident.organization_id,
         service_id=incident.service_id,
         status="QUEUED",
+        execution_mode=mode,
+        provider="gemini" if mode == "live" else "offline",
         model=model_name,
         prompt_version=prompt_version,
     )

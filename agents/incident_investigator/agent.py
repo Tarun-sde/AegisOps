@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, Literal
 
 from google import genai
 from google.adk.agents import LlmAgent
@@ -104,42 +104,214 @@ class OfflineInvestigationModel(Gemini):
         log_ev = next((eid for eid in evidence_ids if eid.startswith("ev_log")), None)
         alert_ev = next((eid for eid in evidence_ids if eid.startswith("ev_alert")), None)
 
-        if self.scenario == "supported" and (metric_ev or log_ev or alert_ev):
+        log_snippet = (
+            self.gateway.evidence_ledger[log_ev].redacted_snippet.lower()
+            if (self.gateway and log_ev)
+            else ""
+        )
+        metric_snippet = (
+            self.gateway.evidence_ledger[metric_ev].redacted_snippet.lower()
+            if (self.gateway and metric_ev)
+            else ""
+        )
+
+        has_errors = any(
+            err_kw in log_snippet
+            for err_kw in [
+                "500",
+                "error",
+                "timeout",
+                "exception",
+                "exhaustion",
+                "fail",
+                "gateway_timeout",
+            ]
+        ) or ("500" in metric_snippet)
+
+        if self.scenario == "inconclusive" or not has_errors:
+            res = InvestigationResult(
+                status="inconclusive",
+                summary="Telemetry shows insufficient error signals to isolate root cause.",
+                hypotheses=[],
+                missing_evidence=[
+                    "No HTTP 500 logs or diagnostic error anomalies observed in window"
+                ],
+                suggested_action_catalog_ids=[],
+                limitations=["Insufficient telemetry available during investigation window"],
+                execution_mode="offline",
+                provider="offline",
+            )
+        elif (
+            any(
+                db_kw in log_snippet
+                for db_kw in [
+                    "pool exhaustion",
+                    "connection pool",
+                    "pending connections",
+                    "pg_pool",
+                ]
+            )
+            and "gateway_timeout" not in log_snippet
+        ):
+            # T02: Database connection pool exhaustion
             supporting = []
             if log_ev:
                 supporting.append(
-                    EvidenceRef(evidence_id=log_ev, supports="Logs show HTTP 500 checkout error")
+                    EvidenceRef(
+                        evidence_id=log_ev,
+                        supports="Logs show database connection pool exhaustion errors",
+                    )
                 )
             if metric_ev:
                 supporting.append(
                     EvidenceRef(
                         evidence_id=metric_ev,
-                        supports="Prometheus metrics show elevated 5xx error rate",
+                        supports="Metrics show elevated error rate from pool contention",
                     )
                 )
             if alert_ev and not supporting:
                 supporting.append(
                     EvidenceRef(
                         evidence_id=alert_ev,
-                        supports="Triggering alert confirms incident start",
+                        supports="Alert confirms incident triggering",
                     )
+                )
+            res = InvestigationResult(
+                status="complete",
+                summary=(
+                    "Database connection pool exhaustion caused downstream request timeouts "
+                    "on /checkout."
+                ),
+                hypotheses=[
+                    Hypothesis(
+                        cause=(
+                            "Database connection pool exhaustion and contention in "
+                            "checkout dependency"
+                        ),
+                        confidence="high",
+                        supporting_evidence=supporting,
+                        contradicting_evidence_ids=[],
+                        unverified_assumptions=[],
+                        next_check=(
+                            "Inspect PostgreSQL active connection pool sizing and "
+                            "long-running queries"
+                        ),
+                    )
+                ],
+                missing_evidence=[],
+                suggested_action_catalog_ids=[],
+                limitations=["Direct database slow query logs deferred to Phase 4"],
+                execution_mode="offline",
+                provider="offline",
+            )
+        elif any(
+            gw_kw in log_snippet
+            for gw_kw in [
+                "gateway_timeout",
+                "payment gateway failure",
+                "checkout_gateway_timeout",
+                "application_exception",
+            ]
+        ):
+            # S01 / T01 / T04: Controlled application exception / checkout payment gateway timeout
+            supporting = []
+            assumptions = []
+            conf: Literal["low", "medium", "high"] = "high"
+
+            if log_ev:
+                supporting.append(
+                    EvidenceRef(
+                        evidence_id=log_ev,
+                        supports="Structured logs confirm payment gateway timeout exception",
+                    )
+                )
+            if metric_ev:
+                supporting.append(
+                    EvidenceRef(
+                        evidence_id=metric_ev,
+                        supports="Metrics show sustained HTTP 500 error rate on /checkout",
+                    )
+                )
+            if alert_ev and not supporting:
+                supporting.append(
+                    EvidenceRef(
+                        evidence_id=alert_ev,
+                        supports="Alert confirms incident start",
+                    )
+                )
+
+            # Check if misleading logs are present (T04)
+            if "database" in log_snippet:
+                conf = "medium"
+                assumptions.append(
+                    "Disregarded misleading log reference to database; structured error "
+                    "code is CHECKOUT_GATEWAY_TIMEOUT"
                 )
 
             res = InvestigationResult(
                 status="complete",
-                summary="Checkout payment gateway failure triggered sustained HTTP 500 error rate.",
+                summary=(
+                    "Checkout payment processing gateway failure triggered sustained "
+                    "HTTP 500 errors on /checkout."
+                ),
                 hypotheses=[
                     Hypothesis(
-                        cause="Checkout service encountered payment gateway timeout/failure",
-                        confidence="high",
+                        cause=(
+                            "Controlled application exception: checkout payment processing "
+                            "gateway timeout on /checkout"
+                        ),
+                        confidence=conf,
                         supporting_evidence=supporting,
                         contradicting_evidence_ids=[],
-                        next_check="Inspect payment gateway dependency health and retry policy",
+                        unverified_assumptions=assumptions,
+                        next_check=(
+                            "Inspect payment gateway dependency health, network egress, "
+                            "and retry policies"
+                        ),
                     )
                 ],
                 missing_evidence=[],
                 suggested_action_catalog_ids=[],
                 limitations=["Trace-level span correlation is deferred to Phase 3"],
+                execution_mode="offline",
+                provider="offline",
+            )
+        elif metric_ev and "500" in metric_snippet:
+            # Generic symptom-level metrics only
+            supporting = [
+                EvidenceRef(
+                    evidence_id=metric_ev,
+                    supports="Prometheus metrics show elevated HTTP 500 rate on /checkout",
+                )
+            ]
+            res = InvestigationResult(
+                status="complete",
+                summary=(
+                    "Sustained HTTP 500 error rate observed, but diagnostic root-cause "
+                    "logs are absent."
+                ),
+                hypotheses=[
+                    Hypothesis(
+                        cause=(
+                            "Elevated HTTP 500 error rate observed on /checkout without "
+                            "specific root cause telemetry"
+                        ),
+                        confidence="low",
+                        supporting_evidence=supporting,
+                        contradicting_evidence_ids=[],
+                        unverified_assumptions=[
+                            "Diagnostic exception logs not captured; cause is unverified symptom"
+                        ],
+                        next_check="Verify log ingestion and structured logs for /checkout",
+                    )
+                ],
+                missing_evidence=["Application error logs containing stack trace or error code"],
+                suggested_action_catalog_ids=[],
+                limitations=[
+                    "Metric counters alone cannot substantiate specific subsystem root cause"
+                ],
+                execution_mode="offline",
+                provider="offline",
             )
         else:
             res = InvestigationResult(
@@ -149,6 +321,8 @@ class OfflineInvestigationModel(Gemini):
                 missing_evidence=["No HTTP 500 logs or anomalies observed in window"],
                 suggested_action_catalog_ids=[],
                 limitations=["Insufficient telemetry available during investigation window"],
+                execution_mode="offline",
+                provider="offline",
             )
 
         final_resp = types.GenerateContentResponse(
@@ -175,13 +349,22 @@ async def run_investigation_agent(
     model_name: str | None = None,
     scenario: str = "supported",
     use_live_model: bool = False,
+    execution_mode: str | None = None,
 ) -> InvestigationResult:
     """Run the Google ADK investigation agent with the authorized tool gateway."""
-    model_id = model_name or os.environ.get("AEGISOPS_AGENT_MODEL", DEFAULT_MODEL)
+    mode = execution_mode or (
+        "live" if use_live_model else os.environ.get("AEGISOPS_AGENT_MODE", "offline").lower()
+    )
     api_key = os.environ.get("GOOGLE_API_KEY", "")
 
     model: BaseLlm
-    if use_live_model and api_key:
+    if mode == "live":
+        if not api_key:
+            raise ValueError(
+                "Live Gemini mode selected (AEGISOPS_AGENT_MODE=live) but GOOGLE_API_KEY "
+                "is not configured. Silent fallback to offline model is prohibited."
+            )
+        model_id = model_name or os.environ.get("AEGISOPS_AGENT_MODEL", DEFAULT_MODEL)
         client = genai.Client(
             api_key=api_key,
             vertexai=False,
@@ -193,6 +376,7 @@ async def run_investigation_agent(
         )
         model = Gemini(model=model_id, client=client)
     else:
+        model_id = model_name or "offline-adk-v2"
         model = OfflineInvestigationModel(
             model=model_id,
             scenario=scenario,
@@ -258,16 +442,24 @@ async def run_investigation_agent(
                         final_result = InvestigationResult.model_validate(raw_args)
 
     elapsed = time.monotonic() - started_at
-    logger.info("Agent investigation completed in %.2fs", elapsed)
+    logger.info("Agent investigation completed in %.2fs (mode=%s)", elapsed, mode)
 
     if final_result is None:
-        # If model did not emit set_model_response, fallback to inconclusive
         final_result = InvestigationResult(
             status="inconclusive",
             summary="Investigation concluded without structured hypothesis output.",
             hypotheses=[],
             missing_evidence=["Agent did not return structured diagnosis"],
             limitations=["Execution completed without structured output"],
+            execution_mode="live" if mode == "live" else "offline",
+            provider="gemini" if mode == "live" else "offline",
+        )
+    else:
+        final_result = final_result.model_copy(
+            update={
+                "execution_mode": "live" if mode == "live" else "offline",
+                "provider": "gemini" if mode == "live" else "offline",
+            }
         )
 
     # Deterministic evidence citation validation
@@ -286,4 +478,6 @@ async def run_investigation_agent(
             hypotheses=[],
             missing_evidence=[f"Citation validation failure: {exc}"],
             limitations=["Independent citation validator rejected unsupported hypothesis"],
+            execution_mode="live" if mode == "live" else "offline",
+            provider="gemini" if mode == "live" else "offline",
         )

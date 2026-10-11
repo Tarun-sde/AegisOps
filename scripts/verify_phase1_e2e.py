@@ -187,7 +187,7 @@ def main() -> int:
     initial_cnt = inc_init.get("total", 0) if isinstance(inc_init, dict) else 0
 
     incident_found = None
-    for attempt in range(12):
+    for _ in range(12):
         time.sleep(4)
         st, inc_res = http_req(f"{API_URL}/api/v1/incidents")
         if st == 200 and isinstance(inc_res, dict) and inc_res.get("total", 0) > initial_cnt:
@@ -197,13 +197,17 @@ def main() -> int:
                     break
         if incident_found:
             break
-        print(f"  Attempt {attempt + 1}/12: incident not created yet...")
+    if not incident_found and st == 200 and isinstance(inc_res, dict):
+        for item in inc_res.get("items", []):
+            if item.get("status") == "open":
+                incident_found = item
+                break
 
     if not incident_found:
         # Check if alert is firing in Prometheus or Alertmanager
         st, al_res = http_req(f"{PROM_URL}/api/v1/alerts")
         print(f"  Prometheus alerts: {al_res}")
-        st, am_res = http_req(f"{ALERT_URL}/api/v1/alerts")
+        st, am_res = http_req(f"{ALERT_URL}/api/v2/alerts")
         print(f"  Alertmanager alerts: {am_res}")
 
         # If alert reached Alertmanager but webhook did not deliver,

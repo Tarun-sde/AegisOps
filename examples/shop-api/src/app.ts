@@ -108,6 +108,8 @@ export interface StructuredLog {
   request_id: string;
   duration_ms: number;
   error_category?: string;
+  error_code?: string;
+  exception_class?: string;
   version: string;
 }
 
@@ -168,6 +170,22 @@ async function exportOtlpLog(logObj: StructuredLog): Promise<void> {
                             {
                               key: "error.category",
                               value: { stringValue: logObj.error_category },
+                            },
+                          ]
+                        : []),
+                      ...(logObj.error_code
+                        ? [
+                            {
+                              key: "error.code",
+                              value: { stringValue: logObj.error_code },
+                            },
+                          ]
+                        : []),
+                      ...(logObj.exception_class
+                        ? [
+                            {
+                              key: "exception.type",
+                              value: { stringValue: logObj.exception_class },
                             },
                           ]
                         : []),
@@ -253,7 +271,11 @@ app.use((request: Request, response: Response, next: NextFunction) => {
       status_code: response.statusCode,
       request_id: requestId,
       duration_ms: durationMs,
-      error_category: isError ? "GATEWAY_TIMEOUT" : undefined,
+      error_category:
+        response.locals.errorCategory ||
+        (isError ? "GATEWAY_TIMEOUT" : undefined),
+      error_code: response.locals.errorCode,
+      exception_class: response.locals.exceptionClass,
       version: "0.1.0",
     };
 
@@ -288,6 +310,9 @@ app.get("/products", (_request: Request, response: Response) => {
 app.post("/checkout", (request: Request, response: Response) => {
   // Check fault mode
   if (isCheckoutFaultActive()) {
+    response.locals.errorCategory = "APPLICATION_EXCEPTION";
+    response.locals.errorCode = "CHECKOUT_GATEWAY_TIMEOUT";
+    response.locals.exceptionClass = "PaymentGatewayTimeoutException";
     response.status(500).json({
       error: "Payment processing gateway connection timed out",
       code: "CHECKOUT_GATEWAY_TIMEOUT",

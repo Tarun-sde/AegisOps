@@ -111,6 +111,8 @@ class InvestigationRun(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
     service_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("services.id"), index=True)
     status: Mapped[str] = mapped_column(String(32), default="QUEUED", index=True)
+    execution_mode: Mapped[str] = mapped_column(String(32), default="offline")
+    provider: Mapped[str] = mapped_column(String(64), default="offline")
     model: Mapped[str] = mapped_column(String(120), default="gemini-3.5-flash")
     prompt_version: Mapped[str] = mapped_column(String(64), default="phase2-v1")
     summary: Mapped[str | None] = mapped_column(String(4000), nullable=True)
@@ -192,6 +194,7 @@ class HypothesisRecord(Base):
     confidence: Mapped[str] = mapped_column(String(32))  # low | medium | high
     supporting_evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     contradicting_evidence_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    unverified_assumptions: Mapped[list[str]] = mapped_column(JSON, default=list)
     next_check: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

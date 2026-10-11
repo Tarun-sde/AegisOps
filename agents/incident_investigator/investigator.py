@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -17,6 +18,7 @@ def execute_investigation(
     run_id: UUID,
     db: Session,
     *,
+    execution_mode: str | None = None,
     use_live_model: bool = False,
     scenario: str = "supported",
 ) -> InvestigationRun:
@@ -39,6 +41,14 @@ def execute_investigation(
         run.completed_at = datetime.now(UTC)
         db.commit()
         return run
+
+    mode = (
+        execution_mode
+        or getattr(run, "execution_mode", None)
+        or os.environ.get("AEGISOPS_AGENT_MODE", ("live" if use_live_model else "offline"))
+    ).lower()
+    run.execution_mode = mode
+    run.provider = "gemini" if mode == "live" else "offline"
 
     try:
         # 1. Collecting Context
@@ -67,7 +77,7 @@ def execute_investigation(
                 gateway,
                 model_name=run.model,
                 scenario=scenario,
-                use_live_model=use_live_model,
+                execution_mode=mode,
             )
         )
 
@@ -85,6 +95,7 @@ def execute_investigation(
                     item.model_dump(mode="json") for item in h.supporting_evidence
                 ],
                 contradicting_evidence_ids=h.contradicting_evidence_ids,
+                unverified_assumptions=h.unverified_assumptions,
                 next_check=h.next_check,
             )
             db.add(h_record)

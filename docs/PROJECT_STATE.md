@@ -1,57 +1,48 @@
 # AegisOps — Current Project State
 
-**Updated:** 2026-10-10  
-**Current phase:** Phase 2 (End-to-End AI Investigation MVP)  
-**Overall state:** `PHASE 2 COMPLETE — END-TO-END AI INVESTIGATION MVP (GOOGLE ADK + REAL TELEMETRY) VERIFIED; PHASE 3 READY FOR AUTHORIZATION`  
-**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Phase 2; `docs/PHASE_REPORTS/PHASE_2_VERIFICATION.md`; `docs/ADR/ADR-022-adk-investigation-worker.md`.
+**Updated:** 2026-10-11  
+**Current phase:** Phase 2 (End-to-End AI Investigation MVP — Corrective Fix Complete)  
+**Overall state:** `PHASE 2 COMPLETE — END-TO-END AI INVESTIGATION MVP (ROOT-CAUSE ACCURACY, QUALITATIVE CONFIDENCE & ADK PIPELINE) VERIFIED; PHASE 3 READY FOR AUTHORIZATION`  
+**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Phase 2; `docs/PHASE_REPORTS/PHASE_2_VERIFICATION.md`; `docs/ADR/ADR-022-adk-investigation-worker.md`; DEC-251–DEC-265.
 
 ---
 
-## Implemented and verified in Phase 2
+## Implemented and verified in Phase 2 (Including Corrective Fix)
 
+- [x] **Causal Grounding & S01 Diagnosis Accuracy (DEC-261):**
+  - Eliminated false "Database Connection Pool Exhaustion" diagnosis for S01 (`S01_CHECKOUT_500`).
+  - S01 correctly diagnoses controlled application exception / payment processing gateway timeout on `/checkout` (`CHECKOUT_GATEWAY_TIMEOUT`).
+  - Shop API error telemetry enriched with structured `error_category`, `error_code`, and `exception_class`.
+  - Hypotheses grounded in actual evidence ledger snippets; generic HTTP 500 metrics prevented from proving database exhaustion without DB logs.
+- [x] **Separation of Citation Integrity and Causal Claim Support (DEC-262):**
+  - Deterministic citation integrity (`validate_citation_integrity`): verifies existence, run ownership, and tenant bounds.
+  - Causal claim support (`validate_claim_support`): verifies observations genuinely justify claims, prevents generic metric leaps, and flags explicit contradictions.
+- [x] **Strict Qualitative Confidence Contract (DEC-263):**
+  - Standardized public confidence contract strictly to `low | medium | high` (no uncalibrated floats or percentages).
+  - Added `unverified_assumptions` list to hypotheses to communicate epistemic uncertainty.
+  - Alembic migration `0004_qualitative_confidence.py` applied; API validators safely coerce legacy database records without data corruption.
+  - Next.js UI updated with qualitative badges ("High", "Medium", "Low") and unverified assumption callouts.
+- [x] **Explicit Execution Mode Architecture & No Silent Fallback (DEC-264):**
+  - Explicit configuration `AEGISOPS_AGENT_MODE=offline|live` with `execution_mode` and `provider` persisted in database.
+  - Deterministic offline ADK runner explicitly labeled as `provider="offline"` for predictable, zero-cost CI testing.
+  - Live Gemini mode connects directly to Google GenAI; missing credentials or quota exhaustion (429) raise explicit errors and fail cleanly without silent fallback to offline mock.
+- [x] **Targeted Investigation Quality Test Suite (`agents/incident_investigator/tests/test_investigation_quality.py`):**
+  - Covers scenarios T01 through T10 (controlled exception, DB pool exhaustion fixture, honest inconclusive, misleading logs resistance, fabricated citations, cross-run citations, offline authenticity, live smoke test, missing credentials, confidence contract).
 - [x] **Asynchronous Investigation Worker (`apps/worker/`):**
   - Celery application connected to Redis broker (`redis://redis:6379/0`).
-  - Durable background task `investigate_incident_task` orchestrating the investigation lifecycle.
+  - Durable background task `run_investigation_task` orchestrating the investigation lifecycle.
   - Active-run idempotency guard preventing duplicate concurrent investigations on the same incident.
   - Worker container deployed and running healthily in `docker-compose.yml`.
 - [x] **Google ADK Single-Agent Runner (`agents/incident_investigator/`):**
   - Google ADK 2.11.0 `Agent`, `Runner.run_async`, and `ToolContext` integration.
-  - `OfflineInvestigationModel` inheriting from `google.adk.models.BaseLlm` providing deterministic test responses with $0 cost and zero flaky network dependencies.
-  - Transparent support for live Gemini and Groq model providers when API keys are configured.
-  - Enforced single-agent topology (no premature multi-agent swarm).
-- [x] **Bounded Read-Only Tool Gateway (`agents/incident_investigator/tools/gateway.py`):**
-  - Parameterized read-only tools: `get_incident_snapshot`, `query_service_metrics` (Prometheus), and `search_service_logs` (Loki).
-  - Hard execution budget capped at 12 calls per investigation; raises `BudgetExceededError` on call 13.
-  - Telemetry payload size truncation at 32KB per call.
-  - Zero raw SQL, PromQL, LogQL, or shell access permitted to the agent.
-- [x] **Sensitive Secret Redaction (`agents/incident_investigator/tools/redaction.py`):**
-  - Synchronous pre-export regex filtering replacing Bearer tokens, Basic authorization headers, passwords, connection strings, and private keys with `[REDACTED_SECRET]`.
-  - Enforced before tool responses return to the agent or persist into PostgreSQL.
-- [x] **Database Migrations & Models (`apps/api/`):**
-  - Alembic migration `0003_investigations.py` creating `investigation_runs`, `tool_executions`, `evidence_items`, and `hypotheses` tables.
-  - SQLAlchemy ORM models with cascading relationships and foreign key integrity.
-  - Evidence records store typed provenance IDs: `ev_alert_{uuid}`, `ev_metric_{uuid}`, `ev_log_{uuid}`.
-  - Tool execution audit trail records execution times, parameters, and success status.
-- [x] **Deterministic Evidence Citation Validation (`agents/incident_investigator/validator.py`):**
-  - Backend function `validate_evidence` cross-references all hypothesis citations against persisted database rows for that specific investigation run.
-  - Fabricated or cross-run citations are strictly rejected and automatically downgrade the diagnosis to `INCONCLUSIVE` with an audit error.
-- [x] **Honest Inconclusive Diagnosis Protocol:**
-  - Emits `diagnosis: INCONCLUSIVE` with low confidence when telemetry is absent or ambiguous, strictly preventing hallucinated root causes.
-- [x] **FastAPI Investigation Endpoints (`apps/api/app/main.py`):**
-  - `POST /api/v1/incidents/{incident_id}/investigations`: creates run in `queued` state and enqueues Celery task.
-  - `GET /api/v1/incidents/{incident_id}/investigations`: lists investigation history for an incident.
-  - `GET /api/v1/investigations/{investigation_id}`: returns detailed run metadata, hypotheses, and supporting evidence.
-  - `GET /api/v1/investigations/{investigation_id}/events`: returns tool execution audit timeline.
-  - `GET /api/v1/investigations/{investigation_id}/evidence`: paginated list of all evidence items collected during the run.
-  - `GET /api/v1/evidence/{evidence_id}`: individual evidence item with provenance and raw redacted payload.
-  - `POST /api/v1/investigations/{investigation_id}/cancel`: safely transitions active investigation to `cancelled`.
+  - Bounded tool execution (12-call budget, 32KB payload truncation, read-only Prometheus/Loki access).
+  - Pre-export sensitive secret regex redaction in `tools/redaction.py`.
+- [x] **FastAPI Investigation Endpoints & Evidence Explorer (`apps/api/`):**
+  - Complete REST API for dispatching, inspecting, and cancelling investigations with paginated evidence explorer.
 - [x] **Next.js AI Investigation Dashboard (`apps/web/`):**
-  - Client component `InvestigationPanel` replacing locked gate on incident detail page `/app/incidents/[incidentId]`.
-  - Auto-polls investigation status every 2 seconds during active states.
-  - Renders status pills, hypotheses with qualitative confidence badges, supporting evidence chips, inconclusive explanation banner, interactive evidence explorer table, and expandable tool execution audit log.
-  - Playwright browser test verifying investigation panel rendering and interaction.
-- [x] **Automated End-to-End System Verification (`scripts/verify_phase2_e2e.py`):**
-  - 21-step live verification verifying real fault injection -> telemetry scraping -> incident creation -> Celery dispatch -> ADK investigation -> Prometheus & Loki queries -> PostgreSQL evidence persistence -> hypothesis emission -> inconclusive diagnosis -> citation rejection -> tool budget limits -> secret redaction -> UI rendering.
+  - Interactive `InvestigationPanel` with qualitative badges, execution mode indicator ("OFFLINE" vs "LIVE"), and tool audit trail.
+- [x] **Decoupled 4-Gate End-to-End Verification (`scripts/verify_phase2_e2e.py`):**
+  - 28/28 checks passing: Infrastructure Correctness (16/16), Diagnostic Correctness (5/5), Model Execution Authenticity (3/3), Security & Invariants (4/4).
 
 ---
 

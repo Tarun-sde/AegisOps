@@ -134,6 +134,7 @@ export interface Hypothesis {
   confidence: "low" | "medium" | "high";
   supporting_evidence: { evidence_id: string; supports: string }[];
   contradicting_evidence_ids: string[];
+  unverified_assumptions?: string[];
   next_check: string | null;
   created_at: string;
 }
@@ -178,6 +179,8 @@ export interface InvestigationRun {
     | "INCONCLUSIVE"
     | "FAILED"
     | "CANCELLED";
+  execution_mode?: "offline" | "live";
+  provider?: string;
   model: string;
   prompt_version: string;
   summary: string | null;

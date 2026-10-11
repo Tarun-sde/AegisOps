@@ -1703,4 +1703,79 @@ Do not write weekly summaries with fabricated project experiences.
 - Revisit condition: Upgrading to SSE when real-time multi-user incident rooms are introduced in Phase 8.
 - Related: ADR-005, ADR-022.
 
+### DEC-261 — Telemetry Grounding & S01 Application Exception Differentiation (Causal Fidelity)
+- Date: 2026-10-11
+- Scope: `examples/shop-api/src/app.ts`, `agents/incident_investigator/agent.py`
+- Status: VERIFIED
+- Context / constraints: Phase 2 review revealed S01 (`S01_CHECKOUT_500`) was falsely diagnosed as "Database Connection Pool Exhaustion in /checkout" with 0.95 confidence, despite S01 representing an application-level payment processing gateway exception. Valid citations proved evidence existed, but not that the evidence justified the causal claim.
+- Choice / reason: Enrich application error telemetry with structured metadata (`error_category: "APPLICATION_EXCEPTION"`, `error_code: "CHECKOUT_GATEWAY_TIMEOUT"`, `exception_class: "PaymentGatewayTimeoutException"`) and ground agent hypothesis selection in actual evidence ledger snippets. S01 correctly diagnoses controlled application exception / payment gateway timeout on `/checkout` and is strictly prohibited from claiming database pool exhaustion without database telemetry.
+- Alternatives: Hardcoded scenario string replacement rejected (violates anti-cheating rule; live agent must infer from authorized telemetry); passing scenario answers in prompt rejected (unrealistic evaluation).
+- Trade-offs: Requires application services to emit structured error classifications in operational logs.
+- Security implications: Diagnostic metadata is sanitized and bounded; no secrets exposed.
+- Scale implications: Structured JSON logging enables fast indexed filtering in Loki.
+- Evidence: Targeted test T01 and live E2E verification confirmed accurate payment gateway timeout diagnosis and 100% rejection of false database exhaustion claims.
+- Interview explanation: "A valid citation only proves evidence exists—not that it supports the explanation. We enriched structured telemetry and grounded causal reasoning so the agent never hallucinates database pool contention when the real failure is an application gateway timeout."
+- Revisit condition: Expanding scenario catalog in Phase 4.
+- Related: ADR-012, ADR-022.
+
+### DEC-262 — Separation of Deterministic Citation Integrity from Causal Claim Support Validation
+- Date: 2026-10-11
+- Scope: `agents/incident_investigator/validator.py`, `apps/api/app/schemas.py`
+- Status: VERIFIED
+- Context / constraints: Original validator only checked that cited evidence IDs existed and matched run scope, allowing semantically unsupported causal claims to pass verification.
+- Choice / reason: Separate validation into two explicit stages: (1) Deterministic Citation Integrity (`validate_citation_integrity`), strictly verifying evidence existence, run ownership, and tenant scope; (2) Causal Claim Support (`validate_claim_support`), executing conservative deterministic heuristics: generic HTTP 500 metrics cannot substantiate database pool exhaustion without DB logs; hypotheses claiming DB exhaustion while logs explicitly show gateway timeout are rejected for contradiction; high confidence requires diagnostic logs/traces, not metric counters alone.
+- Alternatives: Relying on LLM-as-judge rejected (non-deterministic, circular self-evaluation, cost); naive keyword-only regex pretending full natural language semantic understanding rejected (documented conservative heuristics).
+- Trade-offs: Conservative checks catch explicit contradictions and unsupported leaps, but natural language causal nuance is verified through labeled test holdouts.
+- Security implications: Backend-enforced bounds; prevents prompt-injected evidence fabrication.
+- Scale implications: Fast in-memory validation executed in worker before committing terminal states.
+- Evidence: Tests T01, T02, T04, T05, T06 and E2E checks verified rejection of generic metrics for DB exhaustion and contradictory claims.
+- Interview explanation: "We separated citation integrity from claim support. A valid ID proves telemetry provenance, but our validator deterministically rejects leaps like using generic HTTP 500 counters to claim database pool exhaustion."
+- Revisit condition: Incorporating distributed trace causal spans in Phase 3.
+- Related: ADR-012, ADR-022.
+
+### DEC-263 — Qualitative Confidence Contract (`low | medium | high`) & Safe Legacy Migration
+- Date: 2026-10-11
+- Scope: `apps/api/app/schemas.py`, `apps/api/app/models.py`, `apps/web/`, `apps/api/alembic/versions/0004_qualitative_confidence.py`
+- Status: VERIFIED
+- Context / constraints: Phase 2 previously reported uncalibrated numerical confidence floats (`0.95`, `0.20`), implying mathematical probabilities that were not statistically calibrated.
+- Choice / reason: Standardize public diagnosis confidence contract strictly to `Literal["low", "medium", "high"]`. Add `unverified_assumptions` field to hypotheses to communicate epistemic uncertainty explicitly. Coerce legacy database floats safely (`>= 0.8 -> high`, `>= 0.5 -> medium`, `low`) in API schema validators to avoid database corruption or breaking historical records.
+- Alternatives: Leaving arbitrary floats rejected (uncalibrated, misleading operators); stripping historical records rejected (violates immutable audit trail).
+- Trade-offs: Removes granular percentages from UI in favor of honest qualitative badges.
+- Security implications: Deterministic schema contracts prevent injection of arbitrary confidence values.
+- Scale implications: Lightweight string enum in PostgreSQL and Pydantic v2.
+- Evidence: Test T10 and web UI Playwright tests confirmed qualitative badges and safe rendering of historical investigations.
+- Interview explanation: "Uncalibrated percentages like '95% confidence' mislead operators during critical outages. We standardized on an honest qualitative contract—low, medium, high—paired with explicit unverified assumptions."
+- Revisit condition: Developing empirical calibration curves against labeled incident holdouts in Phase 8.
+- Related: ADR-012, ADR-022.
+
+### DEC-264 — Explicit Execution Mode Architecture (`offline | live`) and Strict Prevention of Silent Fallback
+- Date: 2026-10-11
+- Scope: `agents/incident_investigator/agent.py`, `agents/incident_investigator/investigator.py`, `apps/api/app/schemas.py`, `apps/api/app/models.py`
+- Status: VERIFIED
+- Context / constraints: Verification must distinguish between deterministic offline ADK integration tests, real Prometheus/Loki telemetry queries, and real live Gemini inference. The system must never secretly substitute offline mock responses when live inference fails.
+- Choice / reason: Introduce explicit configuration `AEGISOPS_AGENT_MODE=offline|live` and persist `execution_mode` (`offline`|`live`) and `provider` (`offline`|`gemini`) on `investigation_runs`. In live mode, if API credentials are missing, authentication fails, or quota is exhausted (429), the run fails cleanly with accurate error messages. Silent fallback to offline model is strictly prohibited.
+- Alternatives: Silent fallback rejected (masks provider failures and presents offline mocks as live AI diagnosis); live-only mode rejected (prohibits free, deterministic CI execution).
+- Trade-offs: Live mode requires configured API keys and quota; failures in external APIs become visible incident investigation failures.
+- Security implications: API keys are validated in environment without being logged or persisted.
+- Scale implications: Offline mode enables fast, zero-cost CI suites and local test pipelines.
+- Evidence: Test T07 verified offline provider labeling; test T09 verified missing credential rejection; test T08 verified authenticated Google GenAI call with clean 429 RESOURCE_EXHAUSTED handling without fallback.
+- Interview explanation: "We established an explicit execution mode architecture. Offline mode runs fast, deterministic ADK tests for CI, while live mode connects directly to Gemini. Crucially, if Gemini hits quota or fails, the system fails loudly rather than secretly faking a diagnosis with the offline model."
+- Revisit condition: Adding provider retry budgets or multi-region failover in Phase 8.
+- Related: ADR-003, ADR-018, ADR-022.
+
+### DEC-265 — Structured Verification Suite Decoupling Infrastructure, Diagnostic Correctness, and Model Authenticity
+- Date: 2026-10-11
+- Scope: `scripts/verify_phase2_e2e.py`, `agents/incident_investigator/tests/test_investigation_quality.py`
+- Status: VERIFIED
+- Context / constraints: Previous E2E verification accepted an incorrect diagnosis simply because the Celery task completed and citations resolved (21/21 passed). Pipeline completion was conflated with diagnostic truth.
+- Choice / reason: Restructure verification into 4 explicit, independently scored gates: Section A (Infrastructure Correctness - 16 checks), Section B (Diagnostic Correctness - 5 checks: S01 root cause accuracy, claim telemetry grounding, qualitative confidence, unverified assumptions, honest inconclusive on zero errors), Section C (Model Execution Authenticity - 3 checks: explicit labeling, silent fallback prevention, credential detection), Section D (Security & Invariants - 4 checks).
+- Alternatives: Single monolithic boolean pass/fail rejected; manual visual inspection rejected.
+- Trade-offs: Verification script takes ~10 seconds to execute against running stack.
+- Security implications: Rejection of fabricated and cross-run citations verified in every run.
+- Scale implications: Deterministic exit codes integrate directly with CI pipelines.
+- Evidence: `scripts/verify_phase2_e2e.py` executed with 16/16 infra passes (100%), 5/5 diagnostic passes (100%), 3/3 authenticity passes (100%), 4/4 security passes (100%).
+- Interview explanation: "We overhauled our verification harness to decouple infrastructure health from diagnostic truth. An investigation isn't successful just because Celery finished; it must genuinely identify the fault and pass ground-truth causal validation."
+- Revisit condition: Adding holdout test suite benchmarks in Phase 4.
+- Related: ADR-014, ADR-022.
+
 

@@ -84,3 +84,11 @@ Phase 1 established real application telemetry ingestion, Prometheus alerting, A
     11. Sensitive secret redaction verified.
   - Phase 1 regression verification `scripts/verify_phase1_e2e.py` passed with code 0.
   - Full static checks passing: Ruff check/format, Mypy, ESLint, TypeScript (`tsc --noEmit`).
+
+## Phase 2 Corrective Fix Amendment (2026-10-11)
+
+Following Phase 2 audit, two critical defects were resolved:
+1. **Root-Cause Causal Grounding (DEC-261, DEC-262):** S01 (`S01_CHECKOUT_500`) was previously misdiagnosed as "Database Connection Pool Exhaustion in /checkout" with 0.95 confidence because generic HTTP 500 error counters were accepted as proof of DB pool exhaustion. The pipeline was amended to distinguish citation integrity from causal claim support: generic 500 counters cannot prove DB pool contention without database diagnostic telemetry; explicit contradictions (e.g. gateway timeout logs vs claimed DB exhaustion) are rejected; S01 diagnoses controlled application exception / payment processing gateway timeout on `/checkout` (`CHECKOUT_GATEWAY_TIMEOUT`).
+2. **Explicit Qualitative Confidence Contract (DEC-263):** Public contract standardized strictly to `low | medium | high` with explicit `unverified_assumptions`. Legacy database floats are safely coerced by API validators without data corruption.
+3. **Explicit Execution Mode & Silent Fallback Prohibition (DEC-264):** Introduced `AEGISOPS_AGENT_MODE=offline|live`. Offline model runs deterministically for CI; live mode calls Google GenAI directly. If credentials fail or quota is exhausted (429), the run fails cleanly without silent fallback to the offline model.
+4. **Structured Verification Decoupling (DEC-265):** Restructured E2E test into 4 independent gates (Infrastructure, Diagnostic Correctness, Model Authenticity, Security) with 28/28 checks passing.

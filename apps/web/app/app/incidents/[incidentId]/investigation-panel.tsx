@@ -253,6 +253,24 @@ export function InvestigationPanel({ incidentId }: InvestigationPanelProps) {
                 STATUS: {activeRun.status}
               </span>
 
+              <span
+                className="badge"
+                style={{
+                  background:
+                    activeRun.execution_mode === "live" ? "#1e2c33" : "#1a2124",
+                  borderColor:
+                    activeRun.execution_mode === "live" ? "#3b7a94" : "#36444a",
+                  color:
+                    activeRun.execution_mode === "live" ? "#9be4ff" : "#9eaeb2",
+                  fontSize: "0.75rem",
+                }}
+              >
+                MODE:{" "}
+                {activeRun.execution_mode === "live"
+                  ? "LIVE (GEMINI)"
+                  : "OFFLINE (TEST DOUBLE)"}
+              </span>
+
               <span style={{ fontSize: "0.85rem", color: "#9eaeb2" }}>
                 Model: <code>{activeRun.model}</code> &bull; Prompt:{" "}
                 <code>{activeRun.prompt_version}</code> &bull; Tool Calls:{" "}
@@ -447,6 +465,26 @@ export function InvestigationPanel({ incidentId }: InvestigationPanelProps) {
                           <strong>Next verification:</strong> {h.next_check}
                         </p>
                       )}
+
+                      {h.unverified_assumptions &&
+                        h.unverified_assumptions.length > 0 && (
+                          <div
+                            style={{
+                              margin: "4px 0 8px 0",
+                              fontSize: "0.85rem",
+                              color: "#ebd29b",
+                            }}
+                          >
+                            <strong>Unverified assumptions:</strong>
+                            <ul
+                              style={{ margin: "4px 0", paddingLeft: "18px" }}
+                            >
+                              {h.unverified_assumptions.map((u, uIdx) => (
+                                <li key={uIdx}>{u}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
 
                       {/* Supporting Evidence Chips */}
                       {h.supporting_evidence &&
