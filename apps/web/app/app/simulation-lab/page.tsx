@@ -23,7 +23,9 @@ export default function SimulationLabPage() {
   const [activeRun, setActiveRun] = useState<SimulationRun | null>(null);
   const [runEvents, setRunEvents] = useState<SimulationEvent[]>([]);
   const [proposals, setProposals] = useState<ActionProposal[]>([]);
-  const [executions, setExecutions] = useState<Record<string, ActionExecution>>({});
+  const [executions, setExecutions] = useState<Record<string, ActionExecution>>(
+    {},
+  );
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,7 +80,7 @@ export default function SimulationLabPage() {
         setError(`Failed to activate scenario: ${res.error}`);
       } else if (res.data) {
         setActionMessage(
-          `Scenario ${scenarioId} activated successfully. Run ID: ${res.data.id.slice(0, 8)}.`
+          `Scenario ${scenarioId} activated successfully. Run ID: ${res.data.id.slice(0, 8)}.`,
         );
         loadData();
       }
@@ -93,7 +95,9 @@ export default function SimulationLabPage() {
       if (res.error) {
         setError(`Reset failed: ${res.error}`);
       } else if (res.data) {
-        setActionMessage(`Simulation run ${runId.slice(0, 8)} reset successfully.`);
+        setActionMessage(
+          `Simulation run ${runId.slice(0, 8)} reset successfully.`,
+        );
         loadData();
       }
     });
@@ -109,11 +113,11 @@ export default function SimulationLabPage() {
       } else if (res.data) {
         if (res.data.recovered) {
           setActionMessage(
-            "Service recovery VERIFIED! Genuine health probe returned healthy and no active faults."
+            "Service recovery VERIFIED! Genuine health probe returned healthy and no active faults.",
           );
         } else {
           setError(
-            "Service recovery NOT verified. Health probe or background fault still active."
+            "Service recovery NOT verified. Health probe or background fault still active.",
           );
         }
         loadData();
@@ -130,9 +134,12 @@ export default function SimulationLabPage() {
         setError(`Remediation execution failed: ${res.error}`);
       } else if (res.data) {
         setActionMessage(
-          `Action execution ${res.data.status}! Execution ID: ${res.data.id.slice(0, 8)}. Audit event created.`
+          `Action execution ${res.data.status}! Execution ID: ${res.data.id.slice(0, 8)}. Audit event created.`,
         );
-        setExecutions((prev) => ({ ...prev, [proposalId]: res.data as ActionExecution }));
+        setExecutions((prev) => ({
+          ...prev,
+          [proposalId]: res.data as ActionExecution,
+        }));
         loadData();
       }
     });
@@ -146,13 +153,15 @@ export default function SimulationLabPage() {
         <span className="badge">Isolated Staging Lab</span>
       </div>
       <p className="intro">
-        Exercise genuine failure injection across six real operational scenarios.
-        Review evidence-grounded remediation proposals and safely execute allowlisted actions
-        in the isolated demo runtime.
+        Exercise genuine failure injection across six real operational
+        scenarios. Review evidence-grounded remediation proposals and safely
+        execute allowlisted actions in the isolated demo runtime.
       </p>
 
       {loading && (
-        <div style={{ color: "#9ca3af", marginBottom: "16px", fontSize: "0.9rem" }}>
+        <div
+          style={{ color: "#9ca3af", marginBottom: "16px", fontSize: "0.9rem" }}
+        >
           Synchronizing simulation state with control plane...
         </div>
       )}
@@ -201,19 +210,39 @@ export default function SimulationLabPage() {
             marginBottom: "36px",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "12px",
+            }}
+          >
             <div>
-              <span className="badge" style={{ borderColor: "#b45309", color: "#fbbf24" }}>
+              <span
+                className="badge"
+                style={{ borderColor: "#b45309", color: "#fbbf24" }}
+              >
                 FAULT ACTIVE · {activeRun.scenario_id}
               </span>
               <h2 style={{ margin: "12px 0 6px 0", color: "#fef3c7" }}>
                 Active Simulation Run: {activeRun.id.slice(0, 8)}
               </h2>
               <p style={{ margin: 0, fontSize: "0.9rem", color: "#d1d5db" }}>
-                Target Service: <strong>shop-api</strong> ({activeRun.environment}) · Expected Cause: <strong>{activeRun.expected_cause}</strong>
+                Target Service: <strong>shop-api</strong> (
+                {activeRun.environment}) · Expected Cause:{" "}
+                <strong>{activeRun.expected_cause}</strong>
               </p>
-              <p style={{ margin: "6px 0 0 0", fontSize: "0.85rem", color: "#9ca3af" }}>
-                Started: {new Date(activeRun.started_at).toLocaleTimeString()} · Expires: {new Date(activeRun.expires_at).toLocaleTimeString()}
+              <p
+                style={{
+                  margin: "6px 0 0 0",
+                  fontSize: "0.85rem",
+                  color: "#9ca3af",
+                }}
+              >
+                Started: {new Date(activeRun.started_at).toLocaleTimeString()} ·
+                Expires: {new Date(activeRun.expires_at).toLocaleTimeString()}
               </p>
             </div>
             <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
@@ -254,11 +283,27 @@ export default function SimulationLabPage() {
 
           {/* ACTIVE RUN TIMELINE */}
           {runEvents.length > 0 && (
-            <div style={{ marginTop: "20px", borderTop: "1px solid #3d2a0e", paddingTop: "16px" }}>
-              <h3 style={{ fontSize: "0.9rem", textTransform: "uppercase", letterSpacing: "1px", color: "#d97706", margin: "0 0 10px 0" }}>
+            <div
+              style={{
+                marginTop: "20px",
+                borderTop: "1px solid #3d2a0e",
+                paddingTop: "16px",
+              }}
+            >
+              <h3
+                style={{
+                  fontSize: "0.9rem",
+                  textTransform: "uppercase",
+                  letterSpacing: "1px",
+                  color: "#d97706",
+                  margin: "0 0 10px 0",
+                }}
+              >
                 Event Timeline
               </h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div
+                style={{ display: "flex", flexDirection: "column", gap: "8px" }}
+              >
                 {runEvents.map((ev) => (
                   <div
                     key={ev.id}
@@ -275,8 +320,12 @@ export default function SimulationLabPage() {
                     <span style={{ color: "#fbbf24", fontFamily: "monospace" }}>
                       {new Date(ev.created_at).toLocaleTimeString()}
                     </span>
-                    <span style={{ fontWeight: 600, color: "#fff" }}>{ev.event_type}</span>
-                    <span style={{ color: "#9ca3af", marginLeft: "auto" }}>actor: {ev.actor}</span>
+                    <span style={{ fontWeight: 600, color: "#fff" }}>
+                      {ev.event_type}
+                    </span>
+                    <span style={{ color: "#9ca3af", marginLeft: "auto" }}>
+                      actor: {ev.actor}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -293,11 +342,21 @@ export default function SimulationLabPage() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#10b981" }} />
+            <span
+              style={{
+                width: "10px",
+                height: "10px",
+                borderRadius: "50%",
+                background: "#10b981",
+              }}
+            />
             <div>
-              <h2 style={{ margin: 0, fontSize: "1.1rem", color: "#a7f3d0" }}>Simulation Environment Normal</h2>
+              <h2 style={{ margin: 0, fontSize: "1.1rem", color: "#a7f3d0" }}>
+                Simulation Environment Normal
+              </h2>
               <p style={{ margin: 0, fontSize: "0.9rem", color: "#6ee7b7" }}>
-                All background faults are cleared. Shop-API is operating normally on staging.
+                All background faults are cleared. Shop-API is operating
+                normally on staging.
               </p>
             </div>
           </div>
@@ -307,7 +366,8 @@ export default function SimulationLabPage() {
       {/* SCENARIO CATALOG */}
       <h2>Failure Scenario Catalog (S01–S06)</h2>
       <p style={{ margin: "0 0 20px 0", fontSize: "0.95rem" }}>
-        Select a bounded fault injection scenario. Only one scenario may be active simultaneously.
+        Select a bounded fault injection scenario. Only one scenario may be
+        active simultaneously.
       </p>
 
       <div
@@ -334,29 +394,74 @@ export default function SimulationLabPage() {
               }}
             >
               <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    marginBottom: "8px",
+                  }}
+                >
                   <span className="eyebrow">{sc.scenario_id}</span>
                   <span
                     className="badge"
                     style={{
                       padding: "4px 8px",
                       fontSize: "10px",
-                      borderColor: sc.risk_level === "HIGH" ? "#b91c1c" : sc.risk_level === "MEDIUM" ? "#d97706" : "#059669",
-                      color: sc.risk_level === "HIGH" ? "#fca5a5" : sc.risk_level === "MEDIUM" ? "#fcd34d" : "#a7f3d0",
+                      borderColor:
+                        sc.risk_level === "HIGH"
+                          ? "#b91c1c"
+                          : sc.risk_level === "MEDIUM"
+                            ? "#d97706"
+                            : "#059669",
+                      color:
+                        sc.risk_level === "HIGH"
+                          ? "#fca5a5"
+                          : sc.risk_level === "MEDIUM"
+                            ? "#fcd34d"
+                            : "#a7f3d0",
                     }}
                   >
                     Risk: {sc.risk_level}
                   </span>
                 </div>
-                <h3 style={{ margin: "6px 0 10px 0", fontSize: "1.15rem", color: "#fff" }}>{sc.name}</h3>
-                <p style={{ fontSize: "0.9rem", color: "#9ca3af", marginBottom: "14px", lineHeight: "1.5" }}>
+                <h3
+                  style={{
+                    margin: "6px 0 10px 0",
+                    fontSize: "1.15rem",
+                    color: "#fff",
+                  }}
+                >
+                  {sc.name}
+                </h3>
+                <p
+                  style={{
+                    fontSize: "0.9rem",
+                    color: "#9ca3af",
+                    marginBottom: "14px",
+                    lineHeight: "1.5",
+                  }}
+                >
                   {sc.description}
                 </p>
 
-                <div style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: "16px" }}>
-                  <div>Target: <strong>{sc.affected_service}</strong> ({sc.allowed_environment})</div>
-                  <div>Root Cause: <strong>{sc.expected_cause_category}</strong></div>
-                  <div>Signals: {sc.expected_signal_types.slice(0, 3).join(", ")}</div>
+                <div
+                  style={{
+                    fontSize: "0.8rem",
+                    color: "#6b7280",
+                    marginBottom: "16px",
+                  }}
+                >
+                  <div>
+                    Target: <strong>{sc.affected_service}</strong> (
+                    {sc.allowed_environment})
+                  </div>
+                  <div>
+                    Root Cause: <strong>{sc.expected_cause_category}</strong>
+                  </div>
+                  <div>
+                    Signals: {sc.expected_signal_types.slice(0, 3).join(", ")}
+                  </div>
                   <div>Max Duration: {sc.maximum_duration_seconds}s</div>
                 </div>
               </div>
@@ -372,10 +477,13 @@ export default function SimulationLabPage() {
                     borderRadius: "6px",
                     border: "none",
                     fontWeight: 600,
-                    cursor: (activeRun !== null && !isActive) || isPending ? "not-allowed" : "pointer",
+                    cursor:
+                      (activeRun !== null && !isActive) || isPending
+                        ? "not-allowed"
+                        : "pointer",
                     background: isActive ? "#f59e0b" : "#2563eb",
                     color: "#fff",
-                    opacity: (activeRun !== null && !isActive) ? 0.4 : 1,
+                    opacity: activeRun !== null && !isActive ? 0.4 : 1,
                   }}
                 >
                   {isActive ? "Currently Active" : "Activate Scenario"}
@@ -389,13 +497,16 @@ export default function SimulationLabPage() {
       {/* HUMAN-APPROVED REMEDIATION SECTION */}
       <h2>Remediation Proposal & Sandboxed Execution</h2>
       <p style={{ margin: "0 0 20px 0", fontSize: "0.95rem" }}>
-        Review remediation actions proposed by the Google ADK investigator or operators.
-        Actions require administrator approval and execute only against verified staging targets.
+        Review remediation actions proposed by the Google ADK investigator or
+        operators. Actions require administrator approval and execute only
+        against verified staging targets.
       </p>
 
       {proposals.length === 0 ? (
         <div className="panel" style={{ textAlign: "center", padding: "36px" }}>
-          <p style={{ margin: 0, color: "#6b7280" }}>No remediation proposals submitted yet.</p>
+          <p style={{ margin: 0, color: "#6b7280" }}>
+            No remediation proposals submitted yet.
+          </p>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -411,36 +522,83 @@ export default function SimulationLabPage() {
                 className="panel"
                 style={{
                   marginTop: 0,
-                  borderColor: isSucceeded ? "#059669" : isApproved ? "#2563eb" : "#374151",
+                  borderColor: isSucceeded
+                    ? "#059669"
+                    : isApproved
+                      ? "#2563eb"
+                      : "#374151",
                 }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    flexWrap: "wrap",
+                    gap: "12px",
+                  }}
+                >
                   <div>
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "6px" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "8px",
+                        alignItems: "center",
+                        marginBottom: "6px",
+                      }}
+                    >
                       <span className="eyebrow">{prop.action_catalog_id}</span>
                       <span
                         className="badge"
                         style={{
                           padding: "3px 8px",
                           fontSize: "11px",
-                          color: isSucceeded ? "#34d399" : isApproved ? "#60a5fa" : "#fbbf24",
+                          color: isSucceeded
+                            ? "#34d399"
+                            : isApproved
+                              ? "#60a5fa"
+                              : "#fbbf24",
                         }}
                       >
                         Status: {prop.status}
                       </span>
                     </div>
-                    <h3 style={{ margin: "4px 0 8px 0", fontSize: "1.1rem", color: "#fff" }}>
+                    <h3
+                      style={{
+                        margin: "4px 0 8px 0",
+                        fontSize: "1.1rem",
+                        color: "#fff",
+                      }}
+                    >
                       Target: shop-api ({prop.environment})
                     </h3>
-                    <p style={{ margin: "0 0 6px 0", fontSize: "0.9rem", color: "#d1d5db" }}>
+                    <p
+                      style={{
+                        margin: "0 0 6px 0",
+                        fontSize: "0.9rem",
+                        color: "#d1d5db",
+                      }}
+                    >
                       Reason: {prop.reason}
                     </p>
-                    <p style={{ margin: 0, fontSize: "0.85rem", color: "#9ca3af" }}>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "0.85rem",
+                        color: "#9ca3af",
+                      }}
+                    >
                       Expected Outcome: {prop.expected_outcome}
                     </p>
                   </div>
 
-                  <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "12px",
+                      alignItems: "center",
+                    }}
+                  >
                     {isApproved && (
                       <button
                         type="button"
@@ -460,12 +618,18 @@ export default function SimulationLabPage() {
                       </button>
                     )}
                     {isExecuting && (
-                      <span className="badge" style={{ borderColor: "#d97706", color: "#fbbf24" }}>
+                      <span
+                        className="badge"
+                        style={{ borderColor: "#d97706", color: "#fbbf24" }}
+                      >
                         Claimed & Executing...
                       </span>
                     )}
                     {isSucceeded && (
-                      <span className="badge" style={{ borderColor: "#059669", color: "#34d399" }}>
+                      <span
+                        className="badge"
+                        style={{ borderColor: "#059669", color: "#34d399" }}
+                      >
                         Execution Succeeded
                       </span>
                     )}
@@ -484,10 +648,13 @@ export default function SimulationLabPage() {
                   }}
                 >
                   <div>Payload Hash: {prop.parameters_hash}</div>
-                  <div>Parameters: {JSON.stringify(prop.immutable_parameters)}</div>
+                  <div>
+                    Parameters: {JSON.stringify(prop.immutable_parameters)}
+                  </div>
                   {exec && (
                     <div style={{ marginTop: "6px", color: "#34d399" }}>
-                      Verified Post-State: {JSON.stringify(exec.post_execution_state)}
+                      Verified Post-State:{" "}
+                      {JSON.stringify(exec.post_execution_state)}
                     </div>
                   )}
                 </div>
@@ -501,10 +668,25 @@ export default function SimulationLabPage() {
       {runs.length > 0 && (
         <div style={{ marginTop: "48px" }}>
           <h2>Recent Simulation History</h2>
-          <div className="panel" style={{ marginTop: "16px", overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+          <div
+            className="panel"
+            style={{ marginTop: "16px", overflowX: "auto" }}
+          >
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: "0.85rem",
+              }}
+            >
               <thead>
-                <tr style={{ textAlign: "left", color: "#9ca3af", borderBottom: "1px solid #374151" }}>
+                <tr
+                  style={{
+                    textAlign: "left",
+                    color: "#9ca3af",
+                    borderBottom: "1px solid #374151",
+                  }}
+                >
                   <th style={{ padding: "8px 12px" }}>Scenario</th>
                   <th style={{ padding: "8px 12px" }}>Run ID</th>
                   <th style={{ padding: "8px 12px" }}>Status</th>
@@ -515,13 +697,38 @@ export default function SimulationLabPage() {
               <tbody>
                 {runs.slice(0, 5).map((r) => (
                   <tr key={r.id} style={{ borderBottom: "1px solid #1f2937" }}>
-                    <td style={{ padding: "8px 12px", fontFamily: "monospace", color: "#fff" }}>{r.scenario_id}</td>
-                    <td style={{ padding: "8px 12px", fontFamily: "monospace", color: "#9ca3af" }}>{r.id.slice(0, 8)}</td>
-                    <td style={{ padding: "8px 12px" }}>
-                      <span className="badge" style={{ padding: "2px 6px", fontSize: "10px" }}>{r.status}</span>
+                    <td
+                      style={{
+                        padding: "8px 12px",
+                        fontFamily: "monospace",
+                        color: "#fff",
+                      }}
+                    >
+                      {r.scenario_id}
                     </td>
-                    <td style={{ padding: "8px 12px", color: "#9ca3af" }}>{r.cleanup_status}</td>
-                    <td style={{ padding: "8px 12px", color: "#9ca3af" }}>{new Date(r.started_at).toLocaleTimeString()}</td>
+                    <td
+                      style={{
+                        padding: "8px 12px",
+                        fontFamily: "monospace",
+                        color: "#9ca3af",
+                      }}
+                    >
+                      {r.id.slice(0, 8)}
+                    </td>
+                    <td style={{ padding: "8px 12px" }}>
+                      <span
+                        className="badge"
+                        style={{ padding: "2px 6px", fontSize: "10px" }}
+                      >
+                        {r.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: "8px 12px", color: "#9ca3af" }}>
+                      {r.cleanup_status}
+                    </td>
+                    <td style={{ padding: "8px 12px", color: "#9ca3af" }}>
+                      {new Date(r.started_at).toLocaleTimeString()}
+                    </td>
                   </tr>
                 ))}
               </tbody>

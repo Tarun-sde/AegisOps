@@ -97,7 +97,9 @@ test("simulation lab renders catalog and environment controls", async ({
 }) => {
   await page.goto("/app/simulation-lab");
   await expect(
-    page.getByRole("heading", { name: "Incident Simulation Lab & Remediation" }),
+    page.getByRole("heading", {
+      name: "Incident Simulation Lab & Remediation",
+    }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: /Failure Scenario Catalog/i }),

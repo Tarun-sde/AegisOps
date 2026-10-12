@@ -539,7 +539,9 @@ app.get("/version", (_request: Request, response: Response) => {
 // A1: Product catalog
 app.get("/products", async (_request: Request, response: Response) => {
   if (isServiceUnavailableFaultActive()) {
-    response.status(503).json({ error: "Service unavailable", code: "SERVICE_UNAVAILABLE" });
+    response
+      .status(503)
+      .json({ error: "Service unavailable", code: "SERVICE_UNAVAILABLE" });
     return;
   }
   if (isPoolExhaustFaultActive()) {
@@ -561,21 +563,28 @@ app.get("/products", async (_request: Request, response: Response) => {
 });
 
 // S06 Downstream dependency endpoint
-app.get("/downstream/inventory", async (_request: Request, response: Response) => {
-  if (isSlowDownstreamFaultActive()) {
-    await new Promise((resolve) => setTimeout(resolve, slowDownstreamDelayMs));
-  }
-  response.json({
-    status: "ok",
-    service: "inventory-api",
-    items: PRODUCTS.map((p) => ({ id: p.id, stock: p.stock })),
-  });
-});
+app.get(
+  "/downstream/inventory",
+  async (_request: Request, response: Response) => {
+    if (isSlowDownstreamFaultActive()) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, slowDownstreamDelayMs),
+      );
+    }
+    response.json({
+      status: "ok",
+      service: "inventory-api",
+      items: PRODUCTS.map((p) => ({ id: p.id, stock: p.stock })),
+    });
+  },
+);
 
 // A1 & A4: Checkout endpoint with deterministic fault modes
 app.post("/checkout", async (request: Request, response: Response) => {
   if (isServiceUnavailableFaultActive()) {
-    response.status(503).json({ error: "Service unavailable", code: "SERVICE_UNAVAILABLE" });
+    response
+      .status(503)
+      .json({ error: "Service unavailable", code: "SERVICE_UNAVAILABLE" });
     return;
   }
   if (isPoolExhaustFaultActive()) {

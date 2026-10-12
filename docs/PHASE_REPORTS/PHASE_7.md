@@ -199,11 +199,18 @@ The Phase 7 architecture is governed by **ADR-027** and recorded in **DEC-316 th
 
 ---
 
-## J. Current Limitations
+## J. Current Limitations & Simulation Fidelity Boundary
 
-1. **Portfolio Demo Scope:** Remediations execute against the local `shop-api` demo service via HTTP endpoints rather than a cloud Kubernetes cluster or cloud container registry.
-2. **Phase 8 Visual Redesign:** The `/app/simulation-lab` interface is functional and consistent with the Phase 6 theme; full aesthetic redesign is scheduled for Phase 8.
-3. **Phase 9 Benchmark Evaluation:** The 40–60 case evaluation benchmark suite will be executed in Phase 9.
+1. **Simulation Fidelity vs. Physical Infrastructure Chaos (S01–S06 Architectural Boundary):**
+   - **S01 (Checkout 500):** Real application error branch returning HTTP 500 (`CHECKOUT_GATEWAY_TIMEOUT`) with live OpenTelemetry traces, structured error logs, and Prometheus status code metric increments.
+   - **S02 (Database Latency):** In-process simulated query latency. Injects bounded 800ms delays into database query spans (`db.query`), generating genuine OpenTelemetry trace timelines and HTTP p95 latency changes without creating raw table locks or unindexed disk I/O on the PostgreSQL cluster.
+   - **S03 (Connection Pool Contention):** In-process pool contention simulation. Returns HTTP 503 (`DB_POOL_TIMEOUT`, `DatabasePoolExhaustedException`) with pool saturation counters, generating correlated structured logs and error metrics without consuming physical PostgreSQL global connections (`max_connections`) across shared tenant databases.
+   - **S04 (Release Regression):** In-process release switching. Mutates the active runtime release identity (`0.1.1-buggy`, Git commit SHA `badf00d...`) and triggers buggy checkout logic while preserving deploy timestamps and release IDs. Controlled rollback restores version `0.1.0`. It does NOT pull container images or trigger host Docker redeployments, eliminating host Docker socket exposure (Rule 3).
+   - **S05 (Service Unavailability):** In-process probe and endpoint failure. Marks health probe `/healthz` and operational routes as returning HTTP 503 `SERVICE_UNAVAILABLE`, generating synthetic probe alerts in Prometheus without stopping or killing the Docker container process from the web API or ADK worker (strictly upholding Rule 3 and preventing workstation container orphan leaks).
+   - **S06 (Downstream Latency):** Bounded downstream delay. Introduces 1200ms delay on `/downstream/inventory` and propagates OpenTelemetry `traceparent` context.
+2. **Remediation Execution Scope:** Remediations execute against the local `shop-api` demo service via authenticated HTTP endpoints rather than a cloud Kubernetes cluster or cloud container registry.
+3. **Phase 8 Visual Redesign:** The `/app/simulation-lab` interface is functional and consistent with the Phase 6 theme; full aesthetic redesign is scheduled for Phase 8.
+4. **Phase 9 Benchmark Evaluation:** The 40–60 case evaluation benchmark suite will be executed in Phase 9.
 
 ---
 

@@ -18,7 +18,7 @@
     - `S04_BROKEN_RELEASE`: Faulty `0.1.1-buggy` deployment with commit SHA correlation.
     - `S05_SERVICE_UNAVAILABLE`: Probe failure returning 503 on `/healthz`.
     - `S06_SLOW_DOWNSTREAM`: 1200ms downstream dependency latency propagation.
-  - Zero host Docker socket exposure; safe in-process fault adapter via `/fault/inject` and `/fault/reset`.
+  - Zero host Docker socket exposure; safe in-process fault adapter via `/fault/inject` and `/fault/reset` (in-process latency, pool timeout, runtime version, and probe failure injection avoiding physical database connection exhaustion or host Docker process destruction).
 - [x] **Persistent Simulation Run State & Lifecycle Controller (DEC-317, DEC-318, ADR-027):**
   - Migration `0009_phase7_simulation_and_execution.py` adding `simulation_runs`, `simulation_events`, and `action_executions`.
   - State machine: `CREATED -> ACTIVE -> RECOVERING -> COMPLETED` with failure branches `EXPIRED`, `FAILED`, `CANCELLED`.
