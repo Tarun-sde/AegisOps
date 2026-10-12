@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from agents.incident_investigator.agent import run_investigation_agent
 from agents.incident_investigator.tools.gateway import ReadOnlyToolGateway
 from apps.api.app.models import HypothesisRecord, Incident, InvestigationRun
+from apps.api.app.outbox.service import create_outbox_event
 from apps.api.app.schemas import Scope
 
 logger = logging.getLogger(__name__)
@@ -105,7 +106,27 @@ def execute_investigation(
         run.limitations = result.limitations
         run.suggested_actions = result.suggested_action_catalog_ids
         run.status = "COMPLETE" if result.status == "complete" else "INCONCLUSIVE"
-        run.completed_at = datetime.now(UTC)
+        top_hypothesis = result.hypotheses[0] if result.hypotheses else None
+        create_outbox_event(
+            db,
+            organization_id=run.organization_id,
+            aggregate_type="investigation",
+            aggregate_id=str(run.id),
+            event_type="investigation.completed",
+            payload={
+                "run_id": str(run.id),
+                "incident_id": str(run.incident_id),
+                "service_id": str(run.service_id),
+                "status": run.status,
+                "summary": run.summary,
+                "top_hypothesis": top_hypothesis.cause if top_hypothesis else None,
+                "evidence_count": (
+                    len(result.hypotheses[0].supporting_evidence) if top_hypothesis else 0
+                ),
+            },
+            idempotency_key=f"outbox:investigation_completed:{run.id}",
+        )
+
         db.commit()
         db.refresh(run)
         return run
@@ -115,6 +136,30 @@ def execute_investigation(
         run.status = "FAILED"
         run.error_message = str(err)
         run.completed_at = datetime.now(UTC)
+
+        try:
+            create_outbox_event(
+                db,
+                organization_id=run.organization_id,
+                aggregate_type="investigation",
+                aggregate_id=str(run.id),
+                event_type="investigation.completed",
+                payload={
+                    "run_id": str(run.id),
+                    "incident_id": str(run.incident_id),
+                    "service_id": str(run.service_id),
+                    "status": "FAILED",
+                    "summary": f"Investigation failed: {err}",
+                    "top_hypothesis": None,
+                    "confidence": "none",
+                    "evidence_count": 0,
+                    "suggested_actions": [],
+                },
+                idempotency_key=f"outbox:investigation_failed:{run.id}",
+            )
+        except Exception as outbox_err:
+            logger.warning(f"Could not record outbox event for failed run {run_id}: {outbox_err}")
+
         db.commit()
         db.refresh(run)
         return run

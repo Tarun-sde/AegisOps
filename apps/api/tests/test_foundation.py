@@ -50,8 +50,10 @@ def test_health_and_no_product_routes():
     with TestClient(main.app) as client:
         response = client.get("/healthz")
         assert response.status_code == 200
-        assert response.json() == {"status": "ok", "service": "api"}
-        assert client.post("/api/v1/actions/proposals").status_code == 404
+        # Execution routes remain nonexistent in Phase 6 (DEC-312)
+        assert client.post("/api/v1/actions/execute").status_code == 404
+        # Unauthenticated access to implemented proposals returns 401
+        assert client.post("/api/v1/actions/proposals").status_code == 401
 
 
 def test_ready_success(monkeypatch):

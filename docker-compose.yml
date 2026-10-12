@@ -111,5 +111,30 @@ services:
     mem_limit: 512m
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
+  n8n:
+    image: n8nio/n8n:1.82.2
+    profiles: [automation]
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=false
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-aegisops-demo-n8n-encryption-key-32b}
+      - GENERIC_TIMEZONE=UTC
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+      - N8N_METRICS=true
+      - WEBHOOK_URL=http://127.0.0.1:5678/
+    ports:
+      - "127.0.0.1:5678:5678"
+    mem_limit: 384m
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD-SHELL, "wget -q -O - http://127.0.0.1:5678/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    volumes:
+      - n8n-data:/home/node/.n8n
 volumes:
   postgres-data:
+  n8n-data:

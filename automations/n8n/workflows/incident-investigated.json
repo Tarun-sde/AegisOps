@@ -1,0 +1,128 @@
+{
+  "name": "AegisOps - Incident Investigated Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "incident-investigated",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $input.item.headers;\nconst body = $input.item.body;\nconst data = body.data || {};\n\nconst statusLabel = data.status === 'COMPLETE' ? 'Completed' : (data.status === 'INCONCLUSIVE' ? 'Inconclusive' : 'Failed');\n\nconst notification = {\n  text: `🔍 [AegisOps Investigation ${statusLabel}] Incident ${data.incident_id}`,\n  run_id: data.run_id,\n  incident_id: data.incident_id,\n  status: data.status,\n  top_hypothesis: data.top_hypothesis || 'No definitive hypothesis identified',\n  confidence: (data.confidence || 'low').toUpperCase(),\n  evidence_count: data.evidence_count || 0,\n  summary: data.summary || '',\n  suggested_actions: data.suggested_actions || [],\n  link: `http://localhost:3000/app/incidents/${data.incident_id}`,\n  idempotency_key: body.idempotency_key || headers['x-aegisops-event-id']\n};\n\nreturn { json: notification };"
+      },
+      "id": "format-investigation",
+      "name": "Format Investigation Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/api/v1/automations/demo-sink",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-AegisOps-Event-ID",
+              "value": "={{ $json.idempotency_key }}"
+            },
+            {
+              "name": "X-AegisOps-Timestamp",
+              "value": "={{ new Date().toISOString() }}"
+            },
+            {
+              "name": "X-AegisOps-Signature",
+              "value": "sha256=internal-n8n-verified"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "event_type",
+              "value": "investigation.completed"
+            },
+            {
+              "name": "idempotency_key",
+              "value": "={{ $json.idempotency_key }}"
+            },
+            {
+              "name": "data",
+              "value": "={{ $json }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "dispatch-sink",
+      "name": "Dispatch to Demo Sink",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'delivered', run_id: $('format-investigation').item.json.run_id } }}"
+      },
+      "id": "respond-webhook",
+      "name": "Respond Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Investigation Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Investigation Summary": {
+      "main": [
+        [
+          {
+            "node": "Dispatch to Demo Sink",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch to Demo Sink": {
+      "main": [
+        [
+          {
+            "node": "Respond Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

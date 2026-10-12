@@ -142,6 +142,29 @@ def correlate_alert(
             },
         )
         db.add(init_event)
+
+        from apps.api.app.outbox.service import create_outbox_event
+
+        create_outbox_event(
+            db,
+            organization_id=org_id,
+            aggregate_type="incident",
+            aggregate_id=str(new_incident.id),
+            event_type="incident.created",
+            payload={
+                "incident_id": str(new_incident.id),
+                "service_id": str(svc_id),
+                "environment": environment,
+                "title": title,
+                "severity": new_incident.severity,
+                "status": "open",
+                "started_at": alert.startsAt.isoformat(),
+                "fingerprint": alert.fingerprint,
+                "summary": title,
+            },
+            idempotency_key=f"outbox:incident_created:{new_incident.id}",
+        )
+
         return new_incident, "created"
 
     elif alert.status == "resolved":
@@ -165,6 +188,29 @@ def correlate_alert(
                 },
             )
             db.add(resolved_event)
+
+            from apps.api.app.outbox.service import create_outbox_event
+
+            create_outbox_event(
+                db,
+                organization_id=org_id,
+                aggregate_type="incident",
+                aggregate_id=str(active_incident.id),
+                event_type="incident.resolved",
+                payload={
+                    "incident_id": str(active_incident.id),
+                    "service_id": str(active_incident.service_id),
+                    "environment": active_incident.environment,
+                    "title": active_incident.title,
+                    "severity": active_incident.severity,
+                    "status": "resolved",
+                    "resolved_at": (alert.endsAt or now_utc).isoformat(),
+                    "actor": actor,
+                    "reason": "primary_alert_resolved",
+                },
+                idempotency_key=f"outbox:incident_resolved:{active_incident.id}:v{active_incident.version}",
+            )
+
             return active_incident, "resolved"
 
         # Check if it was a correlated alert on active incident

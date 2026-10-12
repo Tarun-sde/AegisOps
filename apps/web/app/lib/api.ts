@@ -933,3 +933,229 @@ export async function searchRunbooks(
     };
   }
 }
+
+// -----------------------------------------------------------------------------
+// Phase 6: Action Proposals & Outbox Deliveries API
+// -----------------------------------------------------------------------------
+
+export interface ProposalApproval {
+  id: string;
+  proposal_id: string;
+  organization_id: string;
+  approver_id: string | null;
+  decision: string;
+  parameters_hash: string;
+  comment: string | null;
+  created_at: string;
+}
+
+export interface ActionProposal {
+  id: string;
+  organization_id: string;
+  service_id: string;
+  environment: string;
+  investigation_run_id: string | null;
+  action_catalog_id: string;
+  immutable_parameters: Record<string, unknown>;
+  parameters_hash: string;
+  reason: string;
+  expected_outcome: string;
+  known_risks: string;
+  supporting_evidence_ids: string[];
+  status: string;
+  idempotency_key: string;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+  approval: ProposalApproval | null;
+}
+
+export interface ProposalListResponse {
+  items: ActionProposal[];
+  total: number;
+}
+
+export interface OutboxEvent {
+  id: string;
+  organization_id: string;
+  aggregate_type: string;
+  aggregate_id: string;
+  event_type: string;
+  event_version: number;
+  payload: Record<string, unknown>;
+  status: string;
+  attempt_count: number;
+  max_attempts: number;
+  next_attempt_at: string;
+  delivered_at: string | null;
+  last_error_code: string | null;
+  last_error_summary: string | null;
+  created_at: string;
+}
+
+export interface OutboxListResponse {
+  items: OutboxEvent[];
+  total: number;
+}
+
+export async function getProposals(
+  statusFilter?: string,
+): Promise<{ data: ProposalListResponse | null; error: string | null }> {
+  try {
+    const url = new URL(`${API_BASE}/api/v1/actions/proposals`);
+    if (statusFilter) {
+      url.searchParams.set("status", statusFilter);
+    }
+    const res = await fetch(url.toString(), {
+      cache: "no-store",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      return {
+        data: null,
+        error: `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as ProposalListResponse;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to load proposals",
+    };
+  }
+}
+
+export async function approveProposal(
+  proposalId: string,
+  expectedHash: string,
+  comment?: string,
+): Promise<{ data: ActionProposal | null; error: string | null }> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/v1/actions/proposals/${proposalId}/approve`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          expected_parameters_hash: expectedHash,
+          comment: comment || null,
+        }),
+      },
+    );
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      return {
+        data: null,
+        error: errJson?.detail || `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as ActionProposal;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to approve proposal",
+    };
+  }
+}
+
+export async function rejectProposal(
+  proposalId: string,
+  comment?: string,
+): Promise<{ data: ActionProposal | null; error: string | null }> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/v1/actions/proposals/${proposalId}/reject`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          comment: comment || null,
+        }),
+      },
+    );
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      return {
+        data: null,
+        error: errJson?.detail || `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as ActionProposal;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to reject proposal",
+    };
+  }
+}
+
+export async function getOutboxDeliveries(
+  statusFilter?: string,
+): Promise<{ data: OutboxListResponse | null; error: string | null }> {
+  try {
+    const url = new URL(`${API_BASE}/api/v1/automations/deliveries`);
+    if (statusFilter) {
+      url.searchParams.set("status", statusFilter);
+    }
+    const res = await fetch(url.toString(), {
+      cache: "no-store",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      return {
+        data: null,
+        error: `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as OutboxListResponse;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error:
+        err instanceof Error ? err.message : "Failed to load outbox deliveries",
+    };
+  }
+}
+
+export async function triggerOutboxDispatch(): Promise<{
+  data: Record<string, unknown> | null;
+  error: string | null;
+}> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/v1/automations/deliveries/dispatch`,
+      {
+        method: "POST",
+        credentials: "include",
+      },
+    );
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      return {
+        data: null,
+        error: errJson?.detail || `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as Record<string, unknown>;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to trigger dispatch",
+    };
+  }
+}

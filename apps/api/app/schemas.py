@@ -613,3 +613,120 @@ class RunbookSearchResult(BaseModel):
     mode: str
     results: list[RetrievedChunkRead]
     total_candidates: int
+
+
+# Phase 6: Action Proposals, Approvals, and Outbox Schemas
+
+
+class ActionCatalogItemRead(BaseModel):
+    action_catalog_id: str
+    name: str
+    description: str
+    applicable_environments: list[str]
+    risk_classification: str
+    required_role: str
+    default_expiry_seconds: int
+
+
+class ProposalApprovalRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    proposal_id: UUID
+    organization_id: UUID
+    approver_id: UUID | None = None
+    decision: str
+    parameters_hash: str
+    comment: str | None = None
+    created_at: datetime
+
+
+class ActionProposalCreate(BaseModel):
+    service_id: UUID
+    environment: str = "staging"
+    action_catalog_id: str
+    immutable_parameters: dict[str, Any]
+    reason: Annotated[str, Field(min_length=5, max_length=2000)]
+    expected_outcome: Annotated[str, Field(min_length=5, max_length=2000)]
+    known_risks: Annotated[str, Field(min_length=5, max_length=2000)]
+    supporting_evidence_ids: list[str] = Field(default_factory=list)
+    investigation_run_id: UUID | None = None
+    expires_in_seconds: Annotated[int, Field(ge=60, le=86400)] = 1800
+    idempotency_key: str | None = None
+
+
+class ActionProposalRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    service_id: UUID
+    environment: str
+    investigation_run_id: UUID | None = None
+    action_catalog_id: str
+    immutable_parameters: dict[str, Any]
+    parameters_hash: str
+    reason: str
+    expected_outcome: str
+    known_risks: str
+    supporting_evidence_ids: list[str] = Field(default_factory=list)
+    status: str
+    idempotency_key: str
+    expires_at: datetime
+    created_at: datetime
+    updated_at: datetime
+    approval: ProposalApprovalRead | None = None
+
+
+class ProposalApprovalCreate(BaseModel):
+    expected_parameters_hash: Annotated[str, Field(min_length=64, max_length=64)]
+    comment: Annotated[str | None, Field(max_length=1000)] = None
+
+
+class ProposalRejectCreate(BaseModel):
+    comment: Annotated[str | None, Field(max_length=1000)] = None
+
+
+class ProposalListResponse(BaseModel):
+    items: list[ActionProposalRead]
+    total: int
+
+
+class OutboxEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    aggregate_type: str
+    aggregate_id: str
+    event_type: str
+    event_version: int
+    payload: dict[str, Any]
+    status: str
+    attempt_count: int
+    max_attempts: int
+    next_attempt_at: datetime
+    delivered_at: datetime | None = None
+    last_error_code: str | None = None
+    last_error_summary: str | None = None
+    created_at: datetime
+
+
+class OutboxListResponse(BaseModel):
+    items: list[OutboxEventRead]
+    total: int
+
+
+class DemoSinkTicketRead(BaseModel):
+    ticket_id: str
+    event_id: str
+    event_type: str
+    received_at: datetime
+    summary: str
+
+
+class DemoSinkResponse(BaseModel):
+    status: Literal["accepted", "duplicate_ignored"]
+    event_id: str
+    ticket_id: str | None = None
+    message: str

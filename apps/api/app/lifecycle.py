@@ -110,4 +110,28 @@ def transition_incident(
         payload=payload,
     )
     db.add(status_event)
+
+    if target_norm == "resolved":
+        from apps.api.app.outbox.service import create_outbox_event
+
+        create_outbox_event(
+            db,
+            organization_id=incident.organization_id,
+            aggregate_type="incident",
+            aggregate_id=str(incident.id),
+            event_type="incident.resolved",
+            payload={
+                "incident_id": str(incident.id),
+                "service_id": str(incident.service_id),
+                "environment": incident.environment,
+                "title": incident.title,
+                "severity": incident.severity,
+                "status": "resolved",
+                "resolved_at": now_utc.isoformat(),
+                "actor": actor,
+                "reason": reason or "",
+            },
+            idempotency_key=f"outbox:incident_resolved:{incident.id}:v{incident.version}",
+        )
+
     return incident

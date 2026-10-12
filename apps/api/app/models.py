@@ -101,6 +101,12 @@ class Organization(Base):
     services: Mapped[list[Service]] = relationship(
         "Service", back_populates="organization", cascade="all, delete-orphan"
     )
+    outbox_events: Mapped[list[OutboxEvent]] = relationship(
+        "OutboxEvent", back_populates="organization", cascade="all, delete-orphan"
+    )
+    action_proposals: Mapped[list[ActionProposal]] = relationship(
+        "ActionProposal", back_populates="organization", cascade="all, delete-orphan"
+    )
 
 
 class Service(Base):
@@ -237,6 +243,9 @@ class InvestigationRun(Base):
     hypotheses: Mapped[list[HypothesisRecord]] = relationship(
         "HypothesisRecord", back_populates="run", cascade="all, delete-orphan"
     )
+    proposals: Mapped[list[ActionProposal]] = relationship(
+        "ActionProposal", back_populates="investigation_run"
+    )
 
 
 class ToolExecution(Base):
@@ -300,4 +309,106 @@ class HypothesisRecord(Base):
     run: Mapped[InvestigationRun] = relationship("InvestigationRun", back_populates="hypotheses")
 
 
-# RAG subsystem models (Phase 5)
+# Phase 6: Outbox & Remediation Proposals
+
+
+class OutboxEvent(Base):
+    __tablename__ = "outbox_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    aggregate_type: Mapped[str] = mapped_column(String(64))  # incident | investigation | proposal
+    aggregate_id: Mapped[str] = mapped_column(String(128))
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    event_version: Mapped[int] = mapped_column(default=1)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    idempotency_key: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="PENDING", index=True)
+    # PENDING | PROCESSING | DELIVERED | RETRY_SCHEDULED | DEAD_LETTERED
+    attempt_count: Mapped[int] = mapped_column(default=0)
+    max_attempts: Mapped[int] = mapped_column(default=5)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_error_summary: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    organization: Mapped[Organization] = relationship(
+        "Organization", back_populates="outbox_events"
+    )
+
+
+class ActionProposal(Base):
+    __tablename__ = "action_proposals"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "idempotency_key", name="uq_proposal_org_idempotency"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    service_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("services.id", ondelete="CASCADE"), index=True
+    )
+    environment: Mapped[str] = mapped_column(String(32), default="staging")
+    investigation_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("investigation_runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    action_catalog_id: Mapped[str] = mapped_column(String(64), index=True)
+    immutable_parameters: Mapped[dict[str, Any]] = mapped_column(JSON)
+    parameters_hash: Mapped[str] = mapped_column(String(64))
+    reason: Mapped[str] = mapped_column(String(2000))
+    expected_outcome: Mapped[str] = mapped_column(String(2000))
+    known_risks: Mapped[str] = mapped_column(String(2000))
+    supporting_evidence_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(32), default="PROPOSED", index=True)
+    # PROPOSED | APPROVED | REJECTED | EXPIRED
+    idempotency_key: Mapped[str] = mapped_column(String(128), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    organization: Mapped[Organization] = relationship(
+        "Organization", back_populates="action_proposals"
+    )
+    service: Mapped[Service] = relationship("Service")
+    investigation_run: Mapped[InvestigationRun | None] = relationship(
+        "InvestigationRun", back_populates="proposals"
+    )
+    approval: Mapped[ProposalApproval | None] = relationship(
+        "ProposalApproval", back_populates="proposal", uselist=False, cascade="all, delete-orphan"
+    )
+
+
+class ProposalApproval(Base):
+    __tablename__ = "proposal_approvals"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("action_proposals.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    approver_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    decision: Mapped[str] = mapped_column(String(32))  # APPROVED | REJECTED
+    parameters_hash: Mapped[str] = mapped_column(String(64))
+    comment: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    proposal: Mapped[ActionProposal] = relationship("ActionProposal", back_populates="approval")
+    approver: Mapped[User | None] = relationship("User")
+    organization: Mapped[Organization] = relationship("Organization")

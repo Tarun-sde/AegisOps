@@ -1,0 +1,128 @@
+{
+  "name": "AegisOps - Remediation Approval Requested",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "approval-requested",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $input.item.headers;\nconst body = $input.item.body;\nconst data = body.data || {};\n\nconst notification = {\n  text: `⚠️ [AegisOps Action Proposed] Action '${data.action_catalog_id}' requires review`,\n  proposal_id: data.proposal_id,\n  service_name: data.service_name || 'shop-api',\n  environment: data.environment || 'staging',\n  action_catalog_id: data.action_catalog_id,\n  risk_classification: data.risk_classification || 'MEDIUM',\n  expires_at: data.expires_at,\n  parameters_hash: data.parameters_hash,\n  reason: data.reason,\n  review_link: `http://localhost:3000/app/proposals`,\n  notice: 'Approval must be performed in AegisOps by an authorized admin; direct execution is prohibited.',\n  idempotency_key: body.idempotency_key || headers['x-aegisops-event-id']\n};\n\nreturn { json: notification };"
+      },
+      "id": "format-proposal",
+      "name": "Format Proposal Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/api/v1/automations/demo-sink",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-AegisOps-Event-ID",
+              "value": "={{ $json.idempotency_key }}"
+            },
+            {
+              "name": "X-AegisOps-Timestamp",
+              "value": "={{ new Date().toISOString() }}"
+            },
+            {
+              "name": "X-AegisOps-Signature",
+              "value": "sha256=internal-n8n-verified"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "event_type",
+              "value": "proposal.created"
+            },
+            {
+              "name": "idempotency_key",
+              "value": "={{ $json.idempotency_key }}"
+            },
+            {
+              "name": "data",
+              "value": "={{ $json }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "dispatch-sink",
+      "name": "Dispatch to Demo Sink",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'delivered', proposal_id: $('format-proposal').item.json.proposal_id } }}"
+      },
+      "id": "respond-webhook",
+      "name": "Respond Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Proposal Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Proposal Summary": {
+      "main": [
+        [
+          {
+            "node": "Dispatch to Demo Sink",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch to Demo Sink": {
+      "main": [
+        [
+          {
+            "node": "Respond Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

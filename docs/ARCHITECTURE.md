@@ -1,8 +1,8 @@
 # Architecture — Implementation Baseline
 
-**Status:** `IMPLEMENTED & VERIFIED (Phases 0–5)`  
-**Canonical source:** Master implementation plan §§3–5, 7–9, 14.  
-**Related decisions:** ADR-001 through ADR-025 in `ENGINEERING_DECISIONS.md`.
+**Status:** `IMPLEMENTED & VERIFIED (Phases 0–6)`  
+**Canonical source:** Master implementation plan §§3–5, 7–9, 14, 17.  
+**Related decisions:** ADR-001 through ADR-026, DEC-001 through DEC-315 in `ENGINEERING_DECISIONS.md`.
 
 ```mermaid
 flowchart TD
@@ -23,18 +23,26 @@ flowchart TD
     TG --> DB
     ADK --> VALID[Evidence validator]
     VALID --> DB
-    API --> N8N[n8n operator workflows]
-    API --> APPROVAL[Deterministic approval service]
-    APPROVAL --> STAGE[Allowlisted staging executor]
+    API --> OUTBOX[Transactional Outbox Table]
+    CELERY --> DISPATCH[Outbox Delivery Worker]
+    DISPATCH -->|HMAC-SHA256 Signed| N8N[n8n operator workflows]
+    N8N --> SINK[Slack / Discord / Webhook Demo Sink]
+    API --> PROPOSALS[Action Proposals Service]
+    PROPOSALS --> DB
+    PROPOSALS --> OUTBOX
+    WEB -->|Authorized Human Review| APPROVAL[Deterministic Approval Service]
+    APPROVAL --> DB
+    APPROVAL --> OUTBOX
 ```
 
 ## Responsibility boundaries
 
 - **Data plane:** sample app and third-party telemetry components. No LLM on the ingestion hot path.
-- **Control plane:** auth/authorization, services, alerts, incidents, approvals, audit, API contracts.
+- **Control plane:** auth/authorization, services, alerts, incidents, transactional outbox, action proposals, approvals, audit, API contracts.
 - **AI plane:** asynchronous bounded Google ADK tool calls, RAG, evidence ledger, schema validation and evaluations.
-- **Automation plane:** n8n notifications/integrations; PostgreSQL remains source of truth for state and approvals.
-- **Presentation:** Next.js UI for incident timeline, evidence, action proposals and run history.
+- **Automation plane:** PostgreSQL transactional outbox + Celery delivery worker + HMAC-SHA256 signed n8n operator workflows; PostgreSQL remains sole source of truth.
+- **Remediation governance:** Immutable action proposals, canonical SHA-256 parameter hashing, RBAC gating (`admin`/`owner`), zero execution in Phase 6.
+- **Presentation:** Next.js UI for incident feed, runbook knowledge base, outbox delivery monitoring, and proposal review/approval.
 
 ## Architectural invariants
 

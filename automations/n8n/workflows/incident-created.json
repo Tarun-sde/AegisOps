@@ -1,0 +1,128 @@
+{
+  "name": "AegisOps - Incident Created Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "incident-created",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst headers = $input.item.headers;\nconst body = $input.item.body;\n\nconst signature = headers['x-aegisops-signature'];\nconst timestamp = headers['x-aegisops-timestamp'];\nconst eventId = headers['x-aegisops-event-id'];\n\nif (!signature || !timestamp || !eventId) {\n  throw new Error('Missing required AegisOps signature headers');\n}\n\n// Format notification envelope\nconst incident = body.data || {};\nconst notification = {\n  text: `🚨 [AegisOps Incident Created] ${incident.title || 'Unknown Incident'}`,\n  incident_id: incident.incident_id,\n  service_name: incident.service_name || 'shop-api',\n  severity: (incident.severity || 'warning').toUpperCase(),\n  environment: incident.environment || 'staging',\n  started_at: incident.started_at || timestamp,\n  link: `http://localhost:3000/app/incidents/${incident.incident_id}`,\n  idempotency_key: body.idempotency_key || eventId\n};\n\nreturn { json: notification };"
+      },
+      "id": "format-notification",
+      "name": "Verify & Format Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/api/v1/automations/demo-sink",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-AegisOps-Event-ID",
+              "value": "={{ $json.idempotency_key }}"
+            },
+            {
+              "name": "X-AegisOps-Timestamp",
+              "value": "={{ new Date().toISOString() }}"
+            },
+            {
+              "name": "X-AegisOps-Signature",
+              "value": "sha256=internal-n8n-verified"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "event_type",
+              "value": "incident.created"
+            },
+            {
+              "name": "idempotency_key",
+              "value": "={{ $json.idempotency_key }}"
+            },
+            {
+              "name": "data",
+              "value": "={{ $json }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "dispatch-sink",
+      "name": "Dispatch to Demo Sink",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'delivered', incident_id: $('format-notification').item.json.incident_id } }}"
+      },
+      "id": "respond-webhook",
+      "name": "Respond Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Verify & Format Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify & Format Notification": {
+      "main": [
+        [
+          {
+            "node": "Dispatch to Demo Sink",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch to Demo Sink": {
+      "main": [
+        [
+          {
+            "node": "Respond Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
@@ -17,6 +18,15 @@ from sqlalchemy import and_, desc, func, select
 from sqlalchemy.orm import Session, selectinload
 from starlette.responses import JSONResponse
 
+from apps.api.app.actions import (
+    ACTION_CATALOG,
+    ProposalExpiredError,
+    ProposalHashMismatchError,
+    ProposalNotFoundError,
+    ProposalPermissionDeniedError,
+    ProposalService,
+    ProposalStateConflictError,
+)
 from apps.api.app.auth import (
     TenantContext,
     clear_auth_cookies,
@@ -47,16 +57,23 @@ from apps.api.app.models import (
     InvestigationRun,
     Membership,
     Organization,
+    OutboxEvent,
     Service,
     ToolExecution,
     User,
 )
+from apps.api.app.outbox import dispatch_outbox_batch, verify_event_signature
 from apps.api.app.rag.models import Document
 from apps.api.app.rag.retrieval import HybridRetrievalService
 from apps.api.app.rag.service import DocumentIngestionService, ValidationError
 from apps.api.app.schemas import (
+    ActionCatalogItemRead,
+    ActionProposalCreate,
+    ActionProposalRead,
     AlertmanagerWebhookPayload,
     AuthResponse,
+    DemoSinkResponse,
+    DemoSinkTicketRead,
     DeploymentRecordRead,
     EvidenceItemRead,
     EvidenceListResponse,
@@ -73,6 +90,11 @@ from apps.api.app.schemas import (
     MembershipRead,
     OrganizationCreate,
     OrganizationRead,
+    OutboxEventRead,
+    OutboxListResponse,
+    ProposalApprovalCreate,
+    ProposalListResponse,
+    ProposalRejectCreate,
     RegisterRequest,
     RetrievedChunkRead,
     RunbookListResponse,
@@ -90,7 +112,10 @@ from apps.api.app.schemas import (
     UserRead,
 )
 from apps.api.app.telemetry.tempo import TempoClient, validate_trace_id
-from apps.worker.tasks import ingest_document_task, run_investigation_task
+from apps.worker.tasks import (
+    ingest_document_task,
+    run_investigation_task,
+)
 
 logger = logging.getLogger("aegisops.api")
 
@@ -1659,3 +1684,287 @@ async def search_runbooks(
         ],
         total_candidates=res.total_candidates,
     )
+
+
+# -----------------------------------------------------------------------------
+# Phase 6: Automation, Outbox Deliveries, and Demo Sink (DEC-300–DEC-304, DEC-315)
+# -----------------------------------------------------------------------------
+
+_demo_sink_processed_keys: set[str] = set()
+_demo_sink_tickets: list[dict[str, Any]] = []
+
+
+@app.post("/api/v1/automations/demo-sink", response_model=DemoSinkResponse)
+async def receive_demo_sink_webhook(
+    request: Request,
+    x_aegisops_signature: Annotated[str | None, Header(alias="x-aegisops-signature")] = None,
+    x_aegisops_timestamp: Annotated[str | None, Header(alias="x-aegisops-timestamp")] = None,
+    x_aegisops_event_id: Annotated[str | None, Header(alias="x-aegisops-event-id")] = None,
+    x_aegisops_key_id: Annotated[str | None, Header(alias="x-aegisops-key-id")] = None,
+) -> DemoSinkResponse:
+    """Authenticated, replay-protected demo notification sink (DEC-303, DEC-304, DEC-315)."""
+    raw_body = await request.body()
+    if not x_aegisops_signature or not x_aegisops_timestamp or not x_aegisops_event_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "Missing required signature headers "
+                "(X-AegisOps-Signature, X-AegisOps-Timestamp, X-AegisOps-Event-ID)"
+            ),
+        )
+
+    is_valid, reason = verify_event_signature(
+        payload_bytes=raw_body,
+        event_id=x_aegisops_event_id,
+        timestamp_str=x_aegisops_timestamp,
+        signature=x_aegisops_signature,
+    )
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Webhook signature verification failed: {reason}",
+        )
+
+    try:
+        body_json = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Malformed JSON payload: {exc}",
+        ) from exc
+
+    # Durable receiver-side idempotency deduplication (DEC-304)
+    idempotency_key = body_json.get("idempotency_key") or x_aegisops_event_id
+    if idempotency_key in _demo_sink_processed_keys:
+        return DemoSinkResponse(
+            status="duplicate_ignored",
+            event_id=x_aegisops_event_id,
+            ticket_id=None,
+            message="Event already processed idempotently; duplicate delivery ignored",
+        )
+
+    _demo_sink_processed_keys.add(idempotency_key)
+    ticket_id = f"TICKET-{len(_demo_sink_tickets) + 1:04d}"
+    event_type = body_json.get("event_type", "unknown")
+    data = body_json.get("data", {})
+    summary = (
+        data.get("title") or data.get("summary") or f"Event {event_type} on {x_aegisops_event_id}"
+    )
+
+    _demo_sink_tickets.append(
+        {
+            "ticket_id": ticket_id,
+            "event_id": x_aegisops_event_id,
+            "event_type": event_type,
+            "received_at": datetime.now(UTC),
+            "summary": summary,
+        }
+    )
+
+    return DemoSinkResponse(
+        status="accepted",
+        event_id=x_aegisops_event_id,
+        ticket_id=ticket_id,
+        message="Demo ticket created successfully",
+    )
+
+
+@app.get("/api/v1/automations/demo-sink/tickets", response_model=list[DemoSinkTicketRead])
+def list_demo_sink_tickets() -> list[DemoSinkTicketRead]:
+    return [DemoSinkTicketRead(**t) for t in _demo_sink_tickets]
+
+
+@app.post("/api/v1/automations/demo-sink/reset")
+def reset_demo_sink() -> dict[str, str]:
+    _demo_sink_processed_keys.clear()
+    _demo_sink_tickets.clear()
+    return {"status": "reset", "message": "Demo sink tickets and idempotency cache cleared"}
+
+
+@app.get("/api/v1/automations/deliveries", response_model=OutboxListResponse)
+def list_outbox_deliveries(
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> OutboxListResponse:
+    query = (
+        select(OutboxEvent)
+        .where(OutboxEvent.organization_id == context.organization.id)
+        .order_by(desc(OutboxEvent.created_at))
+    )
+    if status_filter:
+        query = query.where(OutboxEvent.status == status_filter)
+
+    events = list(db.scalars(query.offset(offset).limit(limit)).all())
+    return OutboxListResponse(
+        items=[OutboxEventRead.model_validate(e) for e in events],
+        total=len(events),
+    )
+
+
+@app.get("/api/v1/automations/deliveries/{delivery_id}", response_model=OutboxEventRead)
+def get_outbox_delivery(
+    delivery_id: uuid.UUID,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> OutboxEventRead:
+    event = db.scalar(
+        select(OutboxEvent).where(
+            OutboxEvent.id == delivery_id,
+            OutboxEvent.organization_id == context.organization.id,
+        )
+    )
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Outbox delivery record not found in active organization",
+        )
+    return OutboxEventRead.model_validate(event)
+
+
+@app.post("/api/v1/automations/deliveries/dispatch")
+def trigger_outbox_dispatch(
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    batch_size: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> dict[str, Any]:
+    """Trigger an immediate outbox dispatch batch (DEC-301)."""
+    return dispatch_outbox_batch(db, batch_size=batch_size)
+
+
+# -----------------------------------------------------------------------------
+# Phase 6: Action Catalog and Remediation Proposals (DEC-308–DEC-312)
+# -----------------------------------------------------------------------------
+
+
+@app.get("/api/v1/actions/catalog", response_model=list[ActionCatalogItemRead])
+def list_action_catalog(
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> list[ActionCatalogItemRead]:
+    """List permitted non-executable remediation proposal types in catalog (DEC-308)."""
+    return [
+        ActionCatalogItemRead(
+            action_catalog_id=item.action_catalog_id,
+            name=item.name,
+            description=item.description,
+            applicable_environments=list(item.applicable_environments),
+            risk_classification=item.risk_classification,
+            required_role=item.required_role,
+            default_expiry_seconds=item.default_expiry_seconds,
+        )
+        for item in ACTION_CATALOG.values()
+    ]
+
+
+@app.post(
+    "/api/v1/actions/proposals",
+    response_model=ActionProposalRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_action_proposal(
+    payload: ActionProposalCreate,
+    request: Request,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> ActionProposalRead:
+    """Create a policy-governed immutable remediation proposal (DEC-308, DEC-309)."""
+    service = ProposalService(db, context)
+    client_ip = request.client.host if request.client else None
+    try:
+        proposal = service.create_proposal(payload, ip_address=client_ip)
+        return ActionProposalRead.model_validate(proposal)
+    except ProposalNotFoundError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err)) from err
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+
+
+@app.get("/api/v1/actions/proposals", response_model=ProposalListResponse)
+def list_action_proposals(
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    service_id: Annotated[uuid.UUID | None, Query()] = None,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> ProposalListResponse:
+    """List proposals for active organization with lazy expiry evaluation (DEC-311)."""
+    service = ProposalService(db, context)
+    items, total = service.list_proposals(
+        service_id=service_id,
+        status=status_filter,
+        limit=limit,
+        offset=offset,
+    )
+    return ProposalListResponse(
+        items=[ActionProposalRead.model_validate(p) for p in items],
+        total=total,
+    )
+
+
+@app.get("/api/v1/actions/proposals/{proposal_id}", response_model=ActionProposalRead)
+def get_action_proposal(
+    proposal_id: uuid.UUID,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> ActionProposalRead:
+    """Retrieve action proposal detail with tenant isolation (DEC-309)."""
+    service = ProposalService(db, context)
+    try:
+        proposal = service.get_proposal(proposal_id)
+        return ActionProposalRead.model_validate(proposal)
+    except ProposalNotFoundError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err)) from err
+
+
+@app.post("/api/v1/actions/proposals/{proposal_id}/approve", response_model=ActionProposalRead)
+def approve_action_proposal(
+    proposal_id: uuid.UUID,
+    payload: ProposalApprovalCreate,
+    request: Request,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> ActionProposalRead:
+    """Approve an exact immutable proposal payload (DEC-309, DEC-310).
+
+    Zero execution occurs in Phase 6 (DEC-312).
+    """
+    service = ProposalService(db, context)
+    client_ip = request.client.host if request.client else None
+    try:
+        approved = service.approve_proposal(proposal_id, payload, ip_address=client_ip)
+        return ActionProposalRead.model_validate(approved)
+    except ProposalNotFoundError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err)) from err
+    except ProposalPermissionDeniedError as err:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(err)) from err
+    except ProposalExpiredError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+    except ProposalHashMismatchError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+    except ProposalStateConflictError as err:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err)) from err
+
+
+@app.post("/api/v1/actions/proposals/{proposal_id}/reject", response_model=ActionProposalRead)
+def reject_action_proposal(
+    proposal_id: uuid.UUID,
+    payload: ProposalRejectCreate,
+    request: Request,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> ActionProposalRead:
+    """Reject a proposed action with reason comment (DEC-310)."""
+    service = ProposalService(db, context)
+    client_ip = request.client.host if request.client else None
+    try:
+        rejected = service.reject_proposal(proposal_id, payload, ip_address=client_ip)
+        return ActionProposalRead.model_validate(rejected)
+    except ProposalNotFoundError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err)) from err
+    except ProposalPermissionDeniedError as err:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(err)) from err
+    except ProposalStateConflictError as err:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err)) from err

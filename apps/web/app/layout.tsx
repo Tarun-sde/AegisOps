@@ -24,10 +24,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <Link href="/app">Workspace</Link>
             <Link href="/app/incidents">Incidents</Link>
             <Link href="/app/runbooks">Runbooks</Link>
+            <Link href="/app/proposals">Proposals</Link>
             <Link href="/onboarding">Onboarding</Link>
             <Link href="/login">Sign in</Link>
           </nav>
-          <span className="badge">Phase 5 · Hybrid RAG</span>
+          <span className="badge">Phase 6 · Outbox & Approvals</span>
         </header>
         {children}
         <footer>

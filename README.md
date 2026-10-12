@@ -4,11 +4,11 @@
 
 AegisOps detects application incidents using production-grade observability infrastructure (OpenTelemetry, Prometheus, Alertmanager, Loki), ingests authenticated alerts idempotently into a FastAPI/PostgreSQL control plane, presents an audit-ready Next.js incident feed, and investigates incidents through scoped, evidence-grounded **Google ADK** AI agents.
 
-> **Status:** **Phase 5 Verified.** Production-grade multi-tenant Retrieval-Augmented Generation (RAG) knowledge subsystem, pgvector HNSW vector indexing, hybrid search with Reciprocal Rank Fusion (RRF $k=60$), semantic heading-aware chunker, pre-ingestion secret redaction, dual embeddings (Google GenAI text-embedding-004 + offline hash double), auditable document lifecycle, related incidents retrieval, Google ADK evidence grounding, Next.js Runbook management UI (`/app/runbooks`), and 32-query benchmark (Recall@5 = 87.5% passing $\ge 80\%$ gate) are implemented and verified. Phase 6 (Multi-Agent Swarm) is unlocked and ready.
+> **Status:** **Phase 6 Verified.** PostgreSQL transactional outbox pattern, Celery outbox delivery worker with `FOR UPDATE SKIP LOCKED` leasing and jittered exponential backoff, HMAC-SHA256 signed event envelopes with 300s replay bounds, self-hosted n8n operator automation workflows (`incident-created`, `incident-investigated`, `approval-requested`, `incident-resolved`), human-governed remediation proposals with canonical SHA-256 parameter hashing, RBAC gating (`admin`/`owner` only), lazy and periodic expiry, Next.js Proposals & Deliveries UI (`/app/proposals`), and complete Phase 6 verification suite (20/20 unit/integration/security tests passing) are implemented and verified. Phase 7 (Remediation Execution & Staging Safety Sandbox) is unlocked and ready.
 
 ---
 
-## Architecture (Core Telemetry, Investigation & RAG Data Path)
+## Architecture (Core Telemetry, Investigation, Outbox & Remediation Proposals)
 
 ```
 Express/TypeScript (shop-api)
@@ -24,10 +24,10 @@ Express/TypeScript (shop-api)
     |                                              FastAPI Control Plane
     |                                                     |
     |                                                PostgreSQL 18 + pgvector
-    |                                                (Full-Text & HNSW Vector Index)
+    |                                                (Incidents, Outbox, Proposals)
     |                                                     |
     |                                              Next.js Dashboard
-    |                                              (/app/incidents, /app/runbooks)
+    |                                              (/app/incidents, /app/runbooks, /app/proposals)
     |
     |-- Structured JSON logs (with redaction)
               |
@@ -35,15 +35,26 @@ Express/TypeScript (shop-api)
               |
          Loki 3.4.2 (TSDB storage)
 
-Google ADK Agent (incident_investigator)
+Transactional Outbox Pipeline
     |
-    |-- ReadOnlyToolGateway (Strict Tenant Bounds & Budget Limits)
-          |-- retrieve_runbook() ---------> Hybrid RRF (k=60) pgvector Search
-          |-- get_related_incidents() ----> Historical Incident Correlation
-          |-- query_logs(), query_metrics(), get_trace()
-          |-- get_recent_deployments() ---> Read-Only GitHub Client
+    PostgreSQL outbox_events (Atomic with incident / proposal state changes)
     |
-    |-- Evidence Validator (Enforces Runtime Telemetry Grounding & Rejects Fake IDs)
+    Celery Outbox Dispatcher (FOR UPDATE SKIP LOCKED, lease timeout, exponential backoff)
+    |-- HMAC-SHA256 Signed Envelope (X-AegisOps-Signature, 300s replay window)
+          |
+    n8n Operator Workflows (Community 1.82.2, internal webhooks)
+          |
+    Notification Sink (Slack / Discord / Webhook Demo Sink)
+
+Remediation Governance (Zero-Execution Invariant in Phase 6)
+    |
+    ADK Investigation Result ---> Action Catalog Validation (Allowed IDs & Typed Schemas)
+                                  |
+                                  +--> Immutable Action Proposal (Canonical SHA-256 Hash)
+                                        |
+                                        +--> Authorized Human Review (Admin / Owner RBAC)
+                                              |-- Approve / Reject / Lazy Expiry
+                                              |-- Zero Execution in Phase 6 (execute_action raises NotImplementedError)
 ```
 
 ---
@@ -69,17 +80,22 @@ Verify service health:
 - Alertmanager UI: `http://localhost:9093`
 - Next.js Web Dashboard: `http://localhost:3000/app/incidents`
 - Runbooks Knowledge Base: `http://localhost:3000/app/runbooks`
+- Proposals & Outbox Deliveries: `http://localhost:3000/app/proposals`
 
-### 3. Run the Automated End-to-End Pipeline Verification
-Execute the 19-step automated system verification script:
+### 3. Run Automated End-to-End Pipeline Verifications
+Execute the Phase 1 automated system verification script:
 ```bash
 .tools/bin/uv run --frozen --all-groups python scripts/verify_phase1_e2e.py
-# (or if make is installed: make verify-e2e)
 ```
 
 Execute the Phase 5 RAG and Investigation E2E demonstration script:
 ```bash
 uv run --frozen --all-groups python scripts/verify_phase5_rag_e2e.py
+```
+
+Execute the Phase 6 Outbox, n8n, and Human Approval E2E verification script:
+```bash
+uv run --frozen --all-groups python scripts/verify_phase6_outbox_n8n_e2e.py
 ```
 
 ### 4. Running Tests
@@ -89,6 +105,9 @@ make check
 
 # Backend and unit tests (Python pytest & Node.js test runner)
 make test
+
+# Phase 6 Outbox and Proposals comprehensive test suite (20 tests)
+uv run --frozen --all-groups pytest -v apps/api/tests/test_phase6_outbox_and_proposals.py
 
 # Run RAG quantitative retrieval evaluation benchmark (32 queries across 5 runbooks)
 uv run --frozen --all-groups python evaluations/rag/evaluate.py
@@ -110,7 +129,7 @@ docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify
 - [`AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md`](AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md): Approved master architecture, phase gates, and roadmaps.
 - [`AGENTS.md`](AGENTS.md): Operational instructions and security rules for coding agents.
 - [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md): Current phase status, verified deliverables, and upcoming milestones.
-- [`docs/ENGINEERING_DECISIONS.md`](docs/ENGINEERING_DECISIONS.md): Granular decision log with 10-point interview-defensible explanations (`DEC-001` through `DEC-298`).
-- [`docs/ADR/`](docs/ADR/): Architecture Decision Records (`ADR-001` through `ADR-025`).
-- [`docs/PHASE_REPORTS/`](docs/PHASE_REPORTS/): Verification reports and empirical benchmark artifacts.
-- [`docs/PHASE_5_RAG_EVALUATION.md`](docs/PHASE_5_RAG_EVALUATION.md): RAG benchmark methodology, queries, and comparative scores.
+- [`docs/ENGINEERING_DECISIONS.md`](docs/ENGINEERING_DECISIONS.md): Granular decision log with 10-point interview-defensible explanations (`DEC-001` through `DEC-315`).
+- [`docs/ADR/`](docs/ADR/): Architecture Decision Records (`ADR-001` through `ADR-026`).
+- [`docs/PHASE_REPORTS/`](docs/PHASE_REPORTS/): Verification reports and empirical benchmark artifacts (Phases 0–6).
+- [`automations/n8n/README.md`](automations/n8n/README.md): n8n Community integration guide, webhook security, and operator workflows.

@@ -80,6 +80,9 @@
 | ADR-022 | ADK Investigation Worker | Real telemetry AI investigation MVP with Celery, ADK, and citation validation | ACCEPTED — VERIFIED | Yes |
 | ADR-023 | Phase 3 Auth & Tracing | Production auth, RBAC, multi-tenant query scoping, and Grafana Tempo distributed tracing | ACCEPTED — VERIFIED | Yes |
 | ADR-024 | Lifecycle, Correlation & GitHub | 6-state lifecycle machine, deterministic multi-alert correlation, and scoped read-only GitHub integration | ACCEPTED — VERIFIED | Yes |
+| ADR-025 | Production RAG & pgvector | Hybrid RAG with reciprocal rank fusion, pgvector, and citation verification | ACCEPTED — VERIFIED | Yes |
+| ADR-026 | Outbox, n8n & Proposals | Transactional outbox, signed delivery, n8n automations, and human-approved remediation proposals | ACCEPTED — DESIGN ONLY | No |
+
 
 ---
 
@@ -2295,3 +2298,227 @@ Do not write weekly summaries with fabricated project experiences.
 - Costs / failure modes: Nav items occupy multiple vertical lines on very narrow mobile viewports (<400px), which is standard and expected responsive behavior.
 - Evidence: Verified via Playwright `make browser` (4/4 tests passing including all viewports and routes) and `npm run build`.
 - Related ADR/DEC: ADR-025
+
+### DEC-300 — PostgreSQL transactional outbox pattern for atomic event publication
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package B (Transactional Outbox)
+- Scope: `apps/api/app/models.py`, `apps/api/app/outbox`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: Publishing events directly via HTTP in request handlers (dual-write hazard) or via Celery without persistent event state causes event loss on crashes or state inconsistencies during rollback.
+- Constraints: Strict atomicity with incident and lifecycle state in PostgreSQL; surviving worker crashes; bounded payload sizes (<=64KB).
+- Selected choice: `outbox_events` table in PostgreSQL committed in the exact same database transaction as incident and proposal state mutations.
+- Alternatives: Direct HTTP webhooks (rejected: dual-write vulnerability); Redis stream without DB persistence (rejected: broker restart can drop unpersisted events).
+- Why selected: ACID transactional guarantees eliminate dual-write inconsistency; zero extra message broker dependencies.
+- Costs / failure modes: Small database write amplification per state change.
+- Evidence: Unit and integration tests in `apps/api/tests/test_phase6_outbox_and_proposals.py`.
+- Related ADR/DEC: ADR-010, ADR-026
+
+### DEC-301 — Concurrency-safe delivery claiming with leasing and FOR UPDATE SKIP LOCKED
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package B (Reliable Dispatcher)
+- Scope: `apps/api/app/outbox/dispatcher.py`, `apps/worker/tasks.py`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: Multiple concurrent worker processes may attempt to dispatch the same pending outbox event simultaneously, causing duplicate outbound traffic.
+- Constraints: Non-blocking multi-worker polling; safe recovery if a worker crashes midway.
+- Selected choice: Claim pending events with `FOR UPDATE SKIP LOCKED` (PostgreSQL) and a 60-second `locked_until` lease. HTTP dispatch occurs outside the database transaction.
+- Alternatives: Distributed Redis locks (rejected: operational complexity, lease drift); global single-thread lock (rejected: serial bottleneck).
+- Why selected: Native database row-level locking avoids worker contention and never starves connection pools during slow HTTP network calls.
+- Costs / failure modes: Requires clock synchronization across worker hosts (UTC bounded).
+- Evidence: Concurrent worker claiming integration tests.
+- Related ADR/DEC: ADR-026
+
+### DEC-302 — Exponential backoff with jitter and dead-letter queueing
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package B (Reliability & Retries)
+- Scope: `apps/api/app/outbox/dispatcher.py`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: Webhook destinations can experience transient outages, rate limits (429), or 5xx errors; repeated immediate retries cause thundering herds.
+- Constraints: Bounded retry attempts (default 5); exponential backoff with random jitter; dead-lettering for permanent failures.
+- Selected choice: Compute `next_attempt_at = now + min(3600, base * 2^(attempt-1)) + jitter`. Transition to `DEAD_LETTERED` on attempt exhaustion or permanent HTTP 4xx (except 429).
+- Alternatives: Linear fixed backoff (rejected: thundering herds); infinite retries (rejected: queue clogging).
+- Why selected: Standard SRE backoff pattern protects receiver while ensuring transparent operator inspectability of dead-lettered events.
+- Costs / failure modes: High failure rates lead to backlog of retry-scheduled events.
+- Evidence: Unit tests for delay calculation and retry transitions.
+- Related ADR/DEC: ADR-026
+
+### DEC-303 — HMAC-SHA256 event signature envelope with replay skew limits
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package C (Signed Webhooks)
+- Scope: `apps/api/app/outbox/signer.py`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: Receiver webhooks must cryptographically verify that inbound payloads originate from AegisOps and have not been altered or replayed by attackers.
+- Constraints: Constant-time comparison to prevent timing side-channels; 300-second maximum clock skew; canonical payload representation.
+- Selected choice: Canonical signing string `f"{timestamp}.{event_id}.{sha256(payload)}"` signed with HMAC-SHA256, transmitted via `X-AegisOps-Signature`, `X-AegisOps-Timestamp`, and `X-AegisOps-Event-ID`.
+- Alternatives: Shared bearer token in header (rejected: no payload integrity or replay defense); mTLS (rejected: complex local certificate management for demo setups).
+- Why selected: Industry standard webhook security (similar to Stripe/GitHub) ensuring payload integrity, provenance, and replay protection.
+- Costs / failure modes: Requires shared secret configuration and clock synchronization.
+- Evidence: Unit tests for HMAC generation, verification, and clock-skew rejection.
+- Related ADR/DEC: ADR-026
+
+### DEC-304 — Durable receiver-side idempotency deduplication
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package C (Idempotency)
+- Scope: `apps/api/app/main.py` (demo-sink), `automations/n8n/workflows`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: In distributed systems with at-least-once delivery, network splits after receiver processing can cause retries, risking duplicate logical tickets or alerts.
+- Constraints: Idempotent processing of duplicate deliveries without creating duplicate downstream tickets.
+- Selected choice: Sinks record processed `event_id` / `idempotency_key`. Duplicate deliveries return HTTP 200 with status `duplicate_ignored` and do not increment ticket counters.
+- Alternatives: Relying on exactly-once delivery (rejected: impossible across network boundaries); ignoring duplicates (rejected: ticket spam).
+- Why selected: Fulfills mandatory exit gate: failed delivery retries without duplicate ticket creation.
+- Costs / failure modes: Requires maintaining an idempotency cache/table at the receiver.
+- Evidence: Integration test verifying retry delivery creates exactly 1 ticket.
+- Related ADR/DEC: ADR-026
+
+### DEC-305 — Self-hosted n8n Community in optional Docker Compose profile
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package A (n8n Deployment)
+- Scope: `docker-compose.yml`, `infra/n8n`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: AegisOps needs an integration orchestrator for notifications without requiring paid SaaS tools or starving developer machines of RAM.
+- Constraints: Pinned version (n8nio/n8n:1.82.2); max 384MB RAM; optional `automation` profile so core stack runs without n8n.
+- Selected choice: Pinned n8n Community instance in Compose `profiles: [automation]` with execution history pruning (168 hours) and internal port binding.
+- Alternatives: Running n8n in core profile always (rejected: high memory footprint on 8GB dev machines); building custom notification code for every provider (rejected: high maintenance).
+- Why selected: Provides robust webhook handling and third-party integrations while keeping dev environments lean.
+- Costs / failure modes: n8n requires volume persistence for encryption keys and workflows.
+- Evidence: Docker compose validation and container healthcheck.
+- Related ADR/DEC: ADR-010, ADR-026
+
+### DEC-306 — Strict Sustainable Use License compliance: zero customer-facing editor
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package A (Licensing Boundary)
+- Scope: `automations/n8n`, `docs/ARCHITECTURE.md`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: n8n Community is governed by the Sustainable Use License, which prohibits offering n8n as a commercial workflow-as-a-service or embedding the workflow editor for end customers without a commercial license.
+- Constraints: Complete license compliance for AegisOps v1 portfolio and future commercial viability.
+- Selected choice: n8n is strictly confined to internal, operator-authored automations. Zero customer-facing workflow editing, embedded iframe, or AI-generated workflow deployment is permitted.
+- Alternatives: Exposing an embedded n8n workflow editor in the frontend (rejected: violates license and introduces major security risks).
+- Why selected: Keeps AegisOps strictly within legal fair-code boundaries and protects architectural integrity.
+- Costs / failure modes: Operators must author workflows via versioned files or internal admin access.
+- Evidence: Architecture documentation and code audit.
+- Related ADR/DEC: ADR-010, ADR-026
+
+### DEC-307 — Version-controlled operator workflow definitions in automations/n8n/workflows/
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package D (Workflows)
+- Scope: `automations/n8n/workflows/`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: Unversioned workflows created solely inside an interactive web UI cannot be tested in CI, reviewed in Git, or deterministically reproduced across environments.
+- Constraints: Version-controlled, reproducible workflow exports for the 4 core incident lifecycle events.
+- Selected choice: Versioned workflow JSON definitions under `automations/n8n/workflows/` (`incident-created.json`, `incident-investigated.json`, `approval-requested.json`, `incident-resolved.json`).
+- Alternatives: UI-only creation (rejected: non-reproducible, untestable).
+- Why selected: Treats automation infrastructure as code, enabling peer review, testing, and automated deployment.
+- Costs / failure modes: Workflows must be imported or synchronized into running n8n instances.
+- Evidence: Validated workflow JSON schemas in repository.
+- Related ADR/DEC: ADR-026
+
+### DEC-308 — Non-executable remediation proposal catalog with typed JSON Schema parameter validation
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package E (Action Catalog)
+- Scope: `apps/api/app/actions/catalog.py`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: AI agents proposing remediation actions might suggest arbitrary shell scripts, malicious container commands, or invalid parameters.
+- Constraints: Strict allowlist of action IDs; typed parameter validation; environment boundaries (`staging`, `development`); non-executable in Phase 6.
+- Selected choice: Small, hardcoded `ACTION_CATALOG` (`restart_demo_service`, `rollback_demo_release`, `request_staging_rollback`) with typed Pydantic validation models. Execution is strictly disabled with `NotImplementedError`.
+- Alternatives: Dynamic shell command generation (rejected: extreme security risk); freeform parameter dicts (rejected: runtime parameter failures).
+- Why selected: Hard boundary ensuring zero arbitrary commands can ever enter the proposal system.
+- Costs / failure modes: New actions require developer-authored catalog definitions.
+- Evidence: Catalog parameter schema unit tests in `test_phase6_outbox_and_proposals.py`.
+- Related ADR/DEC: ADR-011, ADR-026
+
+### DEC-309 — Immutable proposal canonicalization with SHA-256 parameter hashing
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package E (Immutability & Integrity)
+- Scope: `apps/api/app/actions/service.py`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: If proposal parameters can be altered after creation or during approval review, an approved action might execute different parameters than what was reviewed.
+- Constraints: Cryptographic immutability; deterministic serialization independent of key ordering or whitespace.
+- Selected choice: Canonical serialization `json.dumps(params, sort_keys=True, separators=(",", ":"))` and SHA-256 hashing stored in `parameters_hash`. Approval requires exact hash verification.
+- Alternatives: Mutable parameters with database audit triggers (rejected: race conditions, complex rollback); unhashed JSON comparison (rejected: formatting discrepancies).
+- Why selected: Guarantees 100% parameter integrity between human review and future execution.
+- Costs / failure modes: Modifying parameters requires creating a new proposal and approval.
+- Evidence: Unit test verifying parameter tampering fails approval.
+- Related ADR/DEC: ADR-026
+
+### DEC-310 — RBAC-governed proposal approval state machine restricted to admin / owner roles
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package E (Human Governance & RBAC)
+- Scope: `apps/api/app/main.py`, `apps/api/app/actions`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: Unauthorized users (e.g. viewers or regular members) must never be permitted to approve remediation proposals.
+- Constraints: Server-side RBAC enforcement; tenant scoping; preventing double approval or state races.
+- Selected choice: Approval endpoints require `admin` or `owner` role via `require_role("admin")`. Row-level database locks ensure atomic state transition (`PROPOSED -> APPROVED`).
+- Alternatives: Frontend-only button hiding (rejected: trivial to bypass); allowing members to approve (rejected: violates least-privilege principle).
+- Why selected: Server-side cryptographic and role enforcement guarantees zero unauthorized approvals.
+- Costs / failure modes: Viewers and members receive 403 Forbidden on approval attempts.
+- Evidence: Security test verifying viewer and cross-tenant approval rejection.
+- Related ADR/DEC: ADR-023, ADR-026
+
+### DEC-311 — Backend lazy expiry and strict expiry check disallowing approval of stale proposals
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package E (Proposal Lifecycle)
+- Scope: `apps/api/app/actions`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: Operational context changes rapidly during incidents; approving a proposal hours after conditions have evolved can apply inappropriate remediations.
+- Constraints: Proposals must expire within a bounded window (default 30 minutes); approval of expired proposals must be strictly rejected.
+- Selected choice: `expires_at` timestamp checked on every read and mutation. If `now >= expires_at`, transition is rejected with `400 Bad Request` and status is marked `EXPIRED`.
+- Alternatives: Relying solely on a periodic cleanup cron (rejected: race conditions if cron lags).
+- Why selected: Guarantees correctness even if scheduled background cleanup tasks are delayed.
+- Costs / failure modes: Operators must re-propose actions if review window lapses.
+- Evidence: Unit test verifying approval of expired proposal fails closed.
+- Related ADR/DEC: ADR-026
+
+### DEC-312 — Absolute segregation of proposal management from execution in Phase 6
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package E (Safety Gate)
+- Scope: `apps/api/app/actions`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: Activating execution before fault simulation, canary verification, and staging controls are fully built (Phase 7) creates unacceptable risk.
+- Constraints: Zero execution engine in Phase 6; no shell, SSH, Docker, or Kubernetes execution paths exposed.
+- Selected choice: Phase 6 implements the complete proposal lifecycle (`PROPOSED -> APPROVED / REJECTED / EXPIRED`) with zero transition to `EXECUTING` and zero executor workers.
+- Alternatives: Building mock executor that prints shell commands (rejected: risks confusion or accidental production activation).
+- Why selected: Enforces strict phase gate discipline and prevents premature execution vulnerabilities.
+- Costs / failure modes: Action state stops at `APPROVED`.
+- Evidence: Codebase audit proving zero execution commands exist in Phase 6.
+- Related ADR/DEC: ADR-011, ADR-026
+
+### DEC-313 — End-to-end event bridging from committed incident and investigation runs to outbox
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package D (Incident Notifications)
+- Scope: `apps/api/app/main.py`, `agents/incident_investigator/investigator.py`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: External notification sinks need real-time lifecycle updates (`incident.created`, `investigation.completed`, `incident.resolved`, `proposal.created`) driven by actual backend events.
+- Constraints: Events must publish atomically with the triggering database transaction.
+- Selected choice: Integrated `create_outbox_event` inside `receive_alertmanager_webhook`, `execute_investigation`, and `transition_incident` before transaction commit.
+- Alternatives: Polling database tables for changes (rejected: high DB load, laggy); frontend-initiated events (rejected: unauthenticated, unreliable).
+- Why selected: Provides seamless, durable, automated event publishing triggered directly by verified backend transitions.
+- Costs / failure modes: State transitions write an additional outbox event row.
+- Evidence: E2E and integration tests verifying event row creation on incident and investigation completion.
+- Related ADR/DEC: ADR-026
+
+### DEC-314 — Next.js frontend proposal review and outbox delivery observability UI
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Frontend Integration
+- Scope: `apps/web/app/app/proposals/page.tsx`, `apps/web/app/layout.tsx`
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: Operators need visual visibility into pending remediation proposals, exact immutable parameters, hash verification, and outbox delivery status.
+- Constraints: Responsive layout; role-aware controls (approve/reject buttons disabled or hidden for viewers); zero execution controls.
+- Selected choice: Created `/app/proposals` route featuring proposal status badges, immutable parameter JSON viewers, cryptographic hash indicators, approve/reject modals with comment support, and outbox delivery log feed.
+- Alternatives: CLI-only review (rejected: poor operator ergonomics); embedding proposals directly into incidents without a dedicated review surface (rejected: cluttered UX).
+- Why selected: Empowers operators with clear, auditable governance over proposed remediations and notification delivery health.
+- Costs / failure modes: Frontend requires API connectivity to `/api/v1/actions/proposals`.
+- Evidence: Web lint, TypeScript typecheck, and Playwright verification.
+- Related ADR/DEC: ADR-026
+
+### DEC-315 — Demo notification destination receiver with signed verification and idempotency verification
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 6 Work Package C & Testing
+- Scope: `apps/api/app/main.py` (/api/v1/automations/demo-sink)
+- Status: ACCEPTED — DESIGN ONLY
+- Trigger / problem: Integration tests and local development cannot depend on paid external services (Slack/PagerDuty) to verify signature validation, retries, and idempotency.
+- Constraints: Verifiable offline testing; cryptographic signature enforcement; duplicate delivery deduplication.
+- Selected choice: Implemented authenticated `/api/v1/automations/demo-sink` endpoint that validates `X-AegisOps-Signature`, checks clock skew, tracks ticket IDs, and idempotently ignores duplicate events with HTTP 200 `duplicate_ignored`.
+- Alternatives: Mocking HTTP calls in python tests only (rejected: does not test actual network and wire contract); requiring external Slack webhook (rejected: breaks offline hermetic CI).
+- Why selected: Proves end-to-end webhook signing, delivery, retry recovery, and deduplication without third-party dependencies.
+- Costs / failure modes: Demo sink tickets are stored in memory/database for test inspection.
+- Evidence: Verified via `test_phase6_outbox_and_proposals.py` and `scripts/verify_phase6_outbox_n8n_e2e.py`.
+- Related ADR/DEC: ADR-026

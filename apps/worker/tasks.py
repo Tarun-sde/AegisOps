@@ -55,3 +55,19 @@ def ingest_document_task(self: Any, document_id_str: str) -> dict[str, Any]:
         raise
     finally:
         db.close()
+
+
+@celery_app.task(name="aegisops.dispatch_outbox_events", bind=True, max_retries=1)  # type: ignore[untyped-decorator]
+def dispatch_outbox_events_task(self: Any, batch_size: int = 20) -> dict[str, Any]:
+    """Celery background task for asynchronous outbox event claiming and dispatch."""
+    from apps.api.app.outbox.dispatcher import dispatch_outbox_batch
+
+    logger.info("Starting Celery outbox event dispatch task")
+    db = SessionLocal()
+    try:
+        return dispatch_outbox_batch(db, batch_size=batch_size)
+    except Exception as exc:
+        logger.exception(f"Unhandled error in outbox dispatch task: {exc}")
+        raise
+    finally:
+        db.close()
