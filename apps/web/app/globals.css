@@ -28,6 +28,12 @@ header {
   padding: 24px 6%;
   border-bottom: 1px solid #30383a;
 }
+header nav {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
 .brand {
   font-weight: 800;
   letter-spacing: 3px;

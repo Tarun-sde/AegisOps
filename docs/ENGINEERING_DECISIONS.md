@@ -2281,3 +2281,17 @@ Do not write weekly summaries with fabricated project experiences.
 - Costs / failure modes: Dataset must be maintained as new runbook domains are added.
 - Evidence: Full results documented in `docs/PHASE_5_RAG_EVALUATION.md`; runner `evaluations/rag/evaluate.py`.
 - Related ADR/DEC: ADR-025
+
+### DEC-299 — Responsive navigation bar flex-wrapping and document overflow prevention
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 5 Frontend Reliability & CI
+- Scope: `apps/web/app/globals.css`, `apps/web/app/layout.tsx`, `apps/web/tests/shell.spec.ts`
+- Status: VERIFIED
+- Trigger / problem: In CI, Playwright mobile responsive test (`375x812`) failed with `document.documentElement.scrollWidth <= window.innerWidth` returning false (scrollWidth 434px > 375px).
+- Constraints: Maintain all 5 navigation links (Workspace, Incidents, Runbooks, Onboarding, Sign in) and phase badge without horizontal scrolling or overflow on mobile devices.
+- Selected choice: Removed rigid inline `display: flex; gap: 20px` without wrap from `nav` in `layout.tsx`. Added `header nav { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; }` in `globals.css`. Added multi-viewport regression coverage in `tests/shell.spec.ts` testing 375, 768, 1280, 1440px viewports across all core routes.
+- Alternatives: Globally applying `overflow-x: hidden` rejected (anti-pattern that merely conceals broken layouts and traps scroll); removing navigation links on mobile rejected (harms usability); hardcoding mobile breakpoints in JavaScript rejected.
+- Why selected: Standard CSS flex-wrap layout pattern that naturally wraps navigation items on smaller screens, keeping document scrollWidth precisely within viewport width.
+- Costs / failure modes: Nav items occupy multiple vertical lines on very narrow mobile viewports (<400px), which is standard and expected responsive behavior.
+- Evidence: Verified via Playwright `make browser` (4/4 tests passing including all viewports and routes) and `npm run build`.
+- Related ADR/DEC: ADR-025

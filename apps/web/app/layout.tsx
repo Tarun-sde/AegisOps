@@ -20,10 +20,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <Link className="brand" href="/">
             AEGIS<span>OPS</span>
           </Link>
-          <nav
-            aria-label="Main navigation"
-            style={{ display: "flex", gap: "20px" }}
-          >
+          <nav aria-label="Main navigation">
             <Link href="/app">Workspace</Link>
             <Link href="/app/incidents">Incidents</Link>
             <Link href="/app/runbooks">Runbooks</Link>

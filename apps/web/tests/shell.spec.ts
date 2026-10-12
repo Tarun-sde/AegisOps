@@ -55,3 +55,37 @@ test("incident detail page displays AI investigation panel", async ({
     await expect(page.locator("#start-investigation-btn")).toBeVisible();
   }
 });
+
+test("responsive layout prevents horizontal document overflow across core routes", async ({
+  page,
+}) => {
+  const viewports = [
+    { width: 375, height: 812 },
+    { width: 768, height: 1024 },
+    { width: 1280, height: 800 },
+    { width: 1440, height: 900 },
+  ];
+
+  const routes = [
+    "/",
+    "/app",
+    "/app/incidents",
+    "/app/runbooks",
+    "/login",
+    "/onboarding",
+  ];
+
+  for (const vp of viewports) {
+    await page.setViewportSize(vp);
+    for (const route of routes) {
+      await page.goto(route);
+      const hasOverflow = await page.evaluate(
+        () => document.documentElement.scrollWidth > window.innerWidth,
+      );
+      expect(
+        hasOverflow,
+        `Document overflow on ${route} at ${vp.width}x${vp.height}`,
+      ).toBe(false);
+    }
+  }
+});
