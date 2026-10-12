@@ -1,11 +1,13 @@
 # Phase 6 Verification Report: Reliable n8n Automation, Transactional Outbox, and Human-Governed Remediation Proposals
 
 - **Date:** 2026-10-12
-- **Status:** IMPLEMENTED AND VERIFIED LOCALLY (20/20 Phase 6 tests passed; 139/139 full workspace tests passed; `make check` clean across Ruff, Mypy, ESLint, Prettier, TypeScript; E2E demonstration script fully verified)
+- **Status:** IMPLEMENTED AND VERIFIED (20/20 Phase 6 tests passed; 139/139 full workspace tests passed; `make check` clean across Ruff, Mypy, ESLint, Prettier, TypeScript; E2E demonstration script fully verified; GitHub Actions CI Run #38214564063 on commit `c07dca1` verified green)
 - **Governing ADR:** [ADR-026: Reliable Outbox Pattern, Internal n8n Automation, and Human-Governed Remediation Proposals](../ADR/ADR-026-phase6-outbox-n8n-remediation-proposals.md)
 - **Governing Decisions:** DEC-300 through DEC-315 in `docs/ENGINEERING_DECISIONS.md`
 - **Demonstration Script:** `scripts/verify_phase6_outbox_n8n_e2e.py`
 - **Docker Compose Profile:** `automation` (n8n Community `1.82.2`)
+- **Git Commit:** `c07dca13876e9ef504f24c3dfcf70fcf1982b6b5` (`c07dca1`)
+- **Hosted CI Status:** [GitHub Actions Run #38214564063](https://github.com/Tarun-sde/AegisOps/actions/runs/38214564063) — SUCCESS (`foundation` job green)
 
 ---
 
@@ -190,6 +192,17 @@ PHASE 6 END-TO-END VERIFICATION: ALL CHECKS PASSED SUCCESSFULLY (100%)
   - ESLint: clean across Next.js workspace.
   - Prettier: clean formatting across `apps/web`, `examples/shop-api`, and root files.
   - TypeScript: `tsc --noEmit` clean across all workspaces.
+
+### 4.2 Hosted Continuous Integration (GitHub Actions)
+- **Workflow:** `AegisOps CI`
+- **Run ID:** `38214564063`
+- **Run URL:** [https://github.com/Tarun-sde/AegisOps/actions/runs/38214564063](https://github.com/Tarun-sde/AegisOps/actions/runs/38214564063)
+- **Commit:** `c07dca13876e9ef504f24c3dfcf70fcf1982b6b5` (`c07dca1`)
+- **Trigger:** `push` on branch `main`
+- **Job Name:** `foundation`
+- **Status:** `completed`
+- **Conclusion:** `success`
+- **Verified Checks:** All automated linting, formatting, type checking, test suites, and Docker build assertions executed and passed on hosted GitHub runner.
 
 ---
 

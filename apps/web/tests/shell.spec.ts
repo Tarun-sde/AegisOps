@@ -71,6 +71,8 @@ test("responsive layout prevents horizontal document overflow across core routes
     "/app",
     "/app/incidents",
     "/app/runbooks",
+    "/app/proposals",
+    "/app/simulation-lab",
     "/login",
     "/onboarding",
   ];
@@ -88,4 +90,16 @@ test("responsive layout prevents horizontal document overflow across core routes
       ).toBe(false);
     }
   }
+});
+
+test("simulation lab renders catalog and environment controls", async ({
+  page,
+}) => {
+  await page.goto("/app/simulation-lab");
+  await expect(
+    page.getByRole("heading", { name: "Incident Simulation Lab & Remediation" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /Failure Scenario Catalog/i }),
+  ).toBeVisible();
 });

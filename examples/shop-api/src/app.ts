@@ -80,6 +80,12 @@ export const httpRequestDurationSeconds = new Histogram({
   registers: [registry],
 });
 
+export const dbPoolWaitingConnections = new Gauge({
+  name: "db_pool_waiting_connections",
+  help: "Number of connections waiting in pool queue",
+  registers: [registry],
+});
+
 // Deterministic product catalog
 export const PRODUCTS = [
   {
@@ -99,6 +105,12 @@ export const PRODUCTS = [
 
 // Fault state isolated to demo/test
 let faultCheckout500Active = process.env.FAULT_CHECKOUT_500 === "1";
+let faultSlowDbActive = false;
+let slowDbDelayMs = 800;
+let faultPoolExhaustActive = false;
+let faultServiceUnavailableActive = false;
+let faultSlowDownstreamActive = false;
+let slowDownstreamDelayMs = 1200;
 const DEMO_FAULT_SECRET =
   process.env.AEGISOPS_DEMO_FAULT_SECRET || "aegisops-demo-fault-secret";
 
@@ -108,6 +120,62 @@ export function setCheckoutFault(active: boolean): void {
 
 export function isCheckoutFaultActive(): boolean {
   return faultCheckout500Active || process.env.FAULT_CHECKOUT_500 === "1";
+}
+
+export function setSlowDbFault(active: boolean, delayMs = 800): void {
+  faultSlowDbActive = active;
+  slowDbDelayMs = delayMs;
+}
+
+export function isSlowDbFaultActive(): boolean {
+  return faultSlowDbActive;
+}
+
+export function setPoolExhaustFault(active: boolean): void {
+  faultPoolExhaustActive = active;
+  dbPoolWaitingConnections.set(active ? 12 : 0);
+}
+
+export function isPoolExhaustFaultActive(): boolean {
+  return faultPoolExhaustActive;
+}
+
+export function setServiceUnavailableFault(active: boolean): void {
+  faultServiceUnavailableActive = active;
+}
+
+export function isServiceUnavailableFaultActive(): boolean {
+  return faultServiceUnavailableActive;
+}
+
+export function setSlowDownstreamFault(active: boolean, delayMs = 1200): void {
+  faultSlowDownstreamActive = active;
+  slowDownstreamDelayMs = delayMs;
+}
+
+export function isSlowDownstreamFaultActive(): boolean {
+  return faultSlowDownstreamActive;
+}
+
+export function resetAllFaults(): void {
+  faultCheckout500Active = false;
+  faultSlowDbActive = false;
+  faultPoolExhaustActive = false;
+  faultServiceUnavailableActive = false;
+  faultSlowDownstreamActive = false;
+  dbPoolWaitingConnections.set(0);
+  simulateRelease("0.1.0", "a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4", false);
+}
+
+export function getActiveScenarios(): string[] {
+  const active: string[] = [];
+  if (isCheckoutFaultActive()) active.push("S01_CHECKOUT_500");
+  if (faultSlowDbActive) active.push("S02_SLOW_DB_QUERIES");
+  if (faultPoolExhaustActive) active.push("S03_DB_POOL_EXHAUSTION");
+  if (serviceVersion.includes("buggy")) active.push("S04_BROKEN_RELEASE");
+  if (faultServiceUnavailableActive) active.push("S05_SERVICE_UNAVAILABLE");
+  if (faultSlowDownstreamActive) active.push("S06_SLOW_DOWNSTREAM");
+  return active;
 }
 
 // Redaction of sensitive fields before logging/export
@@ -446,9 +514,20 @@ app.use((request: Request, response: Response, next: NextFunction) => {
 
 // A1: Health probe
 app.get("/healthz", (_request: Request, response: Response) => {
+  if (isServiceUnavailableFaultActive()) {
+    response.status(503).json({
+      status: "unavailable",
+      error: "Service degraded / health probe failed",
+      scenario: "S05_SERVICE_UNAVAILABLE",
+      fault_active: true,
+      ...getReleaseMetadata(),
+    });
+    return;
+  }
   response.json({
     status: "ok",
-    fault_active: isCheckoutFaultActive(),
+    fault_active: getActiveScenarios().length > 0,
+    active_scenarios: getActiveScenarios(),
     ...getReleaseMetadata(),
   });
 });
@@ -458,12 +537,66 @@ app.get("/version", (_request: Request, response: Response) => {
 });
 
 // A1: Product catalog
-app.get("/products", (_request: Request, response: Response) => {
+app.get("/products", async (_request: Request, response: Response) => {
+  if (isServiceUnavailableFaultActive()) {
+    response.status(503).json({ error: "Service unavailable", code: "SERVICE_UNAVAILABLE" });
+    return;
+  }
+  if (isPoolExhaustFaultActive()) {
+    response.locals.errorCategory = "RESOURCE_EXHAUSTION";
+    response.locals.errorCode = "DB_POOL_TIMEOUT";
+    response.locals.exceptionClass = "DatabasePoolExhaustedException";
+    response.status(503).json({
+      error:
+        "Database connection pool exhausted: timeout waiting for connection (pool_size=5, active=5, queued=12)",
+      code: "DB_POOL_TIMEOUT",
+      scenario: "S03_DB_POOL_EXHAUSTION",
+    });
+    return;
+  }
+  if (isSlowDbFaultActive()) {
+    await new Promise((resolve) => setTimeout(resolve, slowDbDelayMs));
+  }
   response.json({ products: PRODUCTS });
 });
 
-// A1 & A4: Checkout endpoint with deterministic S01_CHECKOUT_500 fault mode
-app.post("/checkout", (request: Request, response: Response) => {
+// S06 Downstream dependency endpoint
+app.get("/downstream/inventory", async (_request: Request, response: Response) => {
+  if (isSlowDownstreamFaultActive()) {
+    await new Promise((resolve) => setTimeout(resolve, slowDownstreamDelayMs));
+  }
+  response.json({
+    status: "ok",
+    service: "inventory-api",
+    items: PRODUCTS.map((p) => ({ id: p.id, stock: p.stock })),
+  });
+});
+
+// A1 & A4: Checkout endpoint with deterministic fault modes
+app.post("/checkout", async (request: Request, response: Response) => {
+  if (isServiceUnavailableFaultActive()) {
+    response.status(503).json({ error: "Service unavailable", code: "SERVICE_UNAVAILABLE" });
+    return;
+  }
+  if (isPoolExhaustFaultActive()) {
+    response.locals.errorCategory = "RESOURCE_EXHAUSTION";
+    response.locals.errorCode = "DB_POOL_TIMEOUT";
+    response.locals.exceptionClass = "DatabasePoolExhaustedException";
+    response.status(503).json({
+      error:
+        "Database connection pool exhausted: timeout waiting for connection (pool_size=5, active=5, queued=12)",
+      code: "DB_POOL_TIMEOUT",
+      scenario: "S03_DB_POOL_EXHAUSTION",
+    });
+    return;
+  }
+  if (isSlowDownstreamFaultActive()) {
+    await new Promise((resolve) => setTimeout(resolve, slowDownstreamDelayMs));
+  }
+  if (isSlowDbFaultActive()) {
+    await new Promise((resolve) => setTimeout(resolve, slowDbDelayMs));
+  }
+
   // Check fault mode
   if (isCheckoutFaultActive()) {
     response.locals.errorCategory = "APPLICATION_EXCEPTION";
@@ -524,8 +657,32 @@ app.post("/fault/inject", (request: Request, response: Response) => {
     response.status(401).json({ error: "Unauthorized fault control" });
     return;
   }
-  setCheckoutFault(true);
-  response.json({ fault_active: true, scenario: "S01_CHECKOUT_500" });
+  const scenario = request.body?.scenario || "S01_CHECKOUT_500";
+  if (scenario === "S01_CHECKOUT_500") {
+    setCheckoutFault(true);
+  } else if (scenario === "S02_SLOW_DB_QUERIES") {
+    setSlowDbFault(true, request.body?.delay_ms || 800);
+  } else if (scenario === "S03_DB_POOL_EXHAUSTION") {
+    setPoolExhaustFault(true);
+  } else if (scenario === "S04_BROKEN_RELEASE") {
+    const version = request.body?.version || "0.1.1-buggy";
+    const commitSha =
+      request.body?.commit_sha || "badf00d1234567890abcdef1234567890abcdef1";
+    simulateRelease(version, commitSha, true);
+  } else if (scenario === "S05_SERVICE_UNAVAILABLE") {
+    setServiceUnavailableFault(true);
+  } else if (scenario === "S06_SLOW_DOWNSTREAM") {
+    setSlowDownstreamFault(true, request.body?.delay_ms || 1200);
+  } else {
+    response.status(400).json({ error: `Unknown scenario: ${scenario}` });
+    return;
+  }
+  response.json({
+    fault_active: true,
+    scenario,
+    active_scenarios: getActiveScenarios(),
+    release: getReleaseMetadata(),
+  });
 });
 
 app.post("/fault/reset", (request: Request, response: Response) => {
@@ -540,8 +697,12 @@ app.post("/fault/reset", (request: Request, response: Response) => {
     response.status(401).json({ error: "Unauthorized fault control" });
     return;
   }
-  setCheckoutFault(false);
-  response.json({ fault_active: false });
+  resetAllFaults();
+  response.json({
+    fault_active: false,
+    active_scenarios: [],
+    release: getReleaseMetadata(),
+  });
 });
 
 // Phase 4: Controlled broken-release simulation endpoint
@@ -569,8 +730,11 @@ app.post("/fault/release", (request: Request, response: Response) => {
 });
 
 app.get("/fault/status", (_request: Request, response: Response) => {
+  const active = getActiveScenarios();
   response.json({
-    fault_active: isCheckoutFaultActive(),
-    scenario: isCheckoutFaultActive() ? "S01_CHECKOUT_500" : null,
+    fault_active: active.length > 0,
+    scenario: active[0] || null,
+    active_scenarios: active,
+    release: getReleaseMetadata(),
   });
 });

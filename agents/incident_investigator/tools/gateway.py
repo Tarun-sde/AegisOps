@@ -6,7 +6,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime
+import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from agents.incident_investigator.tools.redaction import redact_sensitive_text
@@ -704,3 +705,89 @@ class ReadOnlyToolGateway:
                 "incidents": [],
                 "limitation": "Historical incident repository query failed",
             }
+
+    def create_remediation_proposal(
+        self,
+        action_catalog_id: str,
+        parameters: dict[str, Any],
+        reason: str,
+        expected_outcome: str,
+        known_risks: str = "",
+        supporting_evidence_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Tool enabling ADK agent to propose an allowlisted remediation action (DEC-324).
+
+        Security invariant:
+        - Creates a proposal in PROPOSED state.
+        - ZERO execution capability exists in this tool.
+        """
+        self._check_budget()
+        start = time.perf_counter()
+
+        from apps.api.app.actions.catalog import get_catalog_item, validate_proposal_parameters
+        from apps.api.app.models import ActionProposal
+
+        # Validate catalog item
+        catalog_item = get_catalog_item(action_catalog_id)
+        if not catalog_item:
+            error_msg = f"Action '{action_catalog_id}' not allowed in catalog."
+            self._record_execution(
+                "create_remediation_proposal",
+                {"action_catalog_id": action_catalog_id},
+                "error",
+                0.0,
+                "VALIDATION_ERROR",
+            )
+            raise ValueError(error_msg)
+
+        # Validate parameters against Pydantic schema
+        canonical_params, param_hash = validate_proposal_parameters(action_catalog_id, parameters)
+
+        # Verify supporting evidence IDs exist in evidence ledger
+        valid_evidence_ids: list[str] = []
+        if supporting_evidence_ids:
+            for ev_id in supporting_evidence_ids:
+                if ev_id in self.evidence_ledger:
+                    valid_evidence_ids.append(ev_id)
+
+        proposal_id = uuid.uuid4()
+        if self.db_session and self.incident:
+            proposal = ActionProposal(
+                id=proposal_id,
+                organization_id=self.scope.organization_id,
+                service_id=self.scope.service_id,
+                environment="staging",
+                investigation_run_id=self.scope.run_id,
+                action_catalog_id=action_catalog_id,
+                immutable_parameters=canonical_params,
+                parameters_hash=param_hash,
+                reason=reason,
+                expected_outcome=expected_outcome,
+                known_risks=known_risks or "Standard bounded staging remediation operation",
+                supporting_evidence_ids=valid_evidence_ids,
+                status="PROPOSED",
+                idempotency_key=f"agent_proposal:{self.scope.run_id}:{action_catalog_id}",
+                expires_at=datetime.now(UTC)
+                + timedelta(seconds=catalog_item.default_expiry_seconds),
+            )
+            self.db_session.add(proposal)
+            self.db_session.flush()
+
+        latency_ms = (time.perf_counter() - start) * 1000.0
+        self._record_execution(
+            "create_remediation_proposal",
+            {"action_catalog_id": action_catalog_id, "parameters": canonical_params},
+            "success",
+            latency_ms,
+        )
+
+        return {
+            "proposal_id": str(proposal_id),
+            "status": "PROPOSED",
+            "action_catalog_id": action_catalog_id,
+            "parameters_hash": param_hash,
+            "message": (
+                "Remediation proposal submitted for human review. "
+                "It will NOT execute until authorized by an administrator."
+            ),
+        }

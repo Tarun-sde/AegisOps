@@ -71,3 +71,48 @@ def dispatch_outbox_events_task(self: Any, batch_size: int = 20) -> dict[str, An
         raise
     finally:
         db.close()
+
+
+@celery_app.task(name="aegisops.reconcile_simulation_expiry", bind=True, max_retries=1)  # type: ignore[untyped-decorator]
+def reconcile_simulation_expiry_task(self: Any) -> dict[str, Any]:
+    """Celery background watchdog task for reconciling expired simulation runs (DEC-318)."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from apps.api.app.auth import TenantContext
+    from apps.api.app.models import Organization, SimulationRun, User
+    from apps.api.app.simulation.service import SimulationService
+
+    logger.info("Starting Celery simulation watchdog cleanup task")
+    db = SessionLocal()
+    try:
+        now = datetime.now(UTC)
+        expired_runs = db.scalars(
+            select(SimulationRun).where(
+                SimulationRun.status == "ACTIVE",
+                SimulationRun.expires_at <= now,
+            )
+        ).all()
+        cleaned_count = 0
+        for run in expired_runs:
+            org = db.get(Organization, run.organization_id)
+            if org:
+                user = User(
+                    email="watchdog@system.local",
+                    hashed_password="",
+                    salt="",
+                    name="System Watchdog",
+                )
+                context = TenantContext(user=user, organization=org, role="owner")
+                service = SimulationService(db, context)
+                if service._check_and_apply_lazy_expiry(run):
+                    cleaned_count += 1
+        if cleaned_count > 0:
+            db.commit()
+        return {"cleaned_expired_runs": cleaned_count}
+    except Exception as exc:
+        logger.exception(f"Unhandled error in simulation watchdog cleanup task: {exc}")
+        raise
+    finally:
+        db.close()

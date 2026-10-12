@@ -1159,3 +1159,319 @@ export async function triggerOutboxDispatch(): Promise<{
     };
   }
 }
+
+// =========================================================================
+// PHASE 7: INCIDENT SIMULATION LAB & REMEDIATION EXECUTION
+// =========================================================================
+
+export interface SimulationScenario {
+  scenario_id: string;
+  name: string;
+  description: string;
+  affected_service: string;
+  allowed_environment: string;
+  fault_type: string;
+  expected_cause_category: string;
+  expected_signal_types: string[];
+  permitted_actions: string[];
+  maximum_duration_seconds: number;
+  risk_level: string;
+  enabled: boolean;
+}
+
+export interface SimulationRun {
+  id: string;
+  organization_id: string;
+  scenario_id: string;
+  service_id: string;
+  environment: string;
+  status: string;
+  scenario_version: string;
+  started_at: string;
+  expires_at: string;
+  ended_at?: string | null;
+  expected_cause: string;
+  initial_release?: string | null;
+  affected_release?: string | null;
+  related_incident_id?: string | null;
+  cleanup_status: string;
+  last_error?: string | null;
+  created_at: string;
+}
+
+export interface SimulationEvent {
+  id: string;
+  run_id: string;
+  event_type: string;
+  actor: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ActionExecution {
+  id: string;
+  proposal_id: string;
+  organization_id: string;
+  executor_id?: string | null;
+  action_catalog_id: string;
+  status: string;
+  parameters_hash: string;
+  idempotency_key: string;
+  target_service_id: string;
+  environment: string;
+  pre_execution_state: Record<string, unknown>;
+  post_execution_state: Record<string, unknown>;
+  verification_result: Record<string, unknown>;
+  error_message?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at: string;
+}
+
+export async function getSimulationScenarios(): Promise<{
+  data: SimulationScenario[] | null;
+  error: string | null;
+}> {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/simulation/scenarios`, {
+      cache: "no-store",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      return { data: null, error: `API error ${res.status}: ${res.statusText}` };
+    }
+    const data = (await res.json()) as SimulationScenario[];
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to load simulation scenarios",
+    };
+  }
+}
+
+export async function getSimulationRuns(statusFilter?: string): Promise<{
+  data: { items: SimulationRun[]; total: number } | null;
+  error: string | null;
+}> {
+  try {
+    const url = new URL(`${API_BASE}/api/v1/simulation/runs`);
+    if (statusFilter) {
+      url.searchParams.set("status", statusFilter);
+    }
+    const res = await fetch(url.toString(), {
+      cache: "no-store",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      return { data: null, error: `API error ${res.status}: ${res.statusText}` };
+    }
+    const data = (await res.json()) as { items: SimulationRun[]; total: number };
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to load simulation runs",
+    };
+  }
+}
+
+export async function getSimulationRunEvents(runId: string): Promise<{
+  data: SimulationEvent[] | null;
+  error: string | null;
+}> {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/simulation/runs/${runId}/events`, {
+      cache: "no-store",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      return { data: null, error: `API error ${res.status}: ${res.statusText}` };
+    }
+    const data = (await res.json()) as SimulationEvent[];
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to load run events",
+    };
+  }
+}
+
+export async function startSimulation(
+  scenarioId: string,
+  payload?: { service_id?: string; environment?: string }
+): Promise<{ data: SimulationRun | null; error: string | null }> {
+  try {
+    const csrf = getCsrfToken();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+    if (csrf) headers["x-csrf-token"] = csrf;
+
+    const res = await fetch(
+      `${API_BASE}/api/v1/simulation/scenarios/${scenarioId}/start`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers,
+        body: JSON.stringify(payload || {}),
+      }
+    );
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      return {
+        data: null,
+        error: errJson?.detail || `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as SimulationRun;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to start simulation scenario",
+    };
+  }
+}
+
+export async function resetSimulation(
+  runId: string,
+  reason?: string
+): Promise<{ data: SimulationRun | null; error: string | null }> {
+  try {
+    const csrf = getCsrfToken();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+    if (csrf) headers["x-csrf-token"] = csrf;
+
+    const res = await fetch(`${API_BASE}/api/v1/simulation/runs/${runId}/reset`, {
+      method: "POST",
+      credentials: "include",
+      headers,
+      body: JSON.stringify({ reason: reason || "Operator manual reset" }),
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      return {
+        data: null,
+        error: errJson?.detail || `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as SimulationRun;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to reset simulation run",
+    };
+  }
+}
+
+export async function verifySimulationRecovery(
+  runId: string
+): Promise<{ data: Record<string, unknown> | null; error: string | null }> {
+  try {
+    const csrf = getCsrfToken();
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+    };
+    if (csrf) headers["x-csrf-token"] = csrf;
+
+    const res = await fetch(
+      `${API_BASE}/api/v1/simulation/runs/${runId}/verify-recovery`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers,
+      }
+    );
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      return {
+        data: null,
+        error: errJson?.detail || `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as Record<string, unknown>;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to verify recovery",
+    };
+  }
+}
+
+export async function executeProposal(
+  proposalId: string,
+  idempotencyKey?: string
+): Promise<{ data: ActionExecution | null; error: string | null }> {
+  try {
+    const csrf = getCsrfToken();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+    if (csrf) headers["x-csrf-token"] = csrf;
+
+    const res = await fetch(
+      `${API_BASE}/api/v1/actions/proposals/${proposalId}/execute`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers,
+        body: JSON.stringify({ idempotency_key: idempotencyKey }),
+      }
+    );
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      return {
+        data: null,
+        error: errJson?.detail || `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as ActionExecution;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to execute proposal",
+    };
+  }
+}
+
+export async function getProposalExecution(
+  proposalId: string
+): Promise<{ data: ActionExecution | null; error: string | null }> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/v1/actions/proposals/${proposalId}/execution`,
+      {
+        cache: "no-store",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      }
+    );
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      return {
+        data: null,
+        error: errJson?.detail || `API error ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = (await res.json()) as ActionExecution;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to load execution status",
+    };
+  }
+}

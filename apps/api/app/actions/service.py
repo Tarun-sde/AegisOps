@@ -11,11 +11,14 @@ from sqlalchemy.orm import Session, selectinload
 
 from apps.api.app.actions.catalog import (
     ACTION_CATALOG,
+    compute_parameters_hash,
     get_catalog_item,
     validate_proposal_parameters,
 )
+from apps.api.app.actions.executor import RemediationExecutor
 from apps.api.app.auth import TenantContext, log_audit_event
 from apps.api.app.models import (
+    ActionExecution,
     ActionProposal,
     InvestigationRun,
     ProposalApproval,
@@ -426,3 +429,195 @@ class ProposalService:
         self.db.commit()
         self.db.refresh(proposal)
         return proposal
+
+    def execute_proposal(
+        self,
+        proposal_id: uuid.UUID,
+        idempotency_key: str | None = None,
+        ip_address: str | None = None,
+    ) -> ActionExecution:
+        """Atomically claim and execute an approved remediation action (DEC-320, DEC-321)."""
+        # 1. RBAC check: role >= admin required (DEC-328, DEC-329)
+        if not self.context.can("admin"):
+            raise ProposalPermissionDeniedError(
+                f"Role '{self.context.role}' cannot execute remediation actions "
+                "(requires admin or owner)."
+            )
+
+        # 2. Concurrency-safe proposal retrieval with row-level locking
+        query = (
+            select(ActionProposal)
+            .options(selectinload(ActionProposal.approval), selectinload(ActionProposal.service))
+            .where(
+                ActionProposal.id == proposal_id,
+                ActionProposal.organization_id == self.context.organization.id,
+            )
+        )
+        if self.db.bind and self.db.bind.dialect.name == "postgresql":
+            query = query.with_for_update()
+
+        proposal = self.db.scalar(query)
+        if not proposal:
+            raise ProposalNotFoundError(f"Proposal {proposal_id} not found in active organization")
+
+        # 3. Lazy expiry check (DEC-311)
+        if self._check_lazy_expiry(proposal):
+            self.db.commit()
+            raise ProposalExpiredError(f"Proposal {proposal_id} has expired.")
+
+        # 4. State validation: Must be APPROVED
+        if proposal.status != "APPROVED":
+            # Idempotency check: if already EXECUTING or SUCCEEDED, return existing execution
+            if proposal.status in ("EXECUTING", "SUCCEEDED", "FAILED"):
+                existing = self.db.scalar(
+                    select(ActionExecution).where(ActionExecution.proposal_id == proposal.id)
+                )
+                if existing:
+                    return existing
+            raise ProposalStateConflictError(
+                f"Proposal is in state '{proposal.status}' (requires APPROVED to execute)."
+            )
+
+        # 5. Environment check: Staging or development only (Rule 1, DEC-322)
+        if proposal.environment == "production":
+            raise ValueError(
+                "Remediation execution against production targets is strictly forbidden."
+            )
+        if proposal.environment not in ("staging", "development"):
+            raise ValueError(
+                f"Environment '{proposal.environment}' is not permitted for remediation execution."
+            )
+
+        # 6. Payload integrity & cryptographic hash verification (DEC-321)
+        recomputed_hash = compute_parameters_hash(proposal.immutable_parameters)
+        if recomputed_hash != proposal.parameters_hash:
+            raise ProposalHashMismatchError(
+                "Parameters hash tampering detected! Execution aborted."
+            )
+        if not proposal.approval or proposal.approval.parameters_hash != proposal.parameters_hash:
+            raise ProposalHashMismatchError("Approval parameters hash mismatch! Execution aborted.")
+
+        # 7. Idempotency key & unique execution check (DEC-320, DEC-326)
+        effective_idempotency_key = idempotency_key or f"exec:{proposal.id}"
+        existing_exec = self.db.scalar(
+            select(ActionExecution).where(ActionExecution.proposal_id == proposal.id)
+        )
+        if existing_exec:
+            return existing_exec
+
+        # 8. Two-phase claiming: atomically transition proposal to EXECUTING
+        # and insert ActionExecution
+        proposal.status = "EXECUTING"
+        execution = ActionExecution(
+            proposal_id=proposal.id,
+            organization_id=self.context.organization.id,
+            executor_id=self.context.user.id,
+            action_catalog_id=proposal.action_catalog_id,
+            status="CLAIMED",
+            parameters_hash=proposal.parameters_hash,
+            idempotency_key=effective_idempotency_key,
+            target_service_id=proposal.service_id,
+            environment=proposal.environment,
+            pre_execution_state={
+                "proposal_id": str(proposal.id),
+                "service_id": str(proposal.service_id),
+                "action_catalog_id": proposal.action_catalog_id,
+                "parameters": proposal.immutable_parameters,
+            },
+        )
+        self.db.add(execution)
+        # Commit claim phase to release DB row lock before network execution
+        self.db.commit()
+        self.db.refresh(execution)
+
+        # 9. Dispatch to sandboxed executor
+        executor = RemediationExecutor()
+        try:
+            post_state, verification = executor.execute(proposal, proposal.service)
+            execution.status = "SUCCEEDED"
+            execution.post_execution_state = post_state
+            execution.verification_result = verification
+            execution.finished_at = datetime.now(UTC)
+            proposal.status = "SUCCEEDED"
+
+            create_outbox_event(
+                self.db,
+                organization_id=self.context.organization.id,
+                aggregate_type="action_execution",
+                aggregate_id=str(execution.id),
+                event_type="action.execution_succeeded",
+                payload={
+                    "execution_id": str(execution.id),
+                    "proposal_id": str(proposal.id),
+                    "service_id": str(proposal.service_id),
+                    "action_catalog_id": proposal.action_catalog_id,
+                    "status": "SUCCEEDED",
+                    "verification": verification,
+                },
+                idempotency_key=f"outbox:execution_succeeded:{execution.id}",
+            )
+
+            log_audit_event(
+                self.db,
+                organization_id=self.context.organization.id,
+                actor_id=self.context.user.id,
+                resource_type="action_execution",
+                resource_id=str(execution.id),
+                action="action_execution_succeeded",
+                result="success",
+                metadata={"proposal_id": str(proposal.id)},
+                ip_address=ip_address,
+            )
+        except Exception as err:
+            logger.exception(f"Execution dispatch failed for proposal {proposal.id}: {err}")
+            execution.status = "FAILED"
+            execution.error_message = str(err)
+            execution.finished_at = datetime.now(UTC)
+            proposal.status = "FAILED"
+
+            create_outbox_event(
+                self.db,
+                organization_id=self.context.organization.id,
+                aggregate_type="action_execution",
+                aggregate_id=str(execution.id),
+                event_type="action.execution_failed",
+                payload={
+                    "execution_id": str(execution.id),
+                    "proposal_id": str(proposal.id),
+                    "service_id": str(proposal.service_id),
+                    "action_catalog_id": proposal.action_catalog_id,
+                    "status": "FAILED",
+                    "error": str(err),
+                },
+                idempotency_key=f"outbox:execution_failed:{execution.id}",
+            )
+
+            log_audit_event(
+                self.db,
+                organization_id=self.context.organization.id,
+                actor_id=self.context.user.id,
+                resource_type="action_execution",
+                resource_id=str(execution.id),
+                action="action_execution_failed",
+                result="failure",
+                metadata={"error": str(err)},
+                ip_address=ip_address,
+            )
+
+        self.db.commit()
+        self.db.refresh(execution)
+        return execution
+
+    def get_execution(self, proposal_id: uuid.UUID) -> ActionExecution:
+        """Retrieve execution record for an approved/executed proposal."""
+        execution = self.db.scalar(
+            select(ActionExecution).where(
+                ActionExecution.proposal_id == proposal_id,
+                ActionExecution.organization_id == self.context.organization.id,
+            )
+        )
+        if not execution:
+            raise ProposalNotFoundError(
+                f"Execution for proposal {proposal_id} not found in active organization"
+            )
+        return execution

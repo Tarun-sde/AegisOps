@@ -157,6 +157,72 @@ test("shop-api comprehensive test suite", async () => {
       },
     });
 
+    // 11b. Test S02_SLOW_DB_QUERIES
+    await fetch(`${base}/fault/inject`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-demo-fault-secret": "aegisops-demo-fault-secret",
+      },
+      body: JSON.stringify({ scenario: "S02_SLOW_DB_QUERIES", delay_ms: 10 }),
+    });
+    const s02Status = await (await fetch(`${base}/fault/status`)).json();
+    assert.ok(s02Status.active_scenarios.includes("S02_SLOW_DB_QUERIES"));
+    await fetch(`${base}/fault/reset`, {
+      method: "POST",
+      headers: { "x-demo-fault-secret": "aegisops-demo-fault-secret" },
+    });
+
+    // 11c. Test S03_DB_POOL_EXHAUSTION
+    await fetch(`${base}/fault/inject`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-demo-fault-secret": "aegisops-demo-fault-secret",
+      },
+      body: JSON.stringify({ scenario: "S03_DB_POOL_EXHAUSTION" }),
+    });
+    const poolRes = await fetch(`${base}/products`);
+    assert.equal(poolRes.status, 503);
+    const poolJson = await poolRes.json();
+    assert.equal(poolJson.code, "DB_POOL_TIMEOUT");
+    await fetch(`${base}/fault/reset`, {
+      method: "POST",
+      headers: { "x-demo-fault-secret": "aegisops-demo-fault-secret" },
+    });
+
+    // 11d. Test S05_SERVICE_UNAVAILABLE
+    await fetch(`${base}/fault/inject`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-demo-fault-secret": "aegisops-demo-fault-secret",
+      },
+      body: JSON.stringify({ scenario: "S05_SERVICE_UNAVAILABLE" }),
+    });
+    const healthUnavailable = await fetch(`${base}/healthz`);
+    assert.equal(healthUnavailable.status, 503);
+    await fetch(`${base}/fault/reset`, {
+      method: "POST",
+      headers: { "x-demo-fault-secret": "aegisops-demo-fault-secret" },
+    });
+
+    // 11e. Test S06_SLOW_DOWNSTREAM
+    await fetch(`${base}/fault/inject`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-demo-fault-secret": "aegisops-demo-fault-secret",
+      },
+      body: JSON.stringify({ scenario: "S06_SLOW_DOWNSTREAM", delay_ms: 10 }),
+    });
+    const downstreamRes = await fetch(`${base}/downstream/inventory`);
+    assert.equal(downstreamRes.status, 200);
+    await fetch(`${base}/fault/reset`, {
+      method: "POST",
+      headers: { "x-demo-fault-secret": "aegisops-demo-fault-secret" },
+    });
+
     // 12. Redaction helper
     const sensitiveObj = {
       user: "alice",

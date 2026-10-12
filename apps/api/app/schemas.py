@@ -730,3 +730,95 @@ class DemoSinkResponse(BaseModel):
     event_id: str
     ticket_id: str | None = None
     message: str
+
+
+# Phase 7: Simulation Lab & Action Execution Schemas
+
+
+class SimulationScenarioOut(BaseModel):
+    scenario_id: str
+    name: str
+    description: str
+    affected_service: str
+    allowed_environment: str
+    fault_type: str
+    expected_cause_category: str
+    expected_signal_types: list[str]
+    permitted_actions: list[str]
+    maximum_duration_seconds: int
+    risk_level: str
+    enabled: bool = True
+
+
+class SimulationStartRequest(BaseModel):
+    service_id: UUID | None = None
+    environment: Literal["staging", "development"] = "staging"
+    seed: str | None = None
+
+
+class SimulationResetRequest(BaseModel):
+    reason: str | None = None
+
+
+class SimulationEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    run_id: UUID
+    event_type: str
+    actor: str
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+class SimulationRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    scenario_id: str
+    service_id: UUID
+    environment: str
+    status: str
+    scenario_version: str
+    started_at: datetime
+    expires_at: datetime
+    ended_at: datetime | None = None
+    expected_cause: str
+    initial_release: str | None = None
+    affected_release: str | None = None
+    related_incident_id: UUID | None = None
+    cleanup_status: str
+    last_error: str | None = None
+    created_at: datetime
+
+
+class SimulationRunListResponse(BaseModel):
+    items: list[SimulationRunOut]
+    total: int
+
+
+class ActionExecutionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    proposal_id: UUID
+    organization_id: UUID
+    executor_id: UUID | None = None
+    action_catalog_id: str
+    status: str
+    parameters_hash: str
+    idempotency_key: str
+    target_service_id: UUID
+    environment: str
+    pre_execution_state: dict[str, Any]
+    post_execution_state: dict[str, Any]
+    verification_result: dict[str, Any]
+    error_message: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+    created_at: datetime
+
+
+class ActionExecuteRequest(BaseModel):
+    idempotency_key: str | None = None

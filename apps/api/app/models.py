@@ -107,6 +107,12 @@ class Organization(Base):
     action_proposals: Mapped[list[ActionProposal]] = relationship(
         "ActionProposal", back_populates="organization", cascade="all, delete-orphan"
     )
+    simulation_runs: Mapped[list[SimulationRun]] = relationship(
+        "SimulationRun", back_populates="organization", cascade="all, delete-orphan"
+    )
+    action_executions: Mapped[list[ActionExecution]] = relationship(
+        "ActionExecution", back_populates="organization", cascade="all, delete-orphan"
+    )
 
 
 class Service(Base):
@@ -389,6 +395,9 @@ class ActionProposal(Base):
     approval: Mapped[ProposalApproval | None] = relationship(
         "ProposalApproval", back_populates="proposal", uselist=False, cascade="all, delete-orphan"
     )
+    execution: Mapped[ActionExecution | None] = relationship(
+        "ActionExecution", back_populates="proposal", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class ProposalApproval(Base):
@@ -412,3 +421,122 @@ class ProposalApproval(Base):
     proposal: Mapped[ActionProposal] = relationship("ActionProposal", back_populates="approval")
     approver: Mapped[User | None] = relationship("User")
     organization: Mapped[Organization] = relationship("Organization")
+
+
+# Phase 7: Incident Simulation Lab & Sandboxed Remediation Execution
+
+
+class SimulationRun(Base):
+    __tablename__ = "simulation_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    scenario_id: Mapped[str] = mapped_column(String(64), index=True)
+    service_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("services.id", ondelete="CASCADE"), index=True
+    )
+    environment: Mapped[str] = mapped_column(String(32), default="staging")
+    status: Mapped[str] = mapped_column(String(32), default="ACTIVE", index=True)
+    # ACTIVE | COMPLETED | EXPIRED | FAILED | CANCELLED
+    scenario_version: Mapped[str] = mapped_column(String(32), default="1.0.0")
+    seed: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    started_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expected_cause: Mapped[str] = mapped_column(String(255))
+    initial_release: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    affected_release: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fault_configuration: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    related_incident_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("incidents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    cleanup_status: Mapped[str] = mapped_column(String(32), default="PENDING", index=True)
+    # PENDING | CLEANED | FAILED
+    last_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    organization: Mapped[Organization] = relationship(
+        "Organization", back_populates="simulation_runs"
+    )
+    service: Mapped[Service] = relationship("Service")
+    started_by: Mapped[User | None] = relationship("User")
+    events: Mapped[list[SimulationEvent]] = relationship(
+        "SimulationEvent",
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="SimulationEvent.created_at",
+    )
+
+
+class SimulationEvent(Base):
+    __tablename__ = "simulation_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("simulation_runs.id", ondelete="CASCADE"), index=True
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    # simulation.started | simulation.fault_activated | simulation.reset
+    # simulation.expired | service.recovery_observed
+    actor: Mapped[str] = mapped_column(String(128))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    run: Mapped[SimulationRun] = relationship("SimulationRun", back_populates="events")
+
+
+class ActionExecution(Base):
+    __tablename__ = "action_executions"
+    __table_args__ = (
+        UniqueConstraint("proposal_id", name="uq_execution_proposal_id"),
+        UniqueConstraint("organization_id", "idempotency_key", name="uq_execution_org_idempotency"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("action_proposals.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    executor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    action_catalog_id: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="CLAIMED", index=True)
+    # CLAIMED | EXECUTING | SUCCEEDED | FAILED
+    parameters_hash: Mapped[str] = mapped_column(String(64))
+    idempotency_key: Mapped[str] = mapped_column(String(128), index=True)
+    target_service_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("services.id", ondelete="CASCADE"), index=True
+    )
+    environment: Mapped[str] = mapped_column(String(32), default="staging")
+    pre_execution_state: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    post_execution_state: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    verification_result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    retry_count: Mapped[int] = mapped_column(default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    organization: Mapped[Organization] = relationship(
+        "Organization", back_populates="action_executions"
+    )
+    proposal: Mapped[ActionProposal] = relationship("ActionProposal", back_populates="execution")
+    executor: Mapped[User | None] = relationship("User")
+    target_service: Mapped[Service] = relationship("Service")

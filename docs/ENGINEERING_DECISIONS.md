@@ -2522,3 +2522,214 @@ Do not write weekly summaries with fabricated project experiences.
 - Costs / failure modes: Demo sink tickets are stored in memory/database for test inspection.
 - Evidence: Verified via `test_phase6_outbox_and_proposals.py` and `scripts/verify_phase6_outbox_n8n_e2e.py`.
 - Related ADR/DEC: ADR-026
+
+### DEC-316 — Predefined 6-Scenario Simulation Catalog with Version-Controlled Code Manifests
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream A (Simulation Domain Design)
+- Scope: `apps/api/app/simulation/scenarios.py`
+- Status: VERIFIED
+- Trigger / problem: Failure injection requires consistent, reproducible failure scenarios with deterministic ground truth for evaluation. Unrestricted shell or chaos tools present grave security risks.
+- Constraints: Must support S01 to S06; must prevent arbitrary commands or unbounded chaos.
+- Selected choice: Defined immutable `SCENARIO_CATALOG` in version-controlled Python code with typed dataclass metadata (`ScenarioItem`): scenario ID, target service, environment, expected cause category, expected telemetry signals, permitted actions, and max duration.
+- Alternatives: Storing scenario scripts in database tables (rejected: SQL injection and tampering risk); unrestricted chaos monkey scripts (rejected: unsafe and non-deterministic).
+- Why selected: Guaranteed immutability, type safety, and zero execution attack surface.
+- Costs / failure modes: Adding new scenarios requires code deployment.
+- Evidence: Scenarios validated via `test_phase7_simulation_and_remediation.py`.
+- Related ADR/DEC: ADR-027
+
+### DEC-317 — Database-Enforced Single Active Simulation per Service Constraint
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream A & C (Simulation Concurrency)
+- Scope: `apps/api/app/models.py`, `apps/api/app/simulation/service.py`
+- Status: VERIFIED
+- Trigger / problem: Running overlapping, conflicting failure scenarios on the same demo service produces ambiguous telemetry, confusing root-cause analysis, and corrupted evaluation baselines.
+- Constraints: Must prevent concurrent active simulations on the same service per tenant.
+- Selected choice: Service checks existing runs in `ACTIVE` state with row-level locking, and transactional state validation rejecting second activation with `409 Conflict`.
+- Alternatives: Process-local mutex (rejected: does not protect across multiple API server workers); allowing overlapping faults (rejected: invalidates single-cause evaluation).
+- Why selected: Guarantees hermetic isolation and clean causal attribution for AI investigations.
+- Costs / failure modes: Operators must reset or wait for expiry of current run before starting another.
+- Evidence: Concurrency tests verifying 409 Conflict on simultaneous starts.
+- Related ADR/DEC: ADR-027
+
+### DEC-318 — Watchdog Lease & On-Access Lazy Expiry for Automatic Simulation Fault Cleanup
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream C (Fault Lifecycle & Cleanup)
+- Scope: `apps/api/app/simulation/service.py`, `apps/worker/tasks.py`
+- Status: VERIFIED
+- Trigger / problem: Human operators or automated tests frequently abandon active fault simulations, leaving monitored services permanently degraded.
+- Constraints: All simulations must have bounded TTL (default 300s); cleanup must survive worker and API restarts.
+- Selected choice: Dual cleanup mechanism: (1) lazy on-access reconciliation on any read/list/get API call, and (2) background Celery watchdog reconciliation scanning for `expires_at <= now()`. Both automatically trigger fault reset on `shop-api` and transition run status to `EXPIRED` (`cleanup_status="CLEANED"`).
+- Alternatives: Celery countdown timer only (rejected: lost if Redis/Celery restarts); manual human reset only (rejected: causes persistent broken environments).
+- Why selected: Self-healing architecture guaranteeing zero orphaned faults even across catastrophic worker restarts.
+- Costs / failure modes: Active runs terminate strictly at `expires_at` unless extended.
+- Evidence: Automated test verifying expired runs trigger fault reset and state transition to EXPIRED.
+- Related ADR/DEC: ADR-027
+
+### DEC-319 — Isolated Demo Fault Modes S01–S06 in Sample Service with Deterministic Secret Protection
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream B (Six Real Failure Scenarios)
+- Scope: `examples/shop-api/src/app.ts`
+- Status: VERIFIED
+- Trigger / problem: Need actual, observable telemetry changes for S01 (HTTP 500), S02 (slow DB query), S03 (connection pool exhaustion), S04 (broken release), S05 (service unavailable), and S06 (slow downstream dependency) without root host privileges.
+- Constraints: Must run inside Docker/Node.js without host Docker socket; must produce real metrics, logs, and traces.
+- Selected choice: Implemented in-process fault handlers in `shop-api` toggled via `/fault/inject` and `/fault/reset` using shared secret header `x-demo-fault-secret`. Each fault generates genuine Prometheus metrics (`http_requests_total`, `httpRequestDurationSeconds`, `shopApiBuildInfo`), Loki structured error logs, and W3C trace spans.
+- Alternatives: Host Docker stop/kill commands (rejected: requires privileged Docker socket); synthetic mocked telemetry without real HTTP requests (rejected: violates master plan Rule 4).
+- Why selected: Genuine, observable distributed systems behavior with zero host privilege escalation risk.
+- Costs / failure modes: Faults are confined to the instrumented demo service.
+- Evidence: Express unit tests in `shop_api.test.mjs` verifying all 6 fault modes.
+- Related ADR/DEC: ADR-027
+
+### DEC-320 — Two-Phase Remediation Execution Claiming with Row-Level Locking and Proposal Unique Constraint
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream E (Atomic Execution and Idempotency)
+- Scope: `apps/api/app/actions/service.py`, `apps/api/app/models.py`
+- Status: VERIFIED
+- Trigger / problem: Concurrent execution requests or duplicate worker job deliveries could execute a remediation action multiple times, causing race conditions and inconsistent infrastructure state.
+- Constraints: Exactly-once database claiming; prevent duplicate execution side effects.
+- Selected choice: Implemented two-phase atomic claiming: Phase 1 loads proposal with `FOR UPDATE`, asserts status is `APPROVED` and not expired, sets status to `EXECUTING`, inserts `action_executions` record (with `UniqueConstraint("proposal_id")`), and commits immediately. Phase 2 dispatches execution. Concurrent requests fail on status check or unique constraint.
+- Alternatives: Holding database transaction open during external HTTP execution (rejected: database connection starvation under latency); optimistic locking without claiming table (rejected: vulnerable to duplicate external dispatch).
+- Why selected: Decouples short DB locking from external network latency while mathematically guaranteeing single execution claim.
+- Costs / failure modes: Requires two database transactions per execution lifecycle.
+- Evidence: Concurrent execution race-condition test verifying second request is rejected.
+- Related ADR/DEC: ADR-027
+
+### DEC-321 — Immutable Payload Hash Re-Validation and Target State Check at Execution Time
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream D & E (Approval Integrity)
+- Scope: `apps/api/app/actions/service.py`
+- Status: VERIFIED
+- Trigger / problem: Parameters could be tampered with between approval time and execution time, or target service environment could change.
+- Constraints: Revalidate all security invariants at execution time, not just proposal creation.
+- Selected choice: Execution engine computes canonical SHA-256 hash of immutable parameters immediately before claiming and verifies it matches `proposal.parameters_hash` and `approval.parameters_hash`. Also asserts target environment is strictly allowlisted (`staging`, `development`).
+- Alternatives: Trusting approval status flag alone (rejected: vulnerable to direct database tampering or API race).
+- Why selected: Defense-in-depth cryptographic integrity check preventing tampered action payloads.
+- Costs / failure modes: Parameter mismatch aborts execution with 400 Bad Request.
+- Evidence: Security test verifying tampered payload hash is rejected at execution.
+- Related ADR/DEC: ADR-027
+
+### DEC-322 — Staging-Only Action Execution Engine with Narrow Allowlist
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream F (Controlled Action Executors)
+- Scope: `apps/api/app/actions/executor.py`
+- Status: VERIFIED
+- Trigger / problem: Autonomous systems must not execute arbitrary or production commands.
+- Constraints: Production remediation is strictly forbidden in v1 (Rule 1).
+- Selected choice: Concrete `RemediationExecutor` implementing only two allowlisted staging actions: `restart_demo_service` (resets faults and verifies `/healthz`) and `rollback_demo_release` (reverts version to allowlisted target version `0.1.0` and resets faults). Production targets raise immediate `SecurityException`.
+- Alternatives: Generic shell script runner (rejected: dangerous command injection vulnerability); Kubernetes deployment patcher (rejected: out of scope for v1 local demo).
+- Why selected: Strict least-privilege boundary guaranteeing zero production blast radius.
+- Costs / failure modes: Production proposals are rejected; only predefined actions can run.
+- Evidence: Test verifying production target is rejected before any executor invocation.
+- Related ADR/DEC: ADR-027
+
+### DEC-323 — Separation of Command Success from Verified Operational Recovery
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream H (Recovery Verification)
+- Scope: `apps/api/app/actions/service.py`, `apps/api/app/simulation/service.py`
+- Status: VERIFIED
+- Trigger / problem: An executor command returning HTTP 200 does not prove the underlying service has recovered; metrics may still be failing and pods may be crash-looping.
+- Constraints: Distinguish action execution completion from verified service recovery.
+- Selected choice: Decoupled lifecycle: `ActionExecution` records command status (`SUCCEEDED`), but `service.recovery_observed` is recorded only after an independent verification check confirms `/healthz` is ok, faults are cleared, and request error rate has returned to baseline (< 5%).
+- Alternatives: Automatically marking incidents resolved upon executor success (rejected: dangerous false recovery assumption).
+- Why selected: SRE best practice preventing premature incident closure.
+- Costs / failure modes: Incident remains in recovering/open state until telemetry normalizes.
+- Evidence: Integration test verifying separate command success and recovery verification events.
+- Related ADR/DEC: ADR-027
+
+### DEC-324 — Read-Only ADK Agent Tool `create_remediation_proposal` with Zero Direct Execution
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream G (Google ADK Integration)
+- Scope: `agents/incident_investigator/tools/gateway.py`
+- Status: VERIFIED
+- Trigger / problem: AI agents need a mechanism to recommend remediations based on evidence, but must NEVER have direct execution authority.
+- Constraints: Agent tool can only suggest; cannot approve, cannot execute, cannot target production.
+- Selected choice: Added `create_remediation_proposal` tool to `ReadOnlyToolGateway`. Tool validates catalog ID, validates parameters, checks supporting evidence IDs against the active run ledger, and creates an `ActionProposal` in `PROPOSED` state. Returns proposal ID and hash. Zero execution code is reachable from the agent.
+- Alternatives: Giving agent an `execute_remediation` tool (rejected: completely violates safety invariants).
+- Why selected: Preserves human-in-the-loop governance while enabling end-to-end diagnosis-to-proposal workflow.
+- Costs / failure modes: Proposals require human admin review before any execution.
+- Evidence: ADK tool tests verifying proposal creation and zero direct execution capability.
+- Related ADR/DEC: ADR-027
+
+### DEC-325 — Frontend Simulation Lab Control Surface with Distinct Approve and Execute Actions
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream I (Simulation Lab UI)
+- Scope: `apps/web/app/app/simulation-lab/page.tsx`, `apps/web/app/layout.tsx`
+- Status: VERIFIED
+- Trigger / problem: Operators need a functional UI to view scenarios S01–S06, start simulations, inspect live run state, reset faults, review immutable proposals, and trigger authorized execution.
+- Constraints: Functional, consistent with dark theme; clear separation of approve and execute; guest read-only view.
+- Selected choice: Built `/app/simulation-lab` route featuring Scenario Catalog cards with risk badges, Active Simulation monitor with live countdown and reset button, Remediation Proposals panel with distinct "Approve" and "Execute Allowlisted Remediation" controls, and live Simulation Event timeline. Added top navigation link and updated phase badge.
+- Alternatives: Embedding simulation controls inside incident view only (rejected: cluttered; simulations are distinct lifecycle objects).
+- Why selected: Intuitive, safe operator ergonomics with clear visual state progression.
+- Costs / failure modes: Requires frontend connectivity to `/api/v1/simulation` and `/api/v1/actions`.
+- Evidence: Playwright browser tests verifying scenario browsing, start, reset, and execution views.
+- Related ADR/DEC: ADR-027
+
+### DEC-326 — Idempotent Execution Retry Recovery with Recorded Pre/Post State Snapshots
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream E (Execution Reliability)
+- Scope: `apps/api/app/actions/service.py`, `apps/api/app/models.py`
+- Status: VERIFIED
+- Trigger / problem: If an execution succeeds externally but a network timeout occurs before persisting results, a client retry might fail or re-execute.
+- Constraints: Safe handling of uncertain execution outcomes; durable audit records.
+- Selected choice: `ActionExecution` persists `pre_execution_state` before dispatch and `post_execution_state` upon completion, indexed by stable `idempotency_key`. Repeated requests with the same idempotency key return the existing execution record without repeating the external action.
+- Alternatives: Failing retries with generic 500 error (rejected: poor client recovery); blindly repeating the external action (rejected: risks duplicate side effects).
+- Why selected: Resilient at-least-once external messaging with deterministic client replay safety.
+- Costs / failure modes: Additional state snapshot JSON columns in database.
+- Evidence: Idempotency test verifying repeated execution requests return identical execution ID.
+- Related ADR/DEC: ADR-027
+
+### DEC-327 — Atomic Publication of Simulation and Execution Events to Transactional Outbox
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream H (Event Reliability)
+- Scope: `apps/api/app/simulation/service.py`, `apps/api/app/actions/service.py`
+- Status: VERIFIED
+- Trigger / problem: External notification sinks (Slack, n8n) need real-time events for simulations and remediation executions without risking dual-write inconsistencies.
+- Constraints: Events must publish atomically with the database state change.
+- Selected choice: Integrated `create_outbox_event` inside simulation start, reset, expiry, and action execution transitions (`simulation.started`, `simulation.fault_activated`, `action.execution_succeeded`, `simulation.reset`, `service.recovery_observed`).
+- Alternatives: Emitting webhooks directly in API request thread (rejected: fails transaction atomicity and blocks HTTP request).
+- Why selected: Guaranteed at-least-once notification delivery backed by Phase 6 transactional outbox.
+- Costs / failure modes: Each state change writes an `outbox_events` row.
+- Evidence: Outbox verification confirming event rows queued on simulation lifecycle changes.
+- Related ADR/DEC: ADR-027
+
+### DEC-328 — Tenant-Scoped Simulation and Remediation Authorization with Role Gating (Admin/Owner)
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream J & K (Data Isolation & Security)
+- Scope: `apps/api/app/simulation/service.py`, `apps/api/app/actions/service.py`
+- Status: VERIFIED
+- Trigger / problem: Cross-tenant data leakage or unauthorized fault activation by regular members or viewers compromises multi-tenant security.
+- Constraints: Only `admin` or `owner` can start simulations, reset faults, approve, or execute actions; all queries scoped to tenant organization.
+- Selected choice: Server-side RBAC validation (`self.context.can("admin")`) and database WHERE filtering on `organization_id`. Alien tenant requests return 404/403. Viewers attempting simulation mutations receive 403 Forbidden.
+- Alternatives: Client-side button disabling only (rejected: completely insecure).
+- Why selected: Cryptographically sound tenant and role isolation enforced at the database boundary.
+- Costs / failure modes: Unauthorized actors are strictly blocked and logged to `audit_events`.
+- Evidence: Negative RBAC tests verifying viewer and alien tenant rejection across all simulation and execution endpoints.
+- Related ADR/DEC: ADR-027
+
+### DEC-329 — Public Demo Guest Read-Only Boundary with Complete Simulation Control Denial
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream K (Public Demo Security)
+- Scope: `apps/api/app/simulation/service.py`, `apps/api/app/actions/service.py`
+- Status: VERIFIED
+- Trigger / problem: Public portfolio visitors accessing the demo environment must not be able to disrupt shared services or trigger unauthorized container operations.
+- Constraints: Public demo accounts must be read-only.
+- Selected choice: Public demo visitors authenticate as `viewer` role; all simulation mutations (`/start`, `/reset`) and action executions (`/execute`) strictly check `can("admin")` and fail closed with 403 Forbidden.
+- Alternatives: Hiding endpoints from documentation only (rejected: security through obscurity).
+- Why selected: Guarantees public demo visitors can observe the platform without causing denial of service.
+- Costs / failure modes: Demo visitors cannot trigger live faults unless elevated by an administrator.
+- Evidence: Security test verifying guest account receives 403 on simulation start and execution.
+- Related ADR/DEC: ADR-027
+
+### DEC-330 — Hermetic E2E S01 Telemetry Verification without External Cloud Dependencies
+- Date (UTC): 2026-10-12
+- Phase / work item: Phase 7 Workstream L (Testing Strategy)
+- Scope: `scripts/verify_phase7_simulation_remediation_e2e.py`
+- Status: VERIFIED
+- Trigger / problem: End-to-end verification of fault injection, telemetry generation, incident correlation, proposal approval, execution, and recovery must be reproducible locally and in CI with $0 external cloud cost.
+- Constraints: Hermetic execution; real telemetry assertions; zero fabricated test results.
+- Selected choice: Implemented comprehensive Python E2E verification script testing S01 from HTTP fault injection through real 500 error generation, Prometheus metric verification, incident ingestion, ADK investigation, exact-hash proposal approval, atomic execution claiming, demo service recovery, and outbox event audit trail.
+- Alternatives: Mock-only unit tests (rejected: fails to prove real system integration); paid external cloud runners (rejected: expensive, flaky, not self-contained).
+- Why selected: Provides undeniable proof of working distributed systems integration in a single reproducible command.
+- Costs / failure modes: Requires local database and mock or live HTTP service connectivity.
+- Evidence: E2E script executed cleanly with all steps verified.
+- Related ADR/DEC: ADR-027
+

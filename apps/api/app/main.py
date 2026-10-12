@@ -68,6 +68,8 @@ from apps.api.app.rag.retrieval import HybridRetrievalService
 from apps.api.app.rag.service import DocumentIngestionService, ValidationError
 from apps.api.app.schemas import (
     ActionCatalogItemRead,
+    ActionExecuteRequest,
+    ActionExecutionOut,
     ActionProposalCreate,
     ActionProposalRead,
     AlertmanagerWebhookPayload,
@@ -111,6 +113,7 @@ from apps.api.app.schemas import (
     TraceSummaryRead,
     UserRead,
 )
+from apps.api.app.simulation.router import router as simulation_router
 from apps.api.app.telemetry.tempo import TempoClient, validate_trace_id
 from apps.worker.tasks import (
     ingest_document_task,
@@ -126,6 +129,7 @@ class Health(BaseModel):
 
 
 app = FastAPI(title="AegisOps Control Plane", version="0.1.0")
+app.include_router(simulation_router)
 
 DbSession = Annotated[Session, Depends(get_db)]
 
@@ -1968,3 +1972,54 @@ def reject_action_proposal(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(err)) from err
     except ProposalStateConflictError as err:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err)) from err
+
+
+# Phase 7: Controlled Remediation Execution (DEC-320–DEC-322)
+
+
+@app.post("/api/v1/actions/proposals/{proposal_id}/execute", response_model=ActionExecutionOut)
+def execute_action_proposal(
+    proposal_id: uuid.UUID,
+    request: Request,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    payload: ActionExecuteRequest | None = None,
+) -> ActionExecutionOut:
+    """Atomically claim and execute an approved remediation action (DEC-320, DEC-321)."""
+    service = ProposalService(db, context)
+    client_ip = request.client.host if request.client else None
+    idempotency_key = payload.idempotency_key if payload else None
+    try:
+        execution = service.execute_proposal(
+            proposal_id,
+            idempotency_key=idempotency_key,
+            ip_address=client_ip,
+        )
+        return ActionExecutionOut.model_validate(execution)
+    except ProposalNotFoundError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err)) from err
+    except ProposalPermissionDeniedError as err:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(err)) from err
+    except ProposalExpiredError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+    except ProposalHashMismatchError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+    except ProposalStateConflictError as err:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err)) from err
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+
+
+@app.get("/api/v1/actions/proposals/{proposal_id}/execution", response_model=ActionExecutionOut)
+def get_proposal_execution(
+    proposal_id: uuid.UUID,
+    db: DbSession,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+) -> ActionExecutionOut:
+    """Retrieve execution record for an approved/executed proposal."""
+    service = ProposalService(db, context)
+    try:
+        execution = service.get_execution(proposal_id)
+        return ActionExecutionOut.model_validate(execution)
+    except ProposalNotFoundError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err)) from err
