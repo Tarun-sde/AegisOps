@@ -22,3 +22,16 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_always_eager=os.environ.get("CELERY_TASK_ALWAYS_EAGER", "0") == "1",
 )
+
+celery_app.conf.beat_schedule = {
+    "reconcile-simulation-expiry-periodic": {
+        "task": "aegisops.reconcile_simulation_expiry",
+        "schedule": 10.0,
+        "options": {"expires": 8.0},
+    },
+    "dispatch-outbox-events-periodic": {
+        "task": "aegisops.dispatch_outbox_events",
+        "schedule": 15.0,
+        "options": {"expires": 12.0},
+    },
+}

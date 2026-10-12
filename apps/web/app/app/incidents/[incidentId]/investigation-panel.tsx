@@ -207,6 +207,7 @@ export function InvestigationPanel({ incidentId }: InvestigationPanelProps) {
 
         {error && (
           <div
+            role="alert"
             style={{
               marginTop: "12px",
               padding: "10px 14px",
@@ -241,6 +242,7 @@ export function InvestigationPanel({ incidentId }: InvestigationPanelProps) {
               <span
                 className="badge"
                 id="investigation-status-badge"
+                data-run-id={activeRun.id}
                 style={{
                   background: statusStyle?.bg,
                   borderColor: statusStyle?.border,

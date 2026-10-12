@@ -115,13 +115,24 @@ uv run --frozen --all-groups python evaluations/rag/evaluate.py
 # Alertmanager rule promtool tests
 docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile observability exec prometheus promtool test rules /etc/prometheus/rules/test_api_alerts.yml
 
-# Playwright browser tests
-PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright npm run test:web
+# Isolated release gate: real backend + seeded browser tests + Beat/worker fault cleanup
+# Requires Docker Compose with !override support and installed project/browser dependencies.
+make browser
 
 # Isolated PostgreSQL migration round-trip & DB constraints test
 docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify run --rm verify
 docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify down -v
 ```
+
+The browser gate creates a fresh Compose project and verification database, applies migrations,
+seeds synthetic users/incidents, and builds the production frontend with an allocated loopback API
+port. It never reuses the development stack or its `.env`. Ordinary password login and CSRF checks
+remain enabled. Beat and the worker reset a real isolated demo fault after a fixture-only shortened
+expiry; production TTLs are unchanged. Browser coverage proves persisted **offline** investigation
+creation and a visible HTTP 403 failure, not live model accuracy or the complete telemetry pipeline.
+The gate removes its containers, volumes and image tags on exit. Runtime evidence is saved under
+`artifacts/aegisops-browser-*/`. Run frontend build/typecheck commands sequentially: they share `.next`.
+`npm run test:web` is the inner command and requires the environment provisioned by `make browser`.
 
 ---
 

@@ -1,0 +1,29 @@
+# DEC-337: only used by scripts/verify_browser_gate.py in a disposable project.
+services:
+  api:
+    image: ${BROWSER_PROJECT}-api
+    environment: &browser-environment
+      DATABASE_URL: postgresql://aegisops:${POSTGRES_PASSWORD}@postgres:5432/aegisops_phase0_verify
+      AEGISOPS_BROWSER_GATE: "1"
+      AEGISOPS_AGENT_MODE: offline
+      AEGISOPS_ALLOWED_ORIGINS: http://127.0.0.1:${BROWSER_WEB_PORT}
+      AEGISOPS_DEMO_FAULT_SECRET: ${BROWSER_FAULT_SECRET}
+      AEGISOPS_ALLOW_ANONYMOUS_DEMO: "0"
+      GOOGLE_API_KEY: ""
+      GEMINI_API_KEY: ""
+      GROQ_API_KEY: ""
+    ports: !override ["127.0.0.1::8000"]
+  worker:
+    image: ${BROWSER_PROJECT}-api
+    environment:
+      <<: *browser-environment
+  scheduler:
+    image: ${BROWSER_PROJECT}-api
+    environment:
+      <<: *browser-environment
+  shop-api:
+    image: ${BROWSER_PROJECT}-shop-api
+    environment:
+      AEGISOPS_DEMO_FAULT_SECRET: ${BROWSER_FAULT_SECRET}
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: ""
+    ports: !reset []

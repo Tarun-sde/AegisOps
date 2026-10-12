@@ -49,6 +49,73 @@ const API_BASE =
   process.env.API_URL ||
   "http://127.0.0.1:8000";
 
+function getCsrfToken(): string | undefined {
+  if (typeof document === "undefined") return undefined;
+  const match = document.cookie.match(/(?:^|;\s*)aegisops_csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : undefined;
+}
+
+export async function apiFetch(
+  urlOrPath: string,
+  options: RequestInit = {},
+): Promise<Response> {
+  const url =
+    urlOrPath.startsWith("http://") || urlOrPath.startsWith("https://")
+      ? urlOrPath
+      : `${API_BASE}${urlOrPath.startsWith("/") ? "" : "/"}${urlOrPath}`;
+
+  const method = (options.method || "GET").toUpperCase();
+  const headers = new Headers(options.headers || {});
+
+  if (!headers.has("Accept")) {
+    headers.set("Accept", "application/json");
+  }
+
+  // 1. Browser client-side CSRF handling for mutating requests
+  if (typeof window !== "undefined") {
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+      const csrf = getCsrfToken();
+      if (csrf && !headers.has("x-csrf-token")) {
+        headers.set("x-csrf-token", csrf);
+      }
+    }
+  }
+
+  // 2. Server-side: forward session cookies to trusted API_BASE only
+  if (typeof window === "undefined" && url.startsWith(API_BASE)) {
+    try {
+      const { cookies } = await import("next/headers");
+      const cookieStore = await cookies();
+      const session = cookieStore.get("aegisops_session");
+      const csrf = cookieStore.get("aegisops_csrf");
+
+      const cookieParts: string[] = [];
+      if (session) cookieParts.push(`aegisops_session=${session.value}`);
+      if (csrf) cookieParts.push(`aegisops_csrf=${csrf.value}`);
+
+      if (cookieParts.length > 0 && !headers.has("Cookie")) {
+        headers.set("Cookie", cookieParts.join("; "));
+      }
+
+      if (
+        csrf &&
+        ["POST", "PUT", "PATCH", "DELETE"].includes(method) &&
+        !headers.has("x-csrf-token")
+      ) {
+        headers.set("x-csrf-token", csrf.value);
+      }
+    } catch {
+      // Outside of Next.js server request context (e.g. build phase)
+    }
+  }
+
+  return fetch(url, {
+    ...options,
+    headers,
+    credentials: options.credentials ?? "include",
+  });
+}
+
 export async function getIncidents(
   statusFilter?: string,
 ): Promise<{ data: IncidentListResponse | null; error: string | null }> {
@@ -57,9 +124,8 @@ export async function getIncidents(
     if (statusFilter) {
       url.searchParams.set("status", statusFilter);
     }
-    const res = await fetch(url.toString(), {
+    const res = await apiFetch(url.toString(), {
       cache: "no-store",
-      headers: { Accept: "application/json" },
     });
     if (!res.ok) {
       return {
@@ -86,9 +152,8 @@ export async function getIncident(incidentId: string): Promise<{
   notFound?: boolean;
 }> {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/incidents/${incidentId}`, {
+    const res = await apiFetch(`/api/v1/incidents/${incidentId}`, {
       cache: "no-store",
-      headers: { Accept: "application/json" },
     });
     if (res.status === 404) {
       return { data: null, error: "Incident not found", notFound: true };
@@ -116,13 +181,9 @@ export async function getIncidentEvents(
   incidentId: string,
 ): Promise<{ data: IncidentEvent[] | null; error: string | null }> {
   try {
-    const res = await fetch(
-      `${API_BASE}/api/v1/incidents/${incidentId}/events`,
-      {
-        cache: "no-store",
-        headers: { Accept: "application/json" },
-      },
-    );
+    const res = await apiFetch(`/api/v1/incidents/${incidentId}/events`, {
+      cache: "no-store",
+    });
     if (!res.ok) {
       return {
         data: null,
@@ -219,11 +280,10 @@ export async function listIncidentInvestigations(
   incidentId: string,
 ): Promise<{ data: InvestigationRun[] | null; error: string | null }> {
   try {
-    const res = await fetch(
-      `${API_BASE}/api/v1/incidents/${incidentId}/investigations`,
+    const res = await apiFetch(
+      `/api/v1/incidents/${incidentId}/investigations`,
       {
         cache: "no-store",
-        headers: { Accept: "application/json" },
       },
     );
     if (!res.ok) {
@@ -249,13 +309,12 @@ export async function startInvestigation(
   incidentId: string,
 ): Promise<{ data: InvestigationRun | null; error: string | null }> {
   try {
-    const res = await fetch(
-      `${API_BASE}/api/v1/incidents/${incidentId}/investigations`,
+    const res = await apiFetch(
+      `/api/v1/incidents/${incidentId}/investigations`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Accept: "application/json",
         },
         body: JSON.stringify({}),
       },
@@ -283,13 +342,9 @@ export async function getInvestigation(
   investigationId: string,
 ): Promise<{ data: InvestigationRunDetail | null; error: string | null }> {
   try {
-    const res = await fetch(
-      `${API_BASE}/api/v1/investigations/${investigationId}`,
-      {
-        cache: "no-store",
-        headers: { Accept: "application/json" },
-      },
-    );
+    const res = await apiFetch(`/api/v1/investigations/${investigationId}`, {
+      cache: "no-store",
+    });
     if (!res.ok) {
       return {
         data: null,
@@ -313,11 +368,10 @@ export async function getInvestigationEvents(
   investigationId: string,
 ): Promise<{ data: ToolExecution[] | null; error: string | null }> {
   try {
-    const res = await fetch(
-      `${API_BASE}/api/v1/investigations/${investigationId}/events`,
+    const res = await apiFetch(
+      `/api/v1/investigations/${investigationId}/events`,
       {
         cache: "no-store",
-        headers: { Accept: "application/json" },
       },
     );
     if (!res.ok) {
@@ -343,12 +397,10 @@ export async function cancelInvestigation(
   investigationId: string,
 ): Promise<{ data: InvestigationRun | null; error: string | null }> {
   try {
-    const res = await fetch(
-      `${API_BASE}/api/v1/investigations/${investigationId}/cancel`,
+    const res = await apiFetch(
+      `/api/v1/investigations/${investigationId}/cancel`,
       {
         method: "POST",
-        headers: { Accept: "application/json" },
-        credentials: "include",
       },
     );
     if (!res.ok) {
@@ -435,25 +487,17 @@ export interface TraceSummary {
   spans: Span[];
 }
 
-function getCsrfToken(): string | undefined {
-  if (typeof document === "undefined") return undefined;
-  const match = document.cookie.match(/(?:^|;\s*)aegisops_csrf=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : undefined;
-}
-
 export async function loginUser(
   email: string,
   password: string,
 ): Promise<{ data: AuthResponse | null; error: string | null }> {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
+    const res = await apiFetch("/api/v1/auth/login", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Accept: "application/json",
       },
       body: JSON.stringify({ email, password }),
-      credentials: "include",
     });
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
@@ -481,14 +525,12 @@ export async function registerUser(
   name?: string,
 ): Promise<{ data: AuthResponse | null; error: string | null }> {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/auth/register`, {
+    const res = await apiFetch("/api/v1/auth/register", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Accept: "application/json",
       },
       body: JSON.stringify({ email, password, name }),
-      credentials: "include",
     });
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
@@ -512,13 +554,8 @@ export async function registerUser(
 
 export async function logoutUser(): Promise<{ error: string | null }> {
   try {
-    const csrf = getCsrfToken();
-    const headers: Record<string, string> = { Accept: "application/json" };
-    if (csrf) headers["x-csrf-token"] = csrf;
-    await fetch(`${API_BASE}/api/v1/auth/logout`, {
+    await apiFetch("/api/v1/auth/logout", {
       method: "POST",
-      headers,
-      credentials: "include",
     });
     return { error: null };
   } catch (err) {
@@ -533,10 +570,8 @@ export async function getMe(): Promise<{
   error: string | null;
 }> {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/me`, {
+    const res = await apiFetch("/api/v1/me", {
       cache: "no-store",
-      headers: { Accept: "application/json" },
-      credentials: "include",
     });
     if (!res.ok) {
       return { data: null, error: `Authentication required (${res.status})` };
@@ -557,10 +592,8 @@ export async function getServices(): Promise<{
   error: string | null;
 }> {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/services`, {
+    const res = await apiFetch("/api/v1/services", {
       cache: "no-store",
-      headers: { Accept: "application/json" },
-      credentials: "include",
     });
     if (!res.ok) {
       return { data: null, error: `Failed to load services (${res.status})` };
@@ -581,18 +614,12 @@ export async function createService(payload: {
   description?: string;
 }): Promise<{ data: Service | null; error: string | null }> {
   try {
-    const csrf = getCsrfToken();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    };
-    if (csrf) headers["x-csrf-token"] = csrf;
-
-    const res = await fetch(`${API_BASE}/api/v1/services`, {
+    const res = await apiFetch("/api/v1/services", {
       method: "POST",
-      headers,
+      headers: {
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(payload),
-      credentials: "include",
     });
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
@@ -616,20 +643,14 @@ export async function verifyServiceConnection(
   url: string,
 ): Promise<{ data: ServiceVerifyResponse | null; error: string | null }> {
   try {
-    const csrf = getCsrfToken();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    };
-    if (csrf) headers["x-csrf-token"] = csrf;
-
-    const res = await fetch(
-      `${API_BASE}/api/v1/services/${serviceId}/verify-connection`,
+    const res = await apiFetch(
+      `/api/v1/services/${serviceId}/verify-connection`,
       {
         method: "POST",
-        headers,
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ url }),
-        credentials: "include",
       },
     );
     if (!res.ok) {
@@ -654,10 +675,8 @@ export async function getTrace(
   traceId: string,
 ): Promise<{ data: TraceSummary | null; error: string | null }> {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/traces/${traceId}`, {
+    const res = await apiFetch(`/api/v1/traces/${traceId}`, {
       cache: "no-store",
-      headers: { Accept: "application/json" },
-      credentials: "include",
     });
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
@@ -682,12 +701,10 @@ export async function getServiceDeployments(
   limit: number = 5,
 ): Promise<{ data: DeploymentRecord[] | null; error: string | null }> {
   try {
-    const res = await fetch(
-      `${API_BASE}/api/v1/services/${serviceId}/deployments?limit=${limit}`,
+    const res = await apiFetch(
+      `/api/v1/services/${serviceId}/deployments?limit=${limit}`,
       {
         cache: "no-store",
-        headers: { Accept: "application/json" },
-        credentials: "include",
       },
     );
     if (!res.ok) {
@@ -716,13 +733,11 @@ export async function updateIncidentStatus(
   reason?: string,
 ): Promise<{ data: Incident | null; error: string | null }> {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/incidents/${incidentId}`, {
+    const res = await apiFetch(`/api/v1/incidents/${incidentId}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
-        Accept: "application/json",
       },
-      credentials: "include",
       body: JSON.stringify({
         status,
         expected_version: expectedVersion,
@@ -799,9 +814,8 @@ export async function getRunbooks(): Promise<{
   error: string | null;
 }> {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/runbooks`, {
+    const res = await apiFetch("/api/v1/runbooks", {
       cache: "no-store",
-      credentials: "include",
     });
     if (!res.ok) {
       const errJson = await res.json().catch(() => null);
@@ -827,13 +841,11 @@ export async function uploadRunbook(payload: {
   service_id?: string;
 }): Promise<{ data: Runbook | null; error: string | null }> {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/runbooks`, {
+    const res = await apiFetch("/api/v1/runbooks", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Accept: "application/json",
       },
-      credentials: "include",
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
@@ -857,9 +869,8 @@ export async function deleteRunbook(
   id: string,
 ): Promise<{ success: boolean; error: string | null }> {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/runbooks/${id}`, {
+    const res = await apiFetch(`/api/v1/runbooks/${id}`, {
       method: "DELETE",
-      credentials: "include",
     });
     if (!res.ok) {
       const errJson = await res.json().catch(() => null);
@@ -881,9 +892,8 @@ export async function reindexRunbook(
   id: string,
 ): Promise<{ data: Runbook | null; error: string | null }> {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/runbooks/${id}/reindex`, {
+    const res = await apiFetch(`/api/v1/runbooks/${id}/reindex`, {
       method: "POST",
-      credentials: "include",
     });
     if (!res.ok) {
       const errJson = await res.json().catch(() => null);
@@ -908,13 +918,11 @@ export async function searchRunbooks(
   limit: number = 5,
 ): Promise<{ data: RunbookSearchResult | null; error: string | null }> {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/runbooks/search`, {
+    const res = await apiFetch("/api/v1/runbooks/search", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Accept: "application/json",
       },
-      credentials: "include",
       body: JSON.stringify({ query, mode, limit }),
     });
     if (!res.ok) {
@@ -1006,10 +1014,8 @@ export async function getProposals(
     if (statusFilter) {
       url.searchParams.set("status", statusFilter);
     }
-    const res = await fetch(url.toString(), {
+    const res = await apiFetch(url.toString(), {
       cache: "no-store",
-      credentials: "include",
-      headers: { Accept: "application/json" },
     });
     if (!res.ok) {
       return {
@@ -1033,15 +1039,13 @@ export async function approveProposal(
   comment?: string,
 ): Promise<{ data: ActionProposal | null; error: string | null }> {
   try {
-    const res = await fetch(
-      `${API_BASE}/api/v1/actions/proposals/${proposalId}/approve`,
+    const res = await apiFetch(
+      `/api/v1/actions/proposals/${proposalId}/approve`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Accept: "application/json",
         },
-        credentials: "include",
         body: JSON.stringify({
           expected_parameters_hash: expectedHash,
           comment: comment || null,
@@ -1070,15 +1074,13 @@ export async function rejectProposal(
   comment?: string,
 ): Promise<{ data: ActionProposal | null; error: string | null }> {
   try {
-    const res = await fetch(
-      `${API_BASE}/api/v1/actions/proposals/${proposalId}/reject`,
+    const res = await apiFetch(
+      `/api/v1/actions/proposals/${proposalId}/reject`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Accept: "application/json",
         },
-        credentials: "include",
         body: JSON.stringify({
           comment: comment || null,
         }),
@@ -1109,10 +1111,8 @@ export async function getOutboxDeliveries(
     if (statusFilter) {
       url.searchParams.set("status", statusFilter);
     }
-    const res = await fetch(url.toString(), {
+    const res = await apiFetch(url.toString(), {
       cache: "no-store",
-      credentials: "include",
-      headers: { Accept: "application/json" },
     });
     if (!res.ok) {
       return {
@@ -1136,13 +1136,9 @@ export async function triggerOutboxDispatch(): Promise<{
   error: string | null;
 }> {
   try {
-    const res = await fetch(
-      `${API_BASE}/api/v1/automations/deliveries/dispatch`,
-      {
-        method: "POST",
-        credentials: "include",
-      },
-    );
+    const res = await apiFetch("/api/v1/automations/deliveries/dispatch", {
+      method: "POST",
+    });
     if (!res.ok) {
       const errJson = await res.json().catch(() => null);
       return {
@@ -1233,10 +1229,8 @@ export async function getSimulationScenarios(): Promise<{
   error: string | null;
 }> {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/simulation/scenarios`, {
+    const res = await apiFetch("/api/v1/simulation/scenarios", {
       cache: "no-store",
-      credentials: "include",
-      headers: { Accept: "application/json" },
     });
     if (!res.ok) {
       return {
@@ -1266,10 +1260,8 @@ export async function getSimulationRuns(statusFilter?: string): Promise<{
     if (statusFilter) {
       url.searchParams.set("status", statusFilter);
     }
-    const res = await fetch(url.toString(), {
+    const res = await apiFetch(url.toString(), {
       cache: "no-store",
-      credentials: "include",
-      headers: { Accept: "application/json" },
     });
     if (!res.ok) {
       return {
@@ -1296,14 +1288,9 @@ export async function getSimulationRunEvents(runId: string): Promise<{
   error: string | null;
 }> {
   try {
-    const res = await fetch(
-      `${API_BASE}/api/v1/simulation/runs/${runId}/events`,
-      {
-        cache: "no-store",
-        credentials: "include",
-        headers: { Accept: "application/json" },
-      },
-    );
+    const res = await apiFetch(`/api/v1/simulation/runs/${runId}/events`, {
+      cache: "no-store",
+    });
     if (!res.ok) {
       return {
         data: null,
@@ -1325,19 +1312,13 @@ export async function startSimulation(
   payload?: { service_id?: string; environment?: string },
 ): Promise<{ data: SimulationRun | null; error: string | null }> {
   try {
-    const csrf = getCsrfToken();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    };
-    if (csrf) headers["x-csrf-token"] = csrf;
-
-    const res = await fetch(
-      `${API_BASE}/api/v1/simulation/scenarios/${scenarioId}/start`,
+    const res = await apiFetch(
+      `/api/v1/simulation/scenarios/${scenarioId}/start`,
       {
         method: "POST",
-        credentials: "include",
-        headers,
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify(payload || {}),
       },
     );
@@ -1366,22 +1347,13 @@ export async function resetSimulation(
   reason?: string,
 ): Promise<{ data: SimulationRun | null; error: string | null }> {
   try {
-    const csrf = getCsrfToken();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    };
-    if (csrf) headers["x-csrf-token"] = csrf;
-
-    const res = await fetch(
-      `${API_BASE}/api/v1/simulation/runs/${runId}/reset`,
-      {
-        method: "POST",
-        credentials: "include",
-        headers,
-        body: JSON.stringify({ reason: reason || "Operator manual reset" }),
+    const res = await apiFetch(`/api/v1/simulation/runs/${runId}/reset`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({ reason: reason || "Operator manual reset" }),
+    });
     if (!res.ok) {
       const errJson = await res.json().catch(() => null);
       return {
@@ -1404,18 +1376,10 @@ export async function verifySimulationRecovery(
   runId: string,
 ): Promise<{ data: Record<string, unknown> | null; error: string | null }> {
   try {
-    const csrf = getCsrfToken();
-    const headers: Record<string, string> = {
-      Accept: "application/json",
-    };
-    if (csrf) headers["x-csrf-token"] = csrf;
-
-    const res = await fetch(
-      `${API_BASE}/api/v1/simulation/runs/${runId}/verify-recovery`,
+    const res = await apiFetch(
+      `/api/v1/simulation/runs/${runId}/verify-recovery`,
       {
         method: "POST",
-        credentials: "include",
-        headers,
       },
     );
     if (!res.ok) {
@@ -1440,19 +1404,13 @@ export async function executeProposal(
   idempotencyKey?: string,
 ): Promise<{ data: ActionExecution | null; error: string | null }> {
   try {
-    const csrf = getCsrfToken();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    };
-    if (csrf) headers["x-csrf-token"] = csrf;
-
-    const res = await fetch(
-      `${API_BASE}/api/v1/actions/proposals/${proposalId}/execute`,
+    const res = await apiFetch(
+      `/api/v1/actions/proposals/${proposalId}/execute`,
       {
         method: "POST",
-        credentials: "include",
-        headers,
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ idempotency_key: idempotencyKey }),
       },
     );
@@ -1477,12 +1435,10 @@ export async function getProposalExecution(
   proposalId: string,
 ): Promise<{ data: ActionExecution | null; error: string | null }> {
   try {
-    const res = await fetch(
-      `${API_BASE}/api/v1/actions/proposals/${proposalId}/execution`,
+    const res = await apiFetch(
+      `/api/v1/actions/proposals/${proposalId}/execution`,
       {
         cache: "no-store",
-        credentials: "include",
-        headers: { Accept: "application/json" },
       },
     );
     if (!res.ok) {

@@ -354,7 +354,7 @@ def test_simulation_tenant_isolation(test_client):
     """Alien tenant in Organization B cannot access simulation runs from Organization A."""
     db = TestingSessionLocal()
     user_a, org_a, _ = create_user_and_tenant(db, "admin_a@test.com", "admin", "Org A")
-    _, org_b, _ = create_user_and_tenant(db, "admin_b@test.com", "admin", "Org B")
+    _, _org_b, _ = create_user_and_tenant(db, "admin_b@test.com", "admin", "Org B")
     svc_a = create_target_service(db, org_a.id, "shop-api", "staging")
 
     sim_run_a = SimulationRun(
@@ -545,7 +545,7 @@ def test_remediation_tampered_parameter_hash_rejection(test_client):
     db = TestingSessionLocal()
     user, org, _ = create_user_and_tenant(db, "admin@test.com", "admin")
     svc = create_target_service(db, org.id, "shop-api", "staging")
-    proposal, approval = create_proposal_and_approve(db, org.id, svc.id, user.id, "staging")
+    proposal, _approval = create_proposal_and_approve(db, org.id, svc.id, user.id, "staging")
 
     # Malicious direct modification of parameters in DB
     proposal.immutable_parameters = {"service_name": "malicious-injected-service"}
@@ -596,7 +596,7 @@ def test_remediation_duplicate_execution_idempotency(
 def test_adk_agent_proposal_creation_tool():
     """create_remediation_proposal creates proposal in PROPOSED state with zero execution."""
     db = TestingSessionLocal()
-    user, org, _ = create_user_and_tenant(db, "admin@test.com", "admin")
+    _user, org, _ = create_user_and_tenant(db, "admin@test.com", "admin")
     svc = create_target_service(db, org.id, "shop-api", "staging")
 
     incident = Incident(

@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""End-to-End Verification Script for AegisOps Phase 7.
+"""In-Process Integration Verification Script for AegisOps Phase 7.
+
+NOTE: This script performs in-process component integration testing using an
+isolated in-memory SQLite database and mocked HTTP adapters (shop-api fault injection
+and health probe endpoints). It verifies state machine transitions, cryptographic hashing,
+and security gating logic without requiring live network containers.
 
 Validates:
 1. Scenario Catalog Manifests (S01-S06)
-2. Live In-Process Failure Injection & Recovery
-3. Real Telemetry & Incident Lifecycle Correlation
+2. In-Process State Transitions for Failure Injection & Recovery
+3. Incident Lifecycle Correlation & Transactional Outbox
 4. Google ADK Proposal Creation (Zero-Execution Invariant)
 5. Human Approval with Immutable Hash Verification
 6. Two-Phase Claiming & Idempotent Staging Execution
-7. Distinct Recovery Verification
+7. Distinct Recovery Verification (mocked health probe)
 8. Automated Watchdog / Lazy Expiry Cleanup
 9. Security Gates: Tenant Boundary, Production Rejection, Tampering Defense
 """
@@ -57,7 +62,7 @@ def print_pass(message: str) -> None:
 
 
 def run_e2e_verification() -> bool:
-    print("\nStarting AegisOps Phase 7 End-to-End Verification Suite...\n")
+    print("\nStarting AegisOps Phase 7 In-Process Integration Verification Suite...\n")
 
     # Step 1: Database Setup
     print_step("Step 1: Setting up isolated in-memory test database")

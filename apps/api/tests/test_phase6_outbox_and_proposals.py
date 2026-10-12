@@ -295,16 +295,15 @@ def test_outbox_dispatch_success_to_demo_sink(test_client):
     mock_resp.read.return_value = b'{"status":"accepted"}'
     mock_resp.__enter__.return_value = mock_resp
 
-    with patch("urllib.request.urlopen", return_value=mock_resp):
-        with TestingSessionLocal() as db:
-            result = dispatch_outbox_batch(db, batch_size=10)
-            assert result["delivered"] == 1
+    with patch("urllib.request.urlopen", return_value=mock_resp), TestingSessionLocal() as db:
+        result = dispatch_outbox_batch(db, batch_size=10)
+        assert result["delivered"] == 1
 
-            updated = db.get(OutboxEvent, event_id)
-            assert updated is not None
-            assert updated.status == "DELIVERED"
-            assert updated.delivered_at is not None
-            assert updated.attempt_count == 1
+        updated = db.get(OutboxEvent, event_id)
+        assert updated is not None
+        assert updated.status == "DELIVERED"
+        assert updated.delivered_at is not None
+        assert updated.attempt_count == 1
 
 
 def test_outbox_dispatch_transient_failure_retries():
@@ -333,21 +332,20 @@ def test_outbox_dispatch_transient_failure_retries():
         fp=io.BytesIO(b"Service Unavailable"),
     )
 
-    with patch("urllib.request.urlopen", side_effect=http_error):
-        with TestingSessionLocal() as db:
-            result = dispatch_outbox_batch(db, batch_size=10)
-            assert result["retry_scheduled"] == 1
+    with patch("urllib.request.urlopen", side_effect=http_error), TestingSessionLocal() as db:
+        result = dispatch_outbox_batch(db, batch_size=10)
+        assert result["retry_scheduled"] == 1
 
-            updated = db.get(OutboxEvent, event_id)
-            assert updated is not None
-            assert updated.status == "RETRY_SCHEDULED"
-            assert updated.attempt_count == 1
-            next_attempt = (
-                updated.next_attempt_at.replace(tzinfo=UTC)
-                if updated.next_attempt_at.tzinfo is None
-                else updated.next_attempt_at
-            )
-            assert next_attempt > datetime.now(UTC)
+        updated = db.get(OutboxEvent, event_id)
+        assert updated is not None
+        assert updated.status == "RETRY_SCHEDULED"
+        assert updated.attempt_count == 1
+        next_attempt = (
+            updated.next_attempt_at.replace(tzinfo=UTC)
+            if updated.next_attempt_at.tzinfo is None
+            else updated.next_attempt_at
+        )
+        assert next_attempt > datetime.now(UTC)
 
 
 def test_outbox_dispatch_max_retries_dead_letters():
@@ -377,15 +375,14 @@ def test_outbox_dispatch_max_retries_dead_letters():
         fp=io.BytesIO(b"Internal Server Error"),
     )
 
-    with patch("urllib.request.urlopen", side_effect=http_error):
-        with TestingSessionLocal() as db:
-            result = dispatch_outbox_batch(db, batch_size=10)
-            assert result["dead_lettered"] == 1
+    with patch("urllib.request.urlopen", side_effect=http_error), TestingSessionLocal() as db:
+        result = dispatch_outbox_batch(db, batch_size=10)
+        assert result["dead_lettered"] == 1
 
-            updated = db.get(OutboxEvent, event_id)
-            assert updated is not None
-            assert updated.status == "DEAD_LETTERED"
-            assert updated.attempt_count == 5
+        updated = db.get(OutboxEvent, event_id)
+        assert updated is not None
+        assert updated.status == "DEAD_LETTERED"
+        assert updated.attempt_count == 5
 
 
 # =========================================================================
@@ -556,7 +553,7 @@ def test_proposal_approval_by_authorized_admin(test_client):
 def test_proposal_approval_rejected_for_unauthorized_role(test_client):
     """MANDATORY EXIT GATE: Unauthorized user cannot approve proposal."""
     with TestingSessionLocal() as db:
-        admin_user, org, _ = create_user_and_tenant(db, "org_admin@example.com", role="admin")
+        _admin_user, org, _ = create_user_and_tenant(db, "org_admin@example.com", role="admin")
         service = Service(organization_id=org.id, name="shop-api")
         db.add(service)
 
@@ -707,7 +704,7 @@ def test_cross_tenant_proposal_isolation(test_client):
         _, org_a, _ = create_user_and_tenant(
             db, "tenant_a@example.com", role="admin", org_name="Tenant A"
         )
-        _, org_b, _ = create_user_and_tenant(
+        _, _org_b, _ = create_user_and_tenant(
             db, "tenant_b@example.com", role="admin", org_name="Tenant B"
         )
 

@@ -13,7 +13,7 @@ export default async function Workspace() {
       <p className="eyebrow">Workspace / Overview</p>
       <div className="heading">
         <h1>Operational overview</h1>
-        <span className="badge">Phase 1 · Telemetry Slice</span>
+        <span className="badge">Phase 7 · Simulation & Remediation</span>
       </div>
       <p className="intro">
         Continuous application telemetry, Prometheus alerts, and durable
@@ -69,11 +69,10 @@ export default async function Workspace() {
       <div className="grid" style={{ marginTop: "24px" }}>
         <section aria-labelledby="investigations-title" className="panel">
           <p className="eyebrow">Investigations</p>
-          <h2 id="investigations-title">Phase 2 AI Gate</h2>
+          <h2 id="investigations-title">AI Incident Investigation</h2>
           <p>
-            Autonomous root-cause analysis with Google ADK will read real
-            telemetry in Phase 2. Phase 1 verifies genuine signals and
-            deduplicated ingestion.
+            Autonomous root-cause analysis with Google ADK queries real metrics,
+            logs, traces, and runbooks with strict evidence verification.
           </p>
         </section>
 

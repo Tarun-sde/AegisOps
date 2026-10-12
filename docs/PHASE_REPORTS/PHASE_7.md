@@ -1,13 +1,31 @@
 # Phase 7 Verification Report: Incident Simulation Lab, Human-Approved Remediation, and Auditable Recovery
 
 - **Date:** 2026-10-12
-- **Status:** PHASE 7: COMPLETE (153/153 active pytest tests passed; 14/14 Phase 7 tests passed; 10/10 E2E verification steps verified; shop-api tests passing; web lint, format, and typecheck clean; static typecheck clean across 48 source files)
+- **Status:** Final targeted local release gate VERIFIED (2026-10-12, DEC-336–DEC-338): 8 browser tests passed; GO for frontend development. Hosted CI NOT VERIFIED.
 - **Governing ADR:** [ADR-027: Incident Simulation Lab, Sandboxed Remediation Engine, and Auditable Recovery](../ADR/ADR-027-phase7-incident-simulation-and-controlled-remediation.md)
 - **Governing Decisions:** DEC-316 through DEC-330 in [`docs/ENGINEERING_DECISIONS.md`](../ENGINEERING_DECISIONS.md)
 - **Demonstration Script:** [`scripts/verify_phase7_simulation_remediation_e2e.py`](../../scripts/verify_phase7_simulation_remediation_e2e.py)
 - **Database Migration:** [`apps/api/alembic/versions/0009_phase7_simulation_and_execution.py`](../../apps/api/alembic/versions/0009_phase7_simulation_and_execution.py)
 
 ---
+
+## Final targeted verification — 2026-10-12
+
+`UV_NO_SYNC=1 make browser` exited 0: **8 passed, 0 failed, 0 skipped** in 8.9s. The intercepted HTTP 403 displayed the expected error, no success badge and no persisted run. The positive test created offline run `399d183e-af4a-4e06-b8bb-c74a6cdfa386` for incident `00000000-0000-0000-0000-000000000067`, verified the workspace/incident association, and displayed the persisted identity/state after reload. Beat's explicit UID 10001 and `/tmp/celerybeat-schedule` assertion passed, as did singleton dispatch, pre-TTL fault preservation, unattended real reset and repeated-cleanup idempotency.
+
+The CI-equivalent gate used fresh migrations and authenticated fixtures in isolated project `aegisops-browser-44bb273b`, API `127.0.0.1:32769`, and a production frontend build. Cleanup removed its containers, PostgreSQL volume and network. No source correction or dependency change was needed. Hosted CI and live inference/full telemetry-to-remediation verification remain NOT VERIFIED.
+
+[Final gate transcript](../../artifacts/aegisops-browser-44bb273b/gate.txt). This successful rerun supersedes the historical blocked attempt below.
+
+## Earlier release-gate correction — 2026-10-12
+
+DEC-336 configures Beat's writable `/tmp/celerybeat-schedule` with one replica and the existing non-root image. DEC-337 provisions disposable PostgreSQL/Redis/API/worker/scheduler/shop-api dependencies, migrations, generated credentials, known fixtures and dynamic loopback ports using `make browser`. DEC-338 requires a real persisted investigation and separately checks rejected creation.
+
+`UV_NO_SYNC=1 make test`: 158 Python passed, 3 integration tests deselected, 132 warnings; Express 1 passed. `UV_NO_SYNC=1 make check`: passed. Additional mypy on both verification scripts: passed. `UV_NO_SYNC=1 make browser`: production build and real scheduled cleanup passed, Playwright 7 passed / 1 failed. Failure was an ambiguous alert locator in the negative 403 test; its fix and an added UID/schedule-file assertion await execution. Automatic approval review blocked the rerun because its usage limit was reached; approval was requested.
+
+[Watchdog evidence](../../artifacts/aegisops-browser-1968b97b/watchdog.txt) verifies preservation before TTL, real unattended fault reset and exactly one expiry event/outbox record after repeated scheduling. [Container logs](../../artifacts/aegisops-browser-1968b97b/compose.log) show actual Beat dispatch and worker execution. The isolated database and containers were removed. The positive browser test persisted run `5b4c8d38-0574-45e4-afa5-97fcafe3a712`, verified association and displayed it after reload.
+
+These checks do not prove live Gemini inference or a complete live telemetry-to-remediation chain. The existing Phase 7 script uses mocked HTTP/reset/recovery boundaries; its ten steps must not be presented as real container E2E. Hosted CI is NOT VERIFIED. Current readiness is governed by [PROJECT_STATE](../PROJECT_STATE.md), pending the all-green isolated gate.
 
 ## A. Executive Summary
 
@@ -220,13 +238,13 @@ The Phase 7 architecture is governed by **ADR-027** and recorded in **DEC-316 th
 - **Database Migration:** `0009_phase7_simulation_and_execution.py`
 - **Python Source Files Checked:** 48 source files type-checked clean with `mypy --strict`.
 - **Active Tests:** 153 passing in pytest, 1 passing in shop-api, 10 steps passing in E2E script.
-- **Remaining Failures:** 0.
+- **Current release-gate result:** 8 browser tests passed / 0 failed / 0 skipped; scheduler assertion passed. See final verification above.
 
 ---
 
 ## L. Final Phase Status
 
 ```text
-PHASE 7: COMPLETE
+PHASE 7: IMPLEMENTED; TARGETED LOCAL RELEASE GATE VERIFIED
 ```
-All mandatory exit gates for Phase 7 (six failure scenarios, fault controller, sandboxed remediation engine, atomic claiming, distinct recovery verification, ADK proposal tool, functional UI, and comprehensive security testing) are fully implemented, verified, and documented.
+Phase 7 implementation is retained. The final isolated local gate passed all 8 browser tests and scheduler assertions; local frontend development is GO. Hosted CI and the complete live-system chain remain unverified by this gate.

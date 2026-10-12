@@ -43,10 +43,9 @@ jobs:
         run: |
           uv run --frozen --all-groups pip-audit --progress-spinner off
           npm audit --audit-level=high
-      - name: Browser and production build
+      - name: Isolated browser, production build, and scheduler gate
         run: |
           make browser
-          npm run build
       - name: Isolated Compose verification
         run: |
           python -c "import secrets; from pathlib import Path; Path('.env').write_text('POSTGRES_PASSWORD=' + secrets.token_urlsafe(32) + '\n')"
@@ -68,5 +67,7 @@ jobs:
         if: always()
         with:
           name: phase0-synthetic-spikes
-          path: artifacts/spike-*.json
+          path: |
+            artifacts/spike-*.json
+            artifacts/aegisops-browser-*/
           if-no-files-found: ignore

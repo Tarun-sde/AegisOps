@@ -152,18 +152,18 @@ def test_naive_timestamps_rejected(evidence):
 
 
 def test_approval_contract_rejects_production_and_expiry():
-    data = dict(
-        proposal_id=uuid4(),
-        organization_id=uuid4(),
-        service_id=uuid4(),
-        environment="staging",
-        action_catalog_id="demo_restart",
-        payload_sha256="a" * 64,
-        approver_id=uuid4(),
-        decision="approved",
-        decided_at="2026-10-10T12:00:00Z",
-        expires_at="2026-10-10T12:10:00Z",
-    )
+    data = {
+        "proposal_id": uuid4(),
+        "organization_id": uuid4(),
+        "service_id": uuid4(),
+        "environment": "staging",
+        "action_catalog_id": "demo_restart",
+        "payload_sha256": "a" * 64,
+        "approver_id": uuid4(),
+        "decision": "approved",
+        "decided_at": "2026-10-10T12:00:00Z",
+        "expires_at": "2026-10-10T12:10:00Z",
+    }
     assert Approval.model_validate(data).environment == "staging"
     for update in (
         {"environment": "production"},

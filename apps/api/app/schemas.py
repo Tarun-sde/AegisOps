@@ -186,12 +186,15 @@ def validate_claim_support(
             or "payment processing gateway connection timed out" in snippets_combined
         )
 
-        if claims_db_issue and has_gateway_failure_in_logs:
-            if not hypothesis.contradicting_evidence_ids:
-                raise ValueError(
-                    "Claim support rejected: Hypothesis asserts database pool exhaustion but cited "
-                    "telemetry explicitly demonstrates checkout payment gateway failure."
-                )
+        if (
+            claims_db_issue
+            and has_gateway_failure_in_logs
+            and not hypothesis.contradicting_evidence_ids
+        ):
+            raise ValueError(
+                "Claim support rejected: Hypothesis asserts database pool exhaustion but cited "
+                "telemetry explicitly demonstrates checkout payment gateway failure."
+            )
 
         # Check 3: Unsupported high confidence when evidence is purely symptom-level
         if hypothesis.confidence == "high" and sources == {"metrics"}:

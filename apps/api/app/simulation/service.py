@@ -52,7 +52,7 @@ class SimulationService:
         self.context = context
         self.shop_api_url = os.environ.get(
             "AEGISOPS_SHOP_API_URL",
-            "http://127.0.0.1:4000" if not os.environ.get("IN_DOCKER") else "http://shop-api:4000",
+            "http://127.0.0.1:3001" if not os.environ.get("IN_DOCKER") else "http://shop-api:3001",
         )
         self.fault_secret = os.environ.get(
             "AEGISOPS_DEMO_FAULT_SECRET", "aegisops-demo-fault-secret"

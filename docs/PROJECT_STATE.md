@@ -1,10 +1,10 @@
 # AegisOps — Current Project State
 
 **Updated:** 2026-10-12  
-**Current phase:** Phase 7 (Incident Simulation Lab, Human-Approved Remediation, and Auditable Recovery) — COMPLETED & VERIFIED  
-**Overall state:** `PHASE 7 IMPLEMENTED AND VERIFIED; 153/153 ACTIVE PYTEST TESTS PASSING; 14/14 PHASE 7 TESTS PASSING; E2E S01-S06 SIMULATION & REMEDIATION SCRIPT VERIFIED; STATIC TYPECHECK CLEAN ACROSS 48 SOURCE FILES; PHASE 8 UNLOCKED & READY (NOT STARTED)`  
-**Source:** `AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md` Phase 7; `docs/PHASE_REPORTS/PHASE_7.md`; `docs/ADR/ADR-027-phase7-incident-simulation-and-controlled-remediation.md`; DEC-316–DEC-330.  
-**Governing ADR:** ADR-027  
+**Current phase:** Three-blocker release-gate remediation (DEC-336–DEC-338) — VERIFIED LOCALLY; Phase 8 — UNLOCKED for frontend development, NOT STARTED.
+**Overall state:** Final isolated gate PASSED: 8 Playwright passed, 0 failed/skipped; persisted investigation and independent 403 denial verified; non-root Beat schedule, dispatch and unattended cleanup verified. Hosted CI NOT VERIFIED.
+**Source:** Master plan Phase 7/8; [audit](CODEBASE_AUDIT.md); [decision journal](ENGINEERING_DECISIONS.md), DEC-336–DEC-338 and BUG-20261012-001.
+**Governing ADR:** ADR-023, ADR-027; existing DEC-335 preserved.
 
 ---
 
@@ -51,17 +51,19 @@
 
 ## 2. Current Test & Verification Summary
 
-| Test Suite | Command | Exit Code | Result |
-|---|---|---|---|
-| Python Static Checks | `uv run --frozen --all-groups ruff check conftest.py apps agents scripts` | 0 | PASSED (0 lint errors across all 78 files) |
-| Python Formatting | `uv run --frozen --all-groups ruff format --check conftest.py apps agents scripts` | 0 | PASSED (78 files verified formatted) |
-| Python Type Checking | `uv run --frozen --all-groups mypy --exclude "alembic/versions|tests" apps agents` | 0 | PASSED (48 source files type-checked clean with `strict = true`) |
-| Python Test Suite | `uv run --frozen --all-groups pytest` | 0 | PASSED (153 passed, 3 skipped in 12.43s) |
-| Phase 7 Test Suite | `pytest apps/api/tests/test_phase7_simulation_and_remediation.py` | 0 | PASSED (14/14 tests passed in 2.31s) |
-| Phase 6 Test Suite | `pytest apps/api/tests/test_phase6_outbox_and_proposals.py` | 0 | PASSED (20/20 tests passed in 2.74s) |
-| Express Service Tests | `npm test --workspace examples/shop-api` | 0 | PASSED (Build clean, 1/1 test passed in 542ms) |
-| Web Lint & Typecheck | `npm run lint && npm run typecheck` in `apps/web` | 0 | PASSED (ESLint clean, TypeScript clean) |
-| Phase 7 E2E Verification | `PYTHONPATH=. uv run --frozen --all-groups python scripts/verify_phase7_simulation_remediation_e2e.py` | 0 | PASSED (All 10 steps verified) |
+| Check | Exact command | Actual result |
+|---|---|---|
+| Python and Express regression | `UV_NO_SYNC=1 make test` | Exit 0: 158 Python passed, 3 integration tests deselected, 132 warnings; Express 1 passed, 0 failed/skipped |
+| Static checks | `UV_NO_SYNC=1 make check` | Exit 0: Ruff check/format (81 files), mypy (48 files), ESLint, Prettier, both workspace typechecks |
+| New verification scripts | `UV_CACHE_DIR="$PWD/.cache/uv" uv run --no-sync mypy scripts/verify_browser_gate.py scripts/browser_gate_fixture.py` | Exit 0: 2 files |
+| Earlier isolated attempt | `UV_NO_SYNC=1 make browser` | Historical exit 2: 7 passed / 1 failed; superseded by final rerun |
+| Final corrected gate | `UV_NO_SYNC=1 make browser` | Exit 0: production build, scheduler assertions and all 8 Playwright tests passed; 0 failed/skipped |
+
+`UV_NO_SYNC=1 make browser` exited 0: **8 passed, 0 failed, 0 skipped** in 8.9s. The intercepted HTTP 403 displayed the expected error, no success badge and no persisted run. The positive test created offline run `399d183e-af4a-4e06-b8bb-c74a6cdfa386` for incident `00000000-0000-0000-0000-000000000067`, verified the workspace/incident association, and displayed the persisted identity/state after reload. Beat's explicit UID 10001 and `/tmp/celerybeat-schedule` assertion passed, as did singleton dispatch, pre-TTL fault preservation, unattended real reset and repeated-cleanup idempotency.
+
+The CI-equivalent gate used fresh migrations and authenticated fixtures in isolated project `aegisops-browser-44bb273b`, API `127.0.0.1:32769`, and a production frontend build. Cleanup removed its containers, PostgreSQL volume and network. No source correction or dependency change was needed. Hosted CI and live inference/full telemetry-to-remediation verification remain NOT VERIFIED.
+
+Runtime evidence: [full gate transcript](../artifacts/aegisops-browser-44bb273b/gate.txt), [watchdog](../artifacts/aegisops-browser-44bb273b/watchdog.txt), [container logs](../artifacts/aegisops-browser-44bb273b/compose.log). Ignored local artifacts. Earlier unit/static command transcripts remain under `/tmp/aegisops-release-tests.log` and `/tmp/aegisops-release-static.log`.
 
 ---
 
@@ -74,6 +76,6 @@
 - [ ] **Unrestricted Infrastructure Shell/Docker Access:** `STRICTLY FORBIDDEN (SECURITY INVARIANT)`.
 
 ### Phase 8 Readiness
-**PHASE 8 IS READY & UNLOCKED (NOT STARTED)**
+**GO — local foundation ready for premium landing page, authentication UI and interactive dashboard development.**
 
-All Phase 7 acceptance criteria (simulation catalog S01–S06, fault lifecycle controller, TTL watchdog, sandboxed remediation engine, staging-only guard, atomic execution claiming, distinct recovery verification, Google ADK proposal tool, functional `/app/simulation-lab` UI, and comprehensive security testing) are fully satisfied and verified with 100% test pass rate. The repository is ready for Phase 8.
+All required targeted local gates passed. Phase 8 implementation remains NOT STARTED. Hosted CI and live model/full live-system verification are not established by this deterministic local gate. No commit or push performed.

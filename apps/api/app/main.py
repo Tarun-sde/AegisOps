@@ -11,6 +11,7 @@ from typing import Annotated, Any, Literal
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
@@ -129,7 +130,72 @@ class Health(BaseModel):
 
 
 app = FastAPI(title="AegisOps Control Plane", version="0.1.0")
+
+# DEC-331: CORS Configuration with explicit allowed origins and credentials support
+allowed_origins_env = os.environ.get("AEGISOPS_ALLOWED_ORIGINS", "")
+allowed_origins = [
+    origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()
+] or [
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+
 app.include_router(simulation_router)
+
+
+# DEC-331: Centralized Exception Handlers for Domain Errors
+@app.exception_handler(ProposalNotFoundError)
+def proposal_not_found_handler(request: Request, exc: ProposalNotFoundError) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
+
+
+@app.exception_handler(ProposalPermissionDeniedError)
+def proposal_permission_denied_handler(
+    request: Request, exc: ProposalPermissionDeniedError
+) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"detail": str(exc)})
+
+
+@app.exception_handler(ProposalStateConflictError)
+def proposal_state_conflict_handler(
+    request: Request, exc: ProposalStateConflictError
+) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
+
+@app.exception_handler(ProposalExpiredError)
+def proposal_expired_handler(request: Request, exc: ProposalExpiredError) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_410_GONE, content={"detail": str(exc)})
+
+
+@app.exception_handler(ProposalHashMismatchError)
+def proposal_hash_mismatch_handler(
+    request: Request, exc: ProposalHashMismatchError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)}
+    )
+
+
+@app.exception_handler(ConcurrencyConflictError)
+def concurrency_conflict_handler(request: Request, exc: ConcurrencyConflictError) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
+
+@app.exception_handler(InvalidTransitionError)
+def invalid_transition_handler(request: Request, exc: InvalidTransitionError) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)}
+    )
+
 
 DbSession = Annotated[Session, Depends(get_db)]
 
@@ -140,13 +206,15 @@ def healthz() -> Health:
 
 
 async def check_postgres() -> None:
-    async with await psycopg.AsyncConnection.connect(
-        os.environ["DATABASE_URL"], connect_timeout=3
-    ) as connection:
-        async with connection.cursor() as cursor:
-            await cursor.execute("SELECT 1")
-            if await cursor.fetchone() != (1,):
-                raise RuntimeError("Database probe failed")
+    async with (
+        await psycopg.AsyncConnection.connect(
+            os.environ["DATABASE_URL"], connect_timeout=3
+        ) as connection,
+        connection.cursor() as cursor,
+    ):
+        await cursor.execute("SELECT 1")
+        if await cursor.fetchone() != (1,):
+            raise RuntimeError("Database probe failed")
 
 
 async def check_redis() -> None:
@@ -236,7 +304,7 @@ def register(
 
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent")
-    raw_token, session = create_user_session(db, user.id, ip, ua)
+    raw_token, _session = create_user_session(db, user.id, ip, ua)
     csrf_token = set_auth_cookies(response, raw_token)
 
     log_audit_event(
@@ -313,7 +381,7 @@ def login(
         role = memberships[0].role
 
     ua = request.headers.get("user-agent")
-    raw_token, session = create_user_session(db, user.id, ip, ua)
+    raw_token, _session = create_user_session(db, user.id, ip, ua)
     csrf_token = set_auth_cookies(response, raw_token)
 
     log_audit_event(
@@ -1691,7 +1759,7 @@ async def search_runbooks(
 
 
 # -----------------------------------------------------------------------------
-# Phase 6: Automation, Outbox Deliveries, and Demo Sink (DEC-300–DEC-304, DEC-315)
+# Phase 6: Automation, Outbox Deliveries, and Demo Sink (DEC-300-DEC-304, DEC-315)
 # -----------------------------------------------------------------------------
 
 _demo_sink_processed_keys: set[str] = set()
@@ -1839,7 +1907,7 @@ def trigger_outbox_dispatch(
 
 
 # -----------------------------------------------------------------------------
-# Phase 6: Action Catalog and Remediation Proposals (DEC-308–DEC-312)
+# Phase 6: Action Catalog and Remediation Proposals (DEC-308-DEC-312)
 # -----------------------------------------------------------------------------
 
 
@@ -1974,7 +2042,7 @@ def reject_action_proposal(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err)) from err
 
 
-# Phase 7: Controlled Remediation Execution (DEC-320–DEC-322)
+# Phase 7: Controlled Remediation Execution (DEC-320-DEC-322)
 
 
 @app.post("/api/v1/actions/proposals/{proposal_id}/execute", response_model=ActionExecutionOut)

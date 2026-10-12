@@ -4,9 +4,9 @@ import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AegisOps · Foundation",
+  title: "AegisOps · Incident Intelligence & Response",
   description:
-    "Evidence-led incident investigation. Phase 0 development shell.",
+    "Evidence-led incident investigation, deterministic monitoring, and human-approved remediation.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

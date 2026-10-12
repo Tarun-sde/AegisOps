@@ -371,9 +371,9 @@ async def test_cross_tenant_isolation_retrieval(test_client: TestClient) -> None
     db = TestingSessionLocal()
     try:
         # Tenant A
-        user_a, org_a, token_a = create_tenant(db, "Org Alpha", "alpha@example.com")
+        user_a, org_a, _token_a = create_tenant(db, "Org Alpha", "alpha@example.com")
         # Tenant B
-        user_b, org_b, token_b = create_tenant(db, "Org Beta", "beta@example.com")
+        _user_b, _org_b, token_b = create_tenant(db, "Org Beta", "beta@example.com")
 
         service = DocumentIngestionService(db)
 

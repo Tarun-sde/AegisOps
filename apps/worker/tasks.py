@@ -89,10 +89,12 @@ def reconcile_simulation_expiry_task(self: Any) -> dict[str, Any]:
     try:
         now = datetime.now(UTC)
         expired_runs = db.scalars(
-            select(SimulationRun).where(
+            select(SimulationRun)
+            .where(
                 SimulationRun.status == "ACTIVE",
                 SimulationRun.expires_at <= now,
             )
+            .with_for_update(skip_locked=True)
         ).all()
         cleaned_count = 0
         for run in expired_runs:

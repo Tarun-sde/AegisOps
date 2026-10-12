@@ -84,7 +84,7 @@ def create_user_and_token(
     db.add(membership)
     db.flush()
 
-    raw_token, session = create_user_session(db, user.id)
+    raw_token, _session = create_user_session(db, user.id)
     csrf_token = "test-csrf-token-12345"
     db.commit()
     return user, org, raw_token, csrf_token
@@ -308,7 +308,7 @@ def test_api_incident_lifecycle_patch_endpoint(test_client):
 def test_multi_alert_correlation_and_deduplication(test_client):
     """Verify that alerts for same service & env correlate, while duplicates dedupe."""
     db = TestingSessionLocal()
-    _, org, token, csrf = create_user_and_token(db, "lead@aegisops.local", "admin")
+    _, org, token, _csrf = create_user_and_token(db, "lead@aegisops.local", "admin")
     svc1 = Service(organization_id=org.id, name="shop-api", environment="staging")
     svc2 = Service(organization_id=org.id, name="auth-api", environment="staging")
     db.add_all([svc1, svc2])

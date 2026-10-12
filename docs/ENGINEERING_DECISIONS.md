@@ -2733,3 +2733,161 @@ Do not write weekly summaries with fabricated project experiences.
 - Evidence: E2E script executed cleanly with all steps verified.
 - Related ADR/DEC: ADR-027
 
+### DEC-331 — Centralized Domain Exception Mapping & CORS Security Policy in FastAPI Control Plane
+- Date (UTC): 2026-10-12
+- Phase / work item: Foundation Hardening & Codebase Audit (Workstream A & C)
+- Scope: `apps/api/app/main.py`
+- Status: VERIFIED
+- Trigger / problem: Inconsistent exception handling across proposal and lifecycle endpoints, with repeated manual try/except boilerplate and lack of declarative CORS configuration exposing client cross-origin API calls to browser blocks.
+- Constraints: Maintain strict API contract compatibility with existing frontend and test suite; avoid leaking internal tracebacks on domain failures.
+- Selected choice: Added declarative FastAPI `@app.exception_handler` mappings for core domain errors (`ProposalNotFoundError` -> 404, `ProposalPermissionDeniedError` -> 403, `ProposalStateConflictError` -> 409, `ProposalExpiredError` -> 410, `ProposalHashMismatchError` -> 422, `ConcurrencyConflictError` -> 409, `InvalidTransitionError` -> 422) returning structured JSON `{detail: str}`; configured explicit, credential-safe `CORSMiddleware` with default allowed origins (`http://127.0.0.1:3000`, `http://localhost:3000`) and environment override (`AEGISOPS_ALLOWED_ORIGINS`).
+- Alternatives: Retaining scattered per-endpoint try/except blocks (rejected: high duplication, risk of omissions in future routes); wildcard CORS `*` (rejected: insecure with credentials).
+- Why selected: Eliminates endpoint boilerplate, standardizes error responses, and secures frontend-backend communication across origins.
+- Costs / failure modes: Centralized handlers catch domain exceptions globally; unhandled non-domain errors continue to bubble up as 500s.
+- Evidence: 153/153 pytest tests pass; all status codes and exception responses verified identical.
+- Related ADR/DEC: ADR-027, DEC-308, DEC-323
+
+### DEC-332 — Alignment of Demo Service Fallback Port (3001) and Docker Infrastructure Connectivity
+- Date (UTC): 2026-10-12
+- Phase / work item: Foundation Hardening & Infrastructure Audit (Workstream B & D)
+- Scope: `apps/api/app/simulation/service.py`, `apps/api/app/actions/executor.py`, `docker-compose.yml`, `.env.example`
+- Status: VERIFIED
+- Trigger / problem: Inconsistent default ports across services: `SimulationService` and `RemediationExecutor` defaulted to port 4000 when `AEGISOPS_SHOP_API_URL` was unset, whereas `examples/shop-api` and `docker-compose.yml` run on port 3001; `docker-compose.yml` omitted `IN_DOCKER` and `AEGISOPS_TEMPO_URL` from `api-environment`, causing `TempoClient` to fall back to localhost inside containers; `web` container omitted `API_URL: http://api:8000` and health dependency for SSR; `.env.example` specified quota-exhausted `gemini-3.8-flash` rather than pinned `gemini-3.5-flash` (DEC-237).
+- Constraints: Zero disruption to existing tests; deterministic local and containerized operation.
+- Selected choice: Updated fallback port in `SimulationService` and `RemediationExecutor` to 3001; added `IN_DOCKER: "1"` and `AEGISOPS_TEMPO_URL: http://tempo:3200` to `api-environment` in `docker-compose.yml`; configured `API_URL: http://api:8000` with `depends_on: api: {condition: service_healthy}` on `web`; updated `.env.example` model candidate to `gemini-3.5-flash`.
+- Alternatives: Reconfiguring `shop-api` to listen on port 4000 (rejected: Prometheus scraping and existing configs already use 3001).
+- Why selected: Restores architectural coherence across local dev and containerized deployments.
+- Costs / failure modes: None; env variables remain overridable.
+- Evidence: Playwright browser tests and Phase 7 E2E verification script executed cleanly.
+- Related ADR/DEC: DEC-211, DEC-237, DEC-245, ADR-027
+
+### DEC-333 — Reusable Design Token System and Core UI Component Primitives for Frontend Architecture
+- Date (UTC): 2026-10-12
+- Phase / work item: Foundation Hardening & Frontend Architecture (Workstream E & G)
+- Scope: `apps/web/app/globals.css`, `apps/web/app/components/*`, `apps/web/app/lib/auth-context.tsx`, `apps/web/app/layout.tsx`, `apps/web/app/page.tsx`, `apps/web/app/app/page.tsx`
+- Status: VERIFIED
+- Trigger / problem: Frontend contained scattered magic hex colors and inline styling, lacked shared design tokens, lacked reusable component primitives, lacked client auth state helpers, and contained stale Phase 0/Phase 1 placeholder copy and badges.
+- Constraints: No heavyweight UI libraries (no premature GSAP, Three.js, React Flow); preserve 100% passing Playwright tests; maintain dark theme aesthetics.
+- Selected choice: Established comprehensive CSS custom properties in `globals.css` (tokens for background, border, text, accent, status, radius, focus); created foundational reusable UI primitives (`Badge`, `Button`, `Card`, `AlertBanner`, `Skeleton`) in `apps/web/app/components/`; created `AuthProvider` and `useAuth` hook in `apps/web/app/lib/auth-context.tsx`; updated layout metadata and landing page copy to reflect active capabilities; updated workspace overview badges to Phase 7.
+- Alternatives: Ad-hoc inline CSS per page (rejected: inconsistent, unmaintainable); importing external UI component libraries like Radix/Shadcn (rejected: YAGNI / violates ponytail principles at this stage).
+- Why selected: Provides an elegant, zero-dependency architectural baseline ready for Phase 8 landing page and dashboard development.
+- Costs / failure modes: Requires developers to reference design tokens and primitives for future components.
+- Evidence: Playwright 5/5 browser tests passing in 5.1s; ESLint and Prettier clean; TypeScript compilation clean.
+- Related ADR/DEC: DEC-208, DEC-209, DEC-220, DEC-325
+
+### DEC-334 — Static Analysis, Linting & Python 3.14 Code Cleanliness Hardening
+- Date (UTC): 2026-10-12
+- Phase / work item: Foundation Hardening & Code Quality (Workstream F)
+- Scope: `apps/api/app/lifecycle.py`, `apps/api/app/schemas.py`, `agents/incident_investigator/validator.py`, `apps/api/tests/*`, `scripts/verify_phase1_e2e.py`, `Makefile`
+- Status: VERIFIED
+- Trigger / problem: Extended static analysis identified nested `with`/`if` constructs, redundant `list()` wrapping in `sorted()`, unused unpacked variables, non-ASCII punctuation in comments, and `Makefile` mypy command checked only 10 files instead of all 48 source files.
+- Constraints: Zero changes to business logic contracts or test assertions; strict Python 3.14 compatibility.
+- Selected choice: Streamlined conditionals in `schemas.py` and `validator.py`; removed redundant `list()` in `lifecycle.py`; prefixed unused unpacked variables with `_` across tests and scripts; replaced comment en-dashes; updated `Makefile` to check all source files via `mypy --exclude "alembic/versions|tests" apps agents`.
+- Alternatives: Ignoring linter warnings (rejected: degrades repository quality baseline).
+- Why selected: Leaves the repository with zero warnings under extended ruff and strict mypy.
+- Costs / failure modes: None.
+- Evidence: Ruff check clean (0 errors), ruff format clean (78 files), mypy clean (48 files), pytest clean (153 passed).
+### DEC-335 — Server-Side Cookie Forwarding, CSRF Defense Invariant, Celery Beat Watchdog Scheduling & Deterministic E2E Testing
+- Date (UTC): 2026-10-12
+- Phase / work item: Foundation Hardening & Astra Finding Remediation (Issues 1–4)
+- Scope: `apps/web/app/lib/api.ts`, `apps/api/app/auth.py`, `apps/worker/celery_app.py`, `apps/worker/tasks.py`, `docker-compose.yml`, `apps/web/tests/shell.spec.ts`, `scripts/verify_phase7_simulation_remediation_e2e.py`, `docs/CODEBASE_AUDIT.md`
+- Status: VERIFIED
+- Trigger / problem: Astra review identified four concrete defects:
+  1. Server-rendered incident requests in Next.js omitted session cookie forwarding to the FastAPI backend; browser mutation requests omitted CSRF tokens; FastAPI demo token check bypassed CSRF verification.
+  2. The simulation expiry cleanup task existed in Celery but lacked periodic beat scheduling and a scheduler container in Docker Compose, leaving orphaned active simulations.
+  3. Playwright browser test conditionally evaluated incident visibility (`if (await firstIncidentLink.isVisible())`), permitting silent passes without exercising the investigation lifecycle.
+  4. Repository documentation claimed JWT and bcrypt instead of actual opaque HTTP-only session cookies and standard library `scrypt` hashing, misstated platform versions, and did not separate in-process mocked integration testing from live container execution.
+- Constraints: Preserve opaque session authentication and scrypt password hashing; forward cookies strictly to trusted `API_BASE` (no token leakage); no client-side dependency for background simulation expiry; deterministic E2E assertions; zero fabricated claims.
+- Selected choice:
+  1. Centralized request handling in `apps/web/app/lib/api.ts` with `apiFetch`: server-side dynamic extraction of request cookies via `next/headers` strictly bounded to `API_BASE`; client-side `credentials: "include"`; automatic extraction of `aegisops_csrf` cookie and header injection (`x-csrf-token`) for mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`). Reordered `get_current_user` in `apps/api/app/auth.py` so CSRF token verification precedes demo token short-circuiting.
+  2. Added `celery_app.conf.beat_schedule` in `apps/worker/celery_app.py` scheduling `aegisops.reconcile_simulation_expiry` every 10 seconds and `aegisops.dispatch_outbox_events` every 15 seconds; added `.with_for_update(skip_locked=True)` in `reconcile_simulation_expiry_task`; added dedicated single-replica `scheduler` service (`celery beat`) in `docker-compose.yml`.
+  3. Replaced conditional checks in `apps/web/tests/shell.spec.ts` with deterministic navigation to seeded incident `inc-core-001`, verified investigation initiation and timeline outcomes with CSRF tokens, added explicit 401 unauthenticated access rejection test, and added explicit 403 CSRF enforcement test.
+  4. Updated `docs/CODEBASE_AUDIT.md` and script docstrings to accurately record opaque session cookies, `scrypt` hashing, pinned image versions (PostgreSQL 18, Redis 8.10.2, Next.js 16.4.0, Express 5.3.0, Prometheus 3.2.1), and explicitly separated unit, mocked in-process integration, real database/worker, and live browser test boundaries.
+- Alternatives:
+  - Replacing opaque sessions with JWTs (rejected: violates project authentication contract and increases complexity without benefit).
+  - Browser-side polling for simulation cleanup (rejected: unreliable, fails when operator closes tab).
+  - Permitting conditional Playwright tests (rejected: causes false-positive test runs).
+- Why selected: Resolves all four findings cleanly, ensures strict security invariants (cookies, CSRF, tenancy), guarantees autonomous background simulation resets, and establishes verified test coverage.
+- Costs / failure modes: Server-side rendering requires dynamic cookie extraction; Celery Beat requires a running scheduler container in Docker deployments.
+- Evidence: 158/158 Python pytest tests passing; 7/7 Playwright tests passing; 5/5 simulation scheduler tests passing; `scripts/verify_phase7_simulation_remediation_e2e.py` 10/10 passing; `apps/web` production build clean.
+- Related ADR/DEC: ADR-027, DEC-317, DEC-320, DEC-324, DEC-330, DEC-331, DEC-333
+
+
+
+### DEC-336 — Writable, single-owner Beat schedule
+- Date (UTC): 2026-10-12
+- Scope: `docker-compose.yml`; three-blocker release gate under ADR-027 / DEC-335.
+- Status: IMPLEMENTED — UNVERIFIED (verification follows below).
+- Context: Beat exits with PermissionError because UID 10001 cannot create its schedule in `/app`.
+- Choice: Use `/tmp/celerybeat-schedule`, retain the non-root user, and declare one scheduler replica. Keep existing broker, queues, 10-second cleanup interval and task expiry unchanged.
+- Alternatives: Running as root rejected (unnecessary privilege); persistent schedule volume rejected (PostgreSQL owns expiry state; periodic task timing can restart).
+- Reason: The container already has writable temporary storage; no new service or dependency is needed.
+- Downside: Recreating Beat resets its periodic timing; cleanup may wait one additional interval. Do not scale Beat independently.
+- Revisit: Multiple deployment schedulers or durable calendar jobs require explicit leader ownership.
+- Evidence: Prior isolated startup reproduced PermissionError; real dispatch and unattended cleanup remain to be checked.
+
+### DEC-337 — Disposable Compose browser gate shared by local development and CI
+- Date (UTC): 2026-10-12
+- Scope: Makefile, CI, browser Compose override, verification scripts, Playwright configuration; ADR-023 / ADR-027.
+- Status: IMPLEMENTED — UNVERIFIED.
+- Context: Browser tests depend on a developer's running API and unseeded incident data.
+- Choice: `make browser` creates a uniquely named Compose project with its own PostgreSQL verification database, Redis, API, worker, scheduler and shop-api; uses the existing images/Dockerfiles and migrations; seeds two known incidents plus an ordinary password-authenticated owner in a guarded verification-only database. Generate throwaway passwords, allocate loopback API/frontend ports, build Next.js with the selected API URL, wait for readiness with deadlines, and always remove this project's containers/volumes. Block external model credentials and use offline mode. Run production frontend/browser tests against those dependencies. Save bounded runtime logs without credentials under ignored artifacts.
+- Alternatives: Mocking the backend rejected (does not verify persistence/auth); reusing port 8000 or the developer database rejected (stale state and data risk); duplicating application services in a standalone Compose file rejected (drift).
+- Reason: One reproducible local/CI command exercises real migrations, authentication, queue transport, and HTTP fault controls while preserving the working stack.
+- Downside: Requires Docker and builds; temporary images/build output consume disk; acquiring a free frontend port can race and must fail rather than reuse a server.
+- Revisit: Parallel browser projects need separate frontend build directories; a larger CI matrix may justify separate jobs.
+- Evidence: Fresh-project run, scheduler logs and browser results pending. No live model or full observability-chain proof is implied.
+
+### DEC-338 — Persisted investigation assertions and independent denial coverage
+- Date (UTC): 2026-10-12
+- Scope: `apps/web/tests/shell.spec.ts`, investigation panel; DEC-335 / ADR-023.
+- Status: IMPLEMENTED — UNVERIFIED.
+- Context: The positive test still passes after an HTTP 403 because it only checks button visibility.
+- Choice: Log in through the real UI with seeded credentials; verify workspace/incident IDs via authenticated API reads; require HTTP 201, a UUID run ID, expected incident/org, offline mode, matching visible run identity/status and persisted state after reload. Use a separate pristine incident for intercepted HTTP 403, require visible failure and no run/status/history. Add semantic error role and a run-ID data attribute to existing UI elements, without changing product behavior.
+- Alternatives: Hardcoded demo-token bypass rejected (misses login/session behavior); waiting for live Gemini completion rejected (not necessary for creation); conditional assertions rejected (hide missing data).
+- Reason: Verify the contract actually used by the UI; failed requests, absent IDs or missing state fail the positive check.
+- Downside: Offline investigation creation is verified, not live diagnosis quality. Tests require their isolated fixtures and intentionally fail without them.
+- Revisit: UI contract changes or dedicated live inference coverage.
+- Evidence: Negative fault-injection and full browser suite pending.
+
+### BUG-20261012-001 — Release gate passed without runnable scheduling or successful browser creation
+- Reproduction: Non-root Beat exits creating `celerybeat-schedule`; CI starts only Next.js before backend provisioning; intercepted investigation HTTP 403 still passes button-visibility assertion.
+- Hypotheses / root cause: Writable-path mismatch, undeclared browser dependencies, and an assertion unrelated to successful creation. Confirmed in independent verification, not model/provider failures.
+- Repair: DEC-336–338; preserve existing auth/tenant and staging boundaries.
+- Rejected fixes: Root scheduler, developer-stack reuse, weakening tests, or live model dependence.
+- Verification: Pending real isolated release gate and regression commands; append actual results below.
+- Lesson: Unit-tested task functions and visible buttons do not prove deployed scheduling or persisted workflow success.
+
+#### BUG-20261012-001 verification follow-up — isolated host connectivity
+- First gate attempt built fresh images and migrated its empty database, then failed the bounded host readiness probe with a name-resolution error after requesting a random published port on an internal Docker network. Cleanup removed the disposable project.
+- Hypothesis: the internal network did not provide a usable published binding in this Docker environment. Use Compose's normal project-private bridge for host browser connectivity and assert the discovered binding is loopback before sending requests; retain generated secrets, offline mode, and empty provider credentials. No production networking is changed (DEC-337).
+- Rejected workaround: reusing the developer API or a fixed port. Next gate run will verify the actual binding and readiness.
+
+#### BUG-20261012-001 verification follow-up — actual scheduler and browser proof
+- Second disposable run verified normal bridge connectivity, migrations, authenticated fixture seeding, pre-TTL preservation, unattended real HTTP fault reset, repeated scheduled idempotency, and a persisted offline browser-created run visible after reload.
+- Browser result: 7 passed, 1 failed. The negative 403 reached the correct visible error, but `getByRole("alert")` also matched Next.js's route announcer. Scope that assertion to the existing investigation section (DEC-338); do not remove or weaken the 403/no-run checks.
+- Strict typing of the two new scripts additionally found reused fixture variable names spanning nullable queries and created objects; use distinct names and explicit nullable run annotation. No runtime contract changed.
+
+
+#### DEC-336–DEC-338 evidence update — 2026-10-12 (BUG-20261012-001)
+- DEC-336 runtime behavior VERIFIED: disposable project `aegisops-browser-1968b97b` dispatched periodic cleanup through the configured Redis broker to the worker, remained running without schedule permission errors, preserved the fault before its test TTL and reset it unattended. Repeated scheduling produced exactly one expiry event and outbox record. Existing Dockerfile non-root execution is unchanged; the additional explicit UID 10001 / schedule-file runtime assertion awaits rerun.
+- DEC-337 PARTIAL: fresh PostgreSQL migrations, deterministic ordinary-auth fixtures, dynamic API/frontend ports, bounded readiness, production build and disposable-project cleanup executed successfully. Full gate exit was 2 because Playwright reported 7 passed / 1 failed. CI calls the same command; hosted CI NOT VERIFIED.
+- DEC-338 PARTIAL: real UI login and POST 201 created offline investigation `5b4c8d38-0574-45e4-afa5-97fcafe3a712`, with tenant/incident association and persisted/UI identity after reload verified. Intercepted POST 403 displayed the error; the ambiguous alert selector stopped the negative test before its final no-run checks. Scope correction is implemented and statically checked, not runtime-verified.
+- Regression evidence: `UV_NO_SYNC=1 make test` exit 0 (158 Python passed, 3 integration tests deselected, 132 warnings; Express 1 passed / 0 failed / 0 skipped). `UV_NO_SYNC=1 make check` exit 0 (Ruff check/format 81 files, mypy 48, ESLint, Prettier, both TypeScript workspaces). `UV_CACHE_DIR="$PWD/.cache/uv" uv run --no-sync mypy scripts/verify_browser_gate.py scripts/browser_gate_fixture.py` passed (2 files).
+- Evidence paths: [watchdog assertions](../artifacts/aegisops-browser-1968b97b/watchdog.txt), [runtime logs](../artifacts/aegisops-browser-1968b97b/compose.log); `/tmp/aegisops-release-tests.log`, `/tmp/aegisops-release-static.log`, `/tmp/aegisops-release-gate-2.log`. Artifacts contain synthetic verification data and are ignored; no real credentials are recorded in this journal.
+- Blocker: Automatic approval review rejected the final `UV_NO_SYNC=1 make browser` escalation before execution because its usage limit was reached. User approval requested; no bypass attempted. Corrected negative test and explicit scheduler UID/file assertion remain IMPLEMENTED — UNVERIFIED. Final frontend readiness remains NO-GO pending that rerun; no production or hosted CI success claimed.
+- Governing decisions reused: ADR-023 (existing session/tenant boundaries), ADR-027 (staging simulation/remediation), DEC-335 (auth/CSRF/scheduling foundation). No new ADR or architecture/security deviation required. Generated ordinary-auth credentials replace reliance on developer state; no auth bypass or production write path was introduced.
+- Interview lesson: Separate configured scheduling from observed dispatch/reset, and require a persisted run identity instead of a visible button. The verified evidence supports these integration claims, not live model diagnosis quality. A single remaining failing test keeps the final gate open even when its fix looks mechanical.
+
+
+#### DEC-336–DEC-338 final targeted verification — 2026-10-12
+
+`UV_NO_SYNC=1 make browser` exited 0: **8 passed, 0 failed, 0 skipped** in 8.9s. The intercepted HTTP 403 displayed the expected error, no success badge and no persisted run. The positive test created offline run `399d183e-af4a-4e06-b8bb-c74a6cdfa386` for incident `00000000-0000-0000-0000-000000000067`, verified the workspace/incident association, and displayed the persisted identity/state after reload. Beat's explicit UID 10001 and `/tmp/celerybeat-schedule` assertion passed, as did singleton dispatch, pre-TTL fault preservation, unattended real reset and repeated-cleanup idempotency.
+
+The CI-equivalent gate used fresh migrations and authenticated fixtures in isolated project `aegisops-browser-44bb273b`, API `127.0.0.1:32769`, and a production frontend build. Cleanup removed its containers, PostgreSQL volume and network. No source correction or dependency change was needed. Hosted CI and live inference/full telemetry-to-remediation verification remain NOT VERIFIED.
+
+- Evidence: [gate transcript](../artifacts/aegisops-browser-44bb273b/gate.txt), [watchdog assertions](../artifacts/aegisops-browser-44bb273b/watchdog.txt), [container logs](../artifacts/aegisops-browser-44bb273b/compose.log). Local ignored artifacts; synthetic fixtures only.
+- Status update: DEC-336, DEC-337 and DEC-338 VERIFIED for their required local gates; BUG-20261012-001 closed locally. Earlier failed/approval-blocked attempts above are historical. The authorized rerun passed execution approval normally; no bypass was used.
+- Existing ADR-023 / ADR-027 and DEC-335 continue governing auth, CSRF and staging boundaries. No new decision or ADR required; no architecture, security or dependency change. Already-passing unit/static suites were not rerun because no code changed.
+- Working-tree hash comparison: all pre-existing tracked/untracked files unchanged by this verification except an observed concurrent `.env.example` model value edit from `gemini-3.5-flash` to `gemini-3.6-flash`, which this task did not make or revert. Only existing verification documentation is updated by this task; no commit/push.
+- Recommendation: GO for local frontend development (premium landing page, authentication UI and dashboard), with hosted CI and live-system limits explicit. Lesson verified: persisted identity plus an independent denial test prevents button-visibility false positives.

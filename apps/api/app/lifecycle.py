@@ -38,7 +38,7 @@ def normalize_status(status_str: str) -> str:
     cleaned = status_str.strip().lower()
     if cleaned not in ALL_STATUSES:
         raise InvalidTransitionError(
-            f"Unknown incident status '{status_str}'. Allowed: {sorted(list(ALL_STATUSES))}"
+            f"Unknown incident status '{status_str}'. Allowed: {sorted(ALL_STATUSES)}"
         )
     return cleaned
 
@@ -72,7 +72,7 @@ def transition_incident(
     if not can_transition(current_norm, target_norm):
         raise InvalidTransitionError(
             f"Invalid incident transition from '{current_norm}' to '{target_norm}'. "
-            f"Allowed next states: {sorted(list(VALID_TRANSITIONS.get(current_norm, set())))}"
+            f"Allowed next states: {sorted(VALID_TRANSITIONS.get(current_norm, set()))}"
         )
 
     if expected_version is not None and incident.version != expected_version:

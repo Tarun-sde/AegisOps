@@ -247,12 +247,7 @@ def get_current_user(
             detail="Authentication required. Missing session cookie or Bearer token.",
         )
 
-    if raw_token in ("aegisops-demo-token", "aegisops-demo-alertmanager-secret"):
-        demo_user = db.scalar(select(User).where(User.email == "demo@aegisops.local"))
-        if demo_user:
-            return demo_user
-
-    # Optional CSRF validation for mutating cookie-authenticated requests
+    # CSRF validation for mutating cookie-authenticated requests (double-submit verification)
     if (
         request.method in ("POST", "PUT", "PATCH", "DELETE")
         and SESSION_COOKIE_NAME in request.cookies
@@ -267,6 +262,11 @@ def get_current_user(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="CSRF token mismatch or missing X-CSRF-Token header.",
             )
+
+    if raw_token in ("aegisops-demo-token", "aegisops-demo-alertmanager-secret"):
+        demo_user = db.scalar(select(User).where(User.email == "demo@aegisops.local"))
+        if demo_user:
+            return demo_user
 
     token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
     now_utc = datetime.now(UTC)

@@ -36,6 +36,8 @@ services:
       DATABASE_URL: postgresql://aegisops:${POSTGRES_PASSWORD}@postgres:5432/aegisops
       REDIS_URL: redis://redis:6379/0
       ALERTMANAGER_SECRET: ${ALERTMANAGER_SECRET:-aegisops-demo-alertmanager-secret}
+      IN_DOCKER: "1"
+      AEGISOPS_TEMPO_URL: http://tempo:3200
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -57,12 +59,26 @@ services:
       AEGISOPS_AGENT_MODEL: ${AEGISOPS_AGENT_MODEL:-gemini-3.5-flash}
       AEGISOPS_PROM_URL: http://prometheus:9090
       AEGISOPS_LOKI_URL: http://loki:3100
-      IN_DOCKER: "1"
+      AEGISOPS_TEMPO_URL: http://tempo:3200
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
     command: [celery, -A, apps.worker.celery_app.celery_app, worker, --loglevel=info, -c, "2"]
     mem_limit: 512m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+  scheduler:
+    image: aegisops-api:phase0
+    profiles: [core]
+    environment:
+      <<: *api-environment
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    command: [celery, -A, apps.worker.celery_app.celery_app, beat, --loglevel=info, --schedule=/tmp/celerybeat-schedule]
+    deploy:
+      replicas: 1
+    mem_limit: 256m
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
   web:
@@ -71,6 +87,10 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
     profiles: [core]
+    environment:
+      API_URL: http://api:8000
+    depends_on:
+      api: {condition: service_healthy}
     ports: ["127.0.0.1:3000:3000"]
     mem_limit: 512m
     security_opt: [no-new-privileges:true]

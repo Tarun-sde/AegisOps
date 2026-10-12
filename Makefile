@@ -14,7 +14,7 @@ install:
 check:
 	$(UV) run --frozen --all-groups ruff check conftest.py apps agents scripts
 	$(UV) run --frozen --all-groups ruff format --check conftest.py apps agents scripts
-	$(UV) run --frozen --all-groups mypy apps/api/app agents/incident_investigator/spike.py agents/incident_investigator/free_tier.py agents/incident_investigator/groq_adapter.py agents/incident_investigator/agent.py agents/incident_investigator/investigator.py agents/incident_investigator/tools/gateway.py apps/worker/celery_app.py apps/worker/tasks.py scripts/verify_phase1_e2e.py scripts/verify_phase2_e2e.py
+	$(UV) run --frozen --all-groups mypy --exclude "alembic/versions|tests" apps agents
 	npm run lint
 	npm run format:check
 	npm run typecheck
@@ -24,7 +24,7 @@ test:
 	npm test
 
 browser:
-	npm run test:web
+	$(UV) run --frozen --all-groups python scripts/verify_browser_gate.py
 
 test-rules:
 	docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile observability exec prometheus promtool test rules /etc/prometheus/rules/test_api_alerts.yml

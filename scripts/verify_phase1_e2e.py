@@ -178,12 +178,12 @@ def main() -> int:
 
     # 8. Check Loki log query
     query_param = urllib.parse.quote('{service_name="shop-api"}')
-    st, loki_res = http_req(f"{LOKI_URL}/loki/api/v1/query_range?query={query_param}")
+    st, _loki_res = http_req(f"{LOKI_URL}/loki/api/v1/query_range?query={query_param}")
     log_step("Loki Log Query", "PASS" if st == 200 else "WARN", f"Loki HTTP {st}")
 
     # 9. Wait for Prometheus alert to fire and deliver webhook to FastAPI
     print("\nWaiting for Prometheus alert rule evaluation and webhook delivery (15-30s)...")
-    st_init, inc_init = http_req(f"{API_URL}/api/v1/incidents")
+    _st_init, inc_init = http_req(f"{API_URL}/api/v1/incidents")
     initial_cnt = inc_init.get("total", 0) if isinstance(inc_init, dict) else 0
 
     incident_found = None

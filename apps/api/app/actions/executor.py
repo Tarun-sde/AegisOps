@@ -30,7 +30,7 @@ class RemediationExecutor:
     def __init__(self, shop_api_url: str | None = None) -> None:
         self.shop_api_url = shop_api_url or os.environ.get(
             "AEGISOPS_SHOP_API_URL",
-            "http://127.0.0.1:4000" if not os.environ.get("IN_DOCKER") else "http://shop-api:4000",
+            "http://127.0.0.1:3001" if not os.environ.get("IN_DOCKER") else "http://shop-api:3001",
         )
         self.fault_secret = os.environ.get(
             "AEGISOPS_DEMO_FAULT_SECRET", "aegisops-demo-fault-secret"

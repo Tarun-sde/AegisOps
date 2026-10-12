@@ -10,8 +10,8 @@ export default function Home() {
         hypotheses and human decisions.
       </p>
       <p>
-        This development shell has no connected telemetry or live incident
-        investigations.
+        Deterministic monitoring, Prometheus alerts, auditable Google ADK tool
+        investigations, and sandboxed remediation workflows.
       </p>
       <Link className="button" href="/app">
         Open workspace <span aria-hidden="true">↗</span>
