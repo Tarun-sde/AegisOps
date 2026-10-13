@@ -9,13 +9,16 @@
 
 ---
 
-## Final targeted verification — 2026-10-12
+## Final targeted verification — 2026-10-13 (Triple Consecutive Run Verification)
 
-`UV_NO_SYNC=1 make browser` exited 0: **8 passed, 0 failed, 0 skipped** in 8.9s. The intercepted HTTP 403 displayed the expected error, no success badge and no persisted run. The positive test created offline run `399d183e-af4a-4e06-b8bb-c74a6cdfa386` for incident `00000000-0000-0000-0000-000000000067`, verified the workspace/incident association, and displayed the persisted identity/state after reload. Beat's explicit UID 10001 and `/tmp/celerybeat-schedule` assertion passed, as did singleton dispatch, pre-TTL fault preservation, unattended real reset and repeated-cleanup idempotency.
+`UV_NO_SYNC=1 make browser` was executed three consecutive times from a clean state without failures:
+1. **Run 1 (Project `aegisops-browser-c10d48c1`):** Exit 0. 8 Playwright tests passed (9.2s), non-root Celery Beat UID 10001 with `/tmp/celerybeat-schedule` assertion passed, periodic cleanup idempotency passed, clean container/volume teardown.
+2. **Run 2 (Project `aegisops-browser-098d8852`):** Exit 0. 8 Playwright tests passed (9.2s), scheduler assertions passed, clean teardown.
+3. **Run 3 (Project `aegisops-browser-9d6d8741`):** Exit 0. 8 Playwright tests passed (10.0s), scheduler assertions passed, clean teardown.
 
-The CI-equivalent gate used fresh migrations and authenticated fixtures in isolated project `aegisops-browser-44bb273b`, API `127.0.0.1:32769`, and a production frontend build. Cleanup removed its containers, PostgreSQL volume and network. No source correction or dependency change was needed. Hosted CI and live inference/full telemetry-to-remediation verification remain NOT VERIFIED.
+In all runs, the intercepted HTTP 403 displayed the expected error, no success badge and no persisted run. The positive test created an offline simulation run, verified workspace/incident association, and displayed the persisted identity/state after reload. Beat's explicit UID 10001 and `/tmp/celerybeat-schedule` assertion passed, as did singleton dispatch, pre-TTL fault preservation, unattended real reset and repeated-cleanup idempotency.
 
-[Final gate transcript](../../artifacts/aegisops-browser-44bb273b/gate.txt). This successful rerun supersedes the historical blocked attempt below.
+The CI-equivalent gate used fresh migrations and authenticated fixtures in isolated projects, dynamically allocated loopback ports, and production frontend builds. Teardown completely removed containers, PostgreSQL volumes and isolated networks after each run. Hosted CI and live inference/full telemetry-to-remediation verification remain NOT VERIFIED.
 
 ## Earlier release-gate correction — 2026-10-12
 
@@ -128,7 +131,10 @@ uv run --frozen --all-groups pytest
   - `apps/api/tests/test_foundation.py`: 22 passed
   - `agents/incident_investigator/tests/`: 60 passed
 
-### 2. End-to-End Simulation & Remediation Script
+### 2. End-to-End Simulation & Remediation Script (Fast In-Memory SQLite Unit Coverage)
+> [!NOTE]
+> This script uses an in-memory SQLite database (`sqlite:///:memory:`) with mocked HTTP network boundaries (`_call_shop_api` and `urllib.request.urlopen`) for rapid, hermetic developer-loop validation of state transitions, outbox creation, and hash checks. Concurrency-critical row locking (`FOR UPDATE SKIP LOCKED`) and database-level unique constraint collision semantics are verified separately against real PostgreSQL via Docker Compose (see Section F.3 below).
+
 ```bash
 PYTHONPATH=. uv run --frozen --all-groups python scripts/verify_phase7_simulation_remediation_e2e.py
 ```
@@ -145,21 +151,41 @@ PYTHONPATH=. uv run --frozen --all-groups python scripts/verify_phase7_simulatio
   9. Manual simulation reset & cleanup reconciliation
   10. Security invariants: Production target rejection & hash tampering rejection
 
-### 3. Express Service (`examples/shop-api`) Tests
+### 3. PostgreSQL Concurrency & Row-Level Lock Integration Suite (`docker-compose.verify.yml`)
+> [!IMPORTANT]
+> Verifies multi-session, multi-threaded database concurrency, row-level locks (`SELECT ... FOR UPDATE SKIP LOCKED`), and unique constraint guarantees against a real containerized PostgreSQL 18 instance with `pgvector`.
+
+```bash
+docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify run --rm verify
+```
+- **Exit Code:** 0
+- **Result:** `5 passed, 1 skipped, 158 deselected in 10.21s`
+- **Concurrency Scenarios Tested (`apps/api/tests/test_integration.py`):**
+  1. **Remediation Proposal Claiming Concurrency (`test_postgres_concurrency_remediation_proposal_claim`):**
+     - Two concurrent worker threads execute `execute_proposal` simultaneously on the same approved proposal.
+     - **Observed:** Exactly one worker succeeds (`SUCCEEDED`, creates `ActionExecution` record). The competing worker is deterministically rejected (`RemediationExecutionAlreadyRunningError`), and PostgreSQL's unique constraint on `action_executions(proposal_id)` holds with zero duplicate executions.
+  2. **Simulation Expiry Reconciliation Concurrency (`test_postgres_concurrency_simulation_expiry_reconciliation`):**
+     - Two concurrent worker threads execute `reconcile_simulation_expiry_task` simultaneously on the same expired simulation run using `SELECT ... FOR UPDATE SKIP LOCKED`.
+     - **Observed:** The run transitions to `EXPIRED` exactly once; exactly one `SIMULATION_EXPIRED` timeline event and exactly one `simulation.expired` transactional outbox event are persisted.
+  3. **Transactional Outbox Dispatch Lease Concurrency (`test_postgres_concurrency_outbox_batch_dispatch`):**
+     - Two concurrent dispatcher threads execute `dispatch_outbox_batch` simultaneously against pending outbox events using `SELECT ... FOR UPDATE SKIP LOCKED`.
+     - **Observed:** Events are claimed with non-overlapping leases; each event is delivered at most once per lease without duplicate webhook dispatches.
+
+### 4. Express Service (`examples/shop-api`) Tests
 ```bash
 cd examples/shop-api && npm test
 ```
 - **Exit Code:** 0
 - **Summary:** `1 pass, 0 fail, duration 542ms` (tested baseline routes, S01 500 injection, S04 broken release switch, S03 pool exhaustion, S05 unavailable probe, S02 DB delay, S06 downstream delay, and fault reset).
 
-### 4. Next.js Web App Lint & Typecheck
+### 5. Next.js Web App Lint & Typecheck
 ```bash
 cd apps/web && npm run lint && npm run typecheck
 ```
 - **Exit Code:** 0
 - **Summary:** ESLint clean (0 errors), TypeScript clean (`tsc --noEmit` clean).
 
-### 5. Python Code Quality & Type Checks
+### 6. Python Code Quality & Type Checks
 ```bash
 uv run --frozen --all-groups ruff check conftest.py apps agents scripts
 uv run --frozen --all-groups ruff format --check conftest.py apps agents scripts

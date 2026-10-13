@@ -7,3 +7,5 @@ services:
   verify:
     environment:
       DATABASE_URL: postgresql://aegisops:${POSTGRES_PASSWORD}@postgres:5432/aegisops_phase0_verify
+    volumes:
+      - ./apps:/app/apps

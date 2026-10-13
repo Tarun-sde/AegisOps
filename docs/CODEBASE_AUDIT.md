@@ -47,7 +47,7 @@ The AegisOps repository comprises an event-driven incident investigation platfor
 
 - **Phase 0 (Foundation & Locks):** Pinned `uv.lock` and `package-lock.json`, Docker Compose stack, offline ADK runner (`IncidentInvestigatorRunner`).
 - **Phase 1 (Telemetry & Ingestion):** Express RED metrics (`prom-client`), Prometheus scraper, route normalizer, incident ingestion endpoint (`/api/v1/incidents/ingest`), rule-based alert evaluation.
-- **Phase 2 (Chaos Simulation):** 6 realistic failure scenarios (S01 checkout crash, S02 latency injection, S03 CPU burn, S04 memory leak, S05 DB pool exhaustion, S06 corrupted cart data), synthetic traffic generator, fault reset API.
+- **Phase 2 (Chaos Simulation):** 6 realistic failure scenarios (S01_CHECKOUT_500 checkout HTTP 500 failure, S02_SLOW_DB_QUERIES 800ms DB query latency, S03_DB_POOL_EXHAUSTION connection pool contention / 503 errors, S04_BROKEN_RELEASE faulty 0.1.1-buggy deployment regression, S05_SERVICE_UNAVAILABLE health probe failure / 503, S06_SLOW_DOWNSTREAM 1200ms downstream dependency latency), synthetic traffic generator, fault reset API.
 - **Phase 3 (Tenancy, RBAC & Outbox):** Multi-tenant organization scoping, role hierarchy (`owner`, `admin`, `operator`, `viewer`), Python standard library `scrypt` password hashing with cryptographic salt, opaque HTTP-only session cookie authentication (`aegisops_session`), double-submit CSRF protection (`aegisops_csrf` / `x-csrf-token`), transactional Outbox pattern (`outbox_events`). *(Note: Authentication uses opaque sessions, not JWT; password hashing uses scrypt, not bcrypt).*
 - **Phase 4 (AI Incident Investigator):** Single-agent ADK 2.11.0 engine, deterministic tool registry (`PrometheusTool`, `LokiTool`, `TempoTool`), structured hypothesis evaluation, strict evidence validation.
 - **Phase 5 (Telemetry Correlation & RAG):** Live PromQL and LogQL query engines, Tempo trace exemplar correlation, hybrid RAG subsystem (`IncidentEmbeddingService`, `RunbookRetriever`) with vector fallback.
@@ -155,30 +155,41 @@ Verification evidence is categorized strictly by environment and boundary:
 - **Express Unit Tests:** `npm test --workspace examples/shop-api` (1 comprehensive test passed; 0 failed/skipped).
   - Covers RED metric counters, route normalizers, and in-process fault injection endpoints (`/fault/inject`, `/fault/reset`).
 
-### B. In-Process Mocked Integration Testing
+### B. In-Process Mocked Integration Testing (Fast In-Memory SQLite Unit Coverage)
 - **Phase 7 Integration Script:** `scripts/verify_phase7_simulation_remediation_e2e.py` (10/10 steps PASS).
   - Uses an isolated in-memory SQLite database (`sqlite:///:memory:`) to verify two-phase approval-to-execution claiming, transactional outbox creation, and immutable parameter hash checks.
   - **Boundaries:** HTTP calls to the demo microservice (`_call_shop_api`) and recovery health probes (`urllib.request.urlopen`) are mocked in this script to validate state transitions independently of container networking.
 
-### C. In-Process Scheduler and Outbox Regression Tests
+### C. PostgreSQL Concurrency & Row-Level Lock Integration Testing (Real PostgreSQL 18)
+- **Command:** `docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify run --rm verify` (5 passed, 1 skipped, 158 deselected in 10.21s; Exit 0).
+- **Test Scenarios (`apps/api/tests/test_integration.py`):**
+  - `test_postgres_concurrency_remediation_proposal_claim`: Two concurrent worker threads execute `execute_proposal` simultaneously on the same approved proposal. Exactly one succeeds (`SUCCEEDED`, creates `ActionExecution` record), the second fails with `RemediationExecutionAlreadyRunningError`, and the unique constraint on `action_executions(proposal_id)` holds.
+  - `test_postgres_concurrency_simulation_expiry_reconciliation`: Two concurrent worker threads execute `reconcile_simulation_expiry_task` simultaneously on the same expired run with `SELECT ... FOR UPDATE SKIP LOCKED`. Exactly one transitions the run to `EXPIRED`, creating exactly one timeline event and one outbox event.
+  - `test_postgres_concurrency_outbox_batch_dispatch`: Two concurrent dispatcher threads execute `dispatch_outbox_batch` simultaneously with `SELECT ... FOR UPDATE SKIP LOCKED`. Events are leased non-overlappingly and delivered at most once per lease.
+
+### D. In-Process Scheduler and Outbox Regression Tests
 - **Simulation Expiry & Celery Beat Suite:** `apps/api/tests/test_simulation_expiry_scheduler.py` (5/5 tests PASS).
   - Verifies Celery Beat schedule registration, bounded TTL enforcement, active state preservation before expiry, automatic database cleanup without browser activity, and idempotent re-execution safety.
 - **Outbox Worker Suite:** `apps/api/tests/test_phase6_outbox_and_proposals.py` (20/20 tests PASS).
   - Verifies transaction outbox persistence, polling, exponential backoff, and state transition idempotency.
 
-### D. Isolated Runtime Scheduler and Browser Testing
-- **Command:** `UV_NO_SYNC=1 make browser` creates a unique Compose project, migrates a new PostgreSQL database, waits for PostgreSQL/Redis/API readiness, seeds guarded synthetic fixtures and builds the production frontend with its allocated loopback API address. It runs the same command as CI.
-- **Scheduler:** Actual Beat dispatch and worker success, real fault remaining active before TTL, unattended HTTP reset, and repeated periodic idempotency passed. [Watchdog assertions](../artifacts/aegisops-browser-1968b97b/watchdog.txt) and [container logs](../artifacts/aegisops-browser-1968b97b/compose.log) are ignored local evidence.
-- **Browser:** 7 passed / 1 failed. Positive test created run `5b4c8d38-0574-45e4-afa5-97fcafe3a712` for incident `00000000-0000-0000-0000-000000000067`, verified its workspace and persisted/UI identity after reload. Negative creation returned HTTP 403 and displayed an error; an ambiguous locator prevented completion of subsequent assertions. The scoped selector and an explicit scheduler UID/file assertion are implemented but their rerun is blocked.
-- **Isolation:** API used dynamically allocated `127.0.0.1:32768`; project `aegisops-browser-1968b97b` and its database volume were removed. No developer database or existing stack supplied fixtures.
+### E. Isolated Runtime Scheduler and Browser Testing (Triple Run Verification)
+- **Command:** `UV_NO_SYNC=1 make browser` creates a unique Compose project, migrates a new PostgreSQL database, waits for PostgreSQL/Redis/API readiness, seeds guarded synthetic fixtures and builds the production frontend with its allocated loopback API address.
+- **Triple Execution Gate (3/3 Consecutive Clean Runs):**
+  - **Run 1 (Project `aegisops-browser-c10d48c1`):** Exit 0. 8 Playwright tests passed (9.2s). Celery Beat UID 10001, `/tmp/celerybeat-schedule`, unattended real reset, and idempotent periodic cleanup verified. Clean teardown.
+  - **Run 2 (Project `aegisops-browser-098d8852`):** Exit 0. 8 Playwright tests passed (9.2s). Scheduler and watchdog assertions verified. Clean teardown.
+  - **Run 3 (Project `aegisops-browser-9d6d8741`):** Exit 0. 8 Playwright tests passed (10.0s). Scheduler and watchdog assertions verified. Clean teardown.
+- **Scheduler:** Actual Beat dispatch and worker success, real fault remaining active before TTL, unattended HTTP reset, and repeated periodic idempotency passed across all runs.
+- **Browser:** All 8 Playwright tests passed on each run. Positive test created an offline run, verified its workspace and persisted/UI identity after reload. Negative creation returned HTTP 403, displayed the expected error with no success badge and no persisted run.
+- **Isolation:** Each run dynamically allocated a separate loopback port and generated isolated disposable Docker volumes/networks, cleanly removed upon completion.
 
-### E. Live Model Inference Boundaries
+### F. Live Model Inference Boundaries
 - External Google ADK Gemini API calls require live network access and valid `GOOGLE_API_KEY`. When offline or key is absent, deterministic fallback runners or mock adapters are utilized.
 
-### F. Telemetry & Fault Injection Execution
+### G. Telemetry & Fault Injection Execution
 - This remediation verified real Express fault injection/reset with PostgreSQL and Celery. It did not rerun the complete live observability, model, approval and remediation chain.
 
-### G. Untested or Unavailable Capabilities
+### H. Untested or Unavailable Capabilities
 - **Automated Production Remediation:** Intentionally omitted in v1. All remediation actions are strictly bounded to staging environments.
 - **Arbitrary Host Shell Access:** Strictly forbidden by security invariants.
 
@@ -190,17 +201,16 @@ Verification evidence is categorized strictly by environment and boundary:
 |---|---|---|
 | Regression tests | `UV_NO_SYNC=1 make test` | Exit 0: Python 158 passed / 3 integration tests deselected / 132 warnings; Express 1 passed |
 | Static checks | `UV_NO_SYNC=1 make check` | Exit 0: Ruff check/format (81 files), mypy (48 files), ESLint, Prettier, TypeScript |
-| Gate scripts typing | `UV_CACHE_DIR="$PWD/.cache/uv" uv run --no-sync mypy scripts/verify_browser_gate.py scripts/browser_gate_fixture.py` | Exit 0: 2 files |
-| Production build | `npm run build` (inside gate) | Passed: Next.js production and shop-api builds |
-| Isolated gate | `UV_NO_SYNC=1 make browser` | Exit 2: runtime scheduler checks passed; Playwright 7 passed / 1 failed |
-| Compose validation | Gate's `docker compose … config --quiet` on base + verify + browser overlays | Passed before fresh-stack creation |
-| Corrected gate | `UV_NO_SYNC=1 make browser` | BLOCKED before execution by automatic approval review usage limit |
+| Gate scripts typing | `UV_CACHE_DIR="$PWD/.cache/uv" uv run --no-sync mypy scripts/verify_browser_gate.py scripts/browser_gate_fixture.py` | Exit 0: 2 files clean |
+| Fast simulation E2E (in-memory SQLite) | `PYTHONPATH=. uv run --frozen --all-groups python scripts/verify_phase7_simulation_remediation_e2e.py` | Exit 0: 10/10 steps passed (unit coverage with mocked network boundaries) |
+| PostgreSQL concurrency suite (real PostgreSQL 18) | `docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify run --rm verify` | Exit 0: 5 passed, 1 skipped, 158 deselected in 10.21s (proposal claim race, expiry reconciliation race, outbox dispatch race) |
+| Isolated browser gate (Run 1 / 3) | `UV_NO_SYNC=1 make browser` | Exit 0 (`aegisops-browser-c10d48c1`): 8 passed (9.2s); scheduler assertions passed |
+| Isolated browser gate (Run 2 / 3) | `UV_NO_SYNC=1 make browser` | Exit 0 (`aegisops-browser-098d8852`): 8 passed (9.2s); scheduler assertions passed |
+| Isolated browser gate (Run 3 / 3) | `UV_NO_SYNC=1 make browser` | Exit 0 (`aegisops-browser-9d6d8741`): 8 passed (10.0s); scheduler assertions passed |
 | Hosted CI | Not run; no push authorized | NOT VERIFIED |
-
-Full local transcripts: `/tmp/aegisops-release-tests.log`, `/tmp/aegisops-release-static.log`, `/tmp/aegisops-release-gate-2.log`. The last completed browser run is recorded honestly; passing static analysis does not verify the corrected runtime assertions.
 
 ---
 
 ## 8. Foundation Readiness for Phase 8
 
-**GO — local foundation ready for frontend development.** Final `UV_NO_SYNC=1 make browser` exited 0: all 8 Playwright tests and the explicit non-root schedule assertion passed, with actual periodic dispatch and unattended cleanup. No unresolved local blocker remains from these three findings. Hosted CI and live inference/full telemetry-to-remediation remain NOT VERIFIED. No code correction, dependency change, commit or push was needed for this verification.
+**GO — local foundation ready for frontend development.** All three consecutive runs of `UV_NO_SYNC=1 make browser` exited 0: all 8 Playwright tests and the explicit non-root schedule assertion passed, with actual periodic dispatch and unattended cleanup. PostgreSQL multi-worker concurrency locking (`SELECT FOR UPDATE SKIP LOCKED`) and unique constraint collision safety are verified via `docker-compose.verify.yml`. No unresolved local blocker remains. Hosted CI and live inference/full telemetry-to-remediation remain NOT VERIFIED. No push performed.

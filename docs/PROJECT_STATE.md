@@ -1,8 +1,8 @@
 # AegisOps — Current Project State
 
-**Updated:** 2026-10-12  
+**Updated:** 2026-10-13  
 **Current phase:** Three-blocker release-gate remediation (DEC-336–DEC-338) — VERIFIED LOCALLY; Phase 8 — UNLOCKED for frontend development, NOT STARTED.
-**Overall state:** Final isolated gate PASSED: 8 Playwright passed, 0 failed/skipped; persisted investigation and independent 403 denial verified; non-root Beat schedule, dispatch and unattended cleanup verified. Hosted CI NOT VERIFIED.
+**Overall state:** Triple isolated gate PASSED (3/3 consecutive runs): 8 Playwright passed, 0 failed/skipped; PostgreSQL multi-session concurrency suite verified (5 passed against real containerized PostgreSQL); persisted investigation and independent 403 denial verified; non-root Beat schedule, dispatch and unattended cleanup verified. Hosted CI NOT VERIFIED.
 **Source:** Master plan Phase 7/8; [audit](CODEBASE_AUDIT.md); [decision journal](ENGINEERING_DECISIONS.md), DEC-336–DEC-338 and BUG-20261012-001.
 **Governing ADR:** ADR-023, ADR-027; existing DEC-335 preserved.
 
@@ -55,15 +55,20 @@
 |---|---|---|
 | Python and Express regression | `UV_NO_SYNC=1 make test` | Exit 0: 158 Python passed, 3 integration tests deselected, 132 warnings; Express 1 passed, 0 failed/skipped |
 | Static checks | `UV_NO_SYNC=1 make check` | Exit 0: Ruff check/format (81 files), mypy (48 files), ESLint, Prettier, both workspace typechecks |
-| New verification scripts | `UV_CACHE_DIR="$PWD/.cache/uv" uv run --no-sync mypy scripts/verify_browser_gate.py scripts/browser_gate_fixture.py` | Exit 0: 2 files |
-| Earlier isolated attempt | `UV_NO_SYNC=1 make browser` | Historical exit 2: 7 passed / 1 failed; superseded by final rerun |
-| Final corrected gate | `UV_NO_SYNC=1 make browser` | Exit 0: production build, scheduler assertions and all 8 Playwright tests passed; 0 failed/skipped |
+| Gate scripts typing | `UV_CACHE_DIR="$PWD/.cache/uv" uv run --no-sync mypy scripts/verify_browser_gate.py scripts/browser_gate_fixture.py` | Exit 0: 2 files clean |
+| Fast simulation E2E (in-memory SQLite) | `PYTHONPATH=. uv run --frozen --all-groups python scripts/verify_phase7_simulation_remediation_e2e.py` | Exit 0: 10/10 steps passed (unit coverage with mocked network boundaries) |
+| PostgreSQL concurrency suite (real PostgreSQL 18) | `docker compose -p aegisops-verify -f docker-compose.yml -f docker-compose.verify.yml --profile verify run --rm verify` | Exit 0: 5 passed, 1 skipped, 158 deselected in 10.21s (proposal claim race, simulation expiry race, outbox dispatch lease race) |
+| Isolated browser gate (Run 1 / 3) | `UV_NO_SYNC=1 make browser` | Exit 0 (`aegisops-browser-c10d48c1`): 8 passed (9.2s), UID 10001 & schedule check passed, cleanup passed |
+| Isolated browser gate (Run 2 / 3) | `UV_NO_SYNC=1 make browser` | Exit 0 (`aegisops-browser-098d8852`): 8 passed (9.2s), UID 10001 & schedule check passed, cleanup passed |
+| Isolated browser gate (Run 3 / 3) | `UV_NO_SYNC=1 make browser` | Exit 0 (`aegisops-browser-9d6d8741`): 8 passed (10.0s), UID 10001 & schedule check passed, cleanup passed |
 
-`UV_NO_SYNC=1 make browser` exited 0: **8 passed, 0 failed, 0 skipped** in 8.9s. The intercepted HTTP 403 displayed the expected error, no success badge and no persisted run. The positive test created offline run `399d183e-af4a-4e06-b8bb-c74a6cdfa386` for incident `00000000-0000-0000-0000-000000000067`, verified the workspace/incident association, and displayed the persisted identity/state after reload. Beat's explicit UID 10001 and `/tmp/celerybeat-schedule` assertion passed, as did singleton dispatch, pre-TTL fault preservation, unattended real reset and repeated-cleanup idempotency.
+**Browser gate triple verification (3/3 consecutive runs):**
+`UV_NO_SYNC=1 make browser` was executed three consecutive times from a clean state. All three runs passed with 0 failures:
+- **Run 1:** Project `aegisops-browser-c10d48c1`: production build passed, Beat schedule in `/tmp` as UID 10001 passed, 8 Playwright tests passed (9.2s), unattended fault reset verified, idempotent periodic cleanup verified.
+- **Run 2:** Project `aegisops-browser-098d8852`: production build passed, Beat schedule assertions passed, 8 Playwright tests passed (9.2s), unattended fault reset and idempotency verified.
+- **Run 3:** Project `aegisops-browser-9d6d8741`: production build passed, Beat schedule assertions passed, 8 Playwright tests passed (10.0s), unattended fault reset and idempotency verified.
 
-The CI-equivalent gate used fresh migrations and authenticated fixtures in isolated project `aegisops-browser-44bb273b`, API `127.0.0.1:32769`, and a production frontend build. Cleanup removed its containers, PostgreSQL volume and network. No source correction or dependency change was needed. Hosted CI and live inference/full telemetry-to-remediation verification remain NOT VERIFIED.
-
-Runtime evidence: [full gate transcript](../artifacts/aegisops-browser-44bb273b/gate.txt), [watchdog](../artifacts/aegisops-browser-44bb273b/watchdog.txt), [container logs](../artifacts/aegisops-browser-44bb273b/compose.log). Ignored local artifacts. Earlier unit/static command transcripts remain under `/tmp/aegisops-release-tests.log` and `/tmp/aegisops-release-static.log`.
+All three gates used isolated PostgreSQL/Redis/API/worker/scheduler/shop-api stacks, dynamic loopback ports, and fresh migrations/fixtures. All containers, volumes, and networks were torn down cleanly after each run. Hosted CI and live model inference remain NOT VERIFIED.
 
 ---
 

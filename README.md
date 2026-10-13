@@ -4,11 +4,11 @@
 
 AegisOps detects application incidents using production-grade observability infrastructure (OpenTelemetry, Prometheus, Alertmanager, Loki), ingests authenticated alerts idempotently into a FastAPI/PostgreSQL control plane, presents an audit-ready Next.js incident feed, and investigates incidents through scoped, evidence-grounded **Google ADK** AI agents.
 
-> **Status:** **Phase 6 Verified.** PostgreSQL transactional outbox pattern, Celery outbox delivery worker with `FOR UPDATE SKIP LOCKED` leasing and jittered exponential backoff, HMAC-SHA256 signed event envelopes with 300s replay bounds, self-hosted n8n operator automation workflows (`incident-created`, `incident-investigated`, `approval-requested`, `incident-resolved`), human-governed remediation proposals with canonical SHA-256 parameter hashing, RBAC gating (`admin`/`owner` only), lazy and periodic expiry, Next.js Proposals & Deliveries UI (`/app/proposals`), and complete Phase 6 verification suite (20/20 unit/integration/security tests passing) are implemented and verified. Phase 7 (Remediation Execution & Staging Safety Sandbox) is unlocked and ready.
+> **Status:** **Phase 7 Verified (Phase 8 Unlocked).** Closed-loop Incident Simulation Lab with six real fault scenarios (S01–S06), persistent run state and lifecycle controller, human-approved remediation execution engine with strict staging-only allowlist boundary (`restart_demo_service`, `rollback_demo_release`, `request_staging_rollback`), two-phase row-level claiming (`SELECT FOR UPDATE`), database unique constraint on proposal executions, and distinct operational recovery verification (`/api/v1/simulation/runs/{id}/verify-recovery`) are implemented and verified. PostgreSQL transactional outbox pattern, Celery delivery worker with `SKIP LOCKED` leasing, HMAC-SHA256 signed envelopes with 300s replay bounds, n8n operator workflows, and automated Celery Beat watchdog cleanup are verified. Hosted CI and live LLM production execution remain NOT VERIFIED. Phase 8 (Multi-Agent Swarm Evaluation) is unlocked but not started.
 
 ---
 
-## Architecture (Core Telemetry, Investigation, Outbox & Remediation Proposals)
+## Architecture (Core Telemetry, Investigation, Outbox & Controlled Remediation)
 
 ```
 Express/TypeScript (shop-api)
@@ -24,10 +24,10 @@ Express/TypeScript (shop-api)
     |                                              FastAPI Control Plane
     |                                                     |
     |                                                PostgreSQL 18 + pgvector
-    |                                                (Incidents, Outbox, Proposals)
+    |                                                (Incidents, Outbox, Proposals, Simulations)
     |                                                     |
     |                                              Next.js Dashboard
-    |                                              (/app/incidents, /app/runbooks, /app/proposals)
+    |                                              (/app/incidents, /app/runbooks, /app/proposals, /app/simulation-lab)
     |
     |-- Structured JSON logs (with redaction)
               |
@@ -46,15 +46,17 @@ Transactional Outbox Pipeline
           |
     Notification Sink (Slack / Discord / Webhook Demo Sink)
 
-Remediation Governance (Zero-Execution Invariant in Phase 6)
+Remediation Governance & Staging Sandbox (Phase 7 Implemented)
     |
     ADK Investigation Result ---> Action Catalog Validation (Allowed IDs & Typed Schemas)
                                   |
-                                  +--> Immutable Action Proposal (Canonical SHA-256 Hash)
+                                  +--> Immutable Action Proposal (Canonical SHA-256 Hash Lock)
                                         |
                                         +--> Authorized Human Review (Admin / Owner RBAC)
                                               |-- Approve / Reject / Lazy Expiry
-                                              |-- Zero Execution in Phase 6 (execute_action raises NotImplementedError)
+                                              |-- Controlled Staging Execution (Phase 7: Two-Phase Row Claiming)
+                                              |-- Strict Staging-Only Boundary (Production targets fail closed)
+                                              +-- Distinct Recovery Verification (HTTP healthz probe check)
 ```
 
 ---
@@ -98,6 +100,11 @@ Execute the Phase 6 Outbox, n8n, and Human Approval E2E verification script:
 uv run --frozen --all-groups python scripts/verify_phase6_outbox_n8n_e2e.py
 ```
 
+Execute the Phase 7 Simulation, Controlled Remediation, and Recovery verification script (in-process SQLite):
+```bash
+uv run --frozen --all-groups python scripts/verify_phase7_simulation_remediation_e2e.py
+```
+
 ### 4. Running Tests
 ```bash
 # Code linters, formatting, and strict type-checking
@@ -108,6 +115,9 @@ make test
 
 # Phase 6 Outbox and Proposals comprehensive test suite (20 tests)
 uv run --frozen --all-groups pytest -v apps/api/tests/test_phase6_outbox_and_proposals.py
+
+# Phase 7 Simulation and Remediation comprehensive test suite
+uv run --frozen --all-groups pytest -v apps/api/tests/test_phase7_simulation_and_remediation.py apps/api/tests/test_simulation_expiry_scheduler.py
 
 # Run RAG quantitative retrieval evaluation benchmark (32 queries across 5 runbooks)
 uv run --frozen --all-groups python evaluations/rag/evaluate.py
@@ -140,7 +150,7 @@ The gate removes its containers, volumes and image tags on exit. Runtime evidenc
 - [`AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md`](AEGISOPS_MASTER_IMPLEMENTATION_PLAN.md): Approved master architecture, phase gates, and roadmaps.
 - [`AGENTS.md`](AGENTS.md): Operational instructions and security rules for coding agents.
 - [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md): Current phase status, verified deliverables, and upcoming milestones.
-- [`docs/ENGINEERING_DECISIONS.md`](docs/ENGINEERING_DECISIONS.md): Granular decision log with 10-point interview-defensible explanations (`DEC-001` through `DEC-315`).
-- [`docs/ADR/`](docs/ADR/): Architecture Decision Records (`ADR-001` through `ADR-026`).
-- [`docs/PHASE_REPORTS/`](docs/PHASE_REPORTS/): Verification reports and empirical benchmark artifacts (Phases 0–6).
+- [`docs/ENGINEERING_DECISIONS.md`](docs/ENGINEERING_DECISIONS.md): Granular decision log with 10-point interview-defensible explanations (`DEC-001` through `DEC-332`).
+- [`docs/ADR/`](docs/ADR/): Architecture Decision Records (`ADR-001` through `ADR-027`).
+- [`docs/PHASE_REPORTS/`](docs/PHASE_REPORTS/): Verification reports and empirical benchmark artifacts (Phases 0–7).
 - [`automations/n8n/README.md`](automations/n8n/README.md): n8n Community integration guide, webhook security, and operator workflows.
