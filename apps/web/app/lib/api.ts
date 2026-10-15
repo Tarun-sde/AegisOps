@@ -47,7 +47,9 @@ export interface IncidentListResponse {
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.API_URL ||
-  "http://127.0.0.1:8000";
+  (typeof window !== "undefined" && window.location.hostname === "localhost"
+    ? "http://localhost:8000"
+    : "http://127.0.0.1:8000");
 
 function getCsrfToken(): string | undefined {
   if (typeof document === "undefined") return undefined;
@@ -118,9 +120,13 @@ export async function apiFetch(
 
 export async function getIncidents(
   statusFilter?: string,
+  page = 1,
+  severity?: string,
 ): Promise<{ data: IncidentListResponse | null; error: string | null }> {
   try {
     const url = new URL(`${API_BASE}/api/v1/incidents`);
+    url.searchParams.set("page", String(page));
+    if (severity) url.searchParams.set("severity", severity);
     if (statusFilter) {
       url.searchParams.set("status", statusFilter);
     }

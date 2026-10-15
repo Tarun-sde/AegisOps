@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import {
   executeProposal,
   getProposals,
+  getProposalExecution,
   getSimulationRunEvents,
   getSimulationRuns,
   getSimulationScenarios,
@@ -47,6 +48,11 @@ export default function SimulationLabPage() {
       setScenarios(scRes.data);
     }
 
+    if (rRes.error) {
+      setError(rRes.error);
+      setActiveRun(null);
+    }
+    if (pRes.error) setError(pRes.error);
     if (rRes.data) {
       setRuns(rRes.data.items);
       const active = rRes.data.items.find((r) => r.status === "ACTIVE") || null;
@@ -61,6 +67,22 @@ export default function SimulationLabPage() {
 
     if (pRes.data) {
       setProposals(pRes.data.items);
+      const details = await Promise.all(
+        pRes.data.items
+          .filter((p) =>
+            ["EXECUTING", "SUCCEEDED", "FAILED"].includes(p.status),
+          )
+          .map(async (p) => ({
+            id: p.id,
+            result: await getProposalExecution(p.id),
+          })),
+      );
+      const next: Record<string, ActionExecution> = {};
+      for (const detail of details) {
+        if (detail.result.data) next[detail.id] = detail.result.data;
+        if (detail.result.error) setError(detail.result.error);
+      }
+      setExecutions(next);
     }
     setLoading(false);
   }
@@ -146,8 +168,8 @@ export default function SimulationLabPage() {
   }
 
   return (
-    <main id="main">
-      <div className="eyebrow">Phase 7 Reliability Engineering</div>
+    <main id="main" className="ws-content simulation-page">
+      <div className="eyebrow">Bounded staging scenarios</div>
       <div className="heading">
         <h1>Incident Simulation Lab & Remediation</h1>
         <span className="badge">Isolated Staging Lab</span>
@@ -160,7 +182,11 @@ export default function SimulationLabPage() {
 
       {loading && (
         <div
-          style={{ color: "#9ca3af", marginBottom: "16px", fontSize: "0.9rem" }}
+          style={{
+            color: "var(--text-secondary)",
+            marginBottom: "16px",
+            fontSize: "0.9rem",
+          }}
         >
           Synchronizing simulation state with control plane...
         </div>
@@ -172,10 +198,10 @@ export default function SimulationLabPage() {
           style={{
             padding: "16px 20px",
             marginBottom: "24px",
-            background: "#16281e",
-            border: "1px solid #336940",
+            background: "var(--status-success-bg)",
+            border: "1px solid var(--status-success-border)",
             borderRadius: "8px",
-            color: "#a3e6b8",
+            color: "var(--status-success-text)",
             fontSize: "0.95rem",
           }}
         >
@@ -189,10 +215,10 @@ export default function SimulationLabPage() {
           style={{
             padding: "16px 20px",
             marginBottom: "24px",
-            background: "#331616",
-            border: "1px solid #772b2b",
+            background: "var(--status-error-bg)",
+            border: "1px solid var(--status-error-border)",
             borderRadius: "8px",
-            color: "#fca5a5",
+            color: "var(--status-error-text)",
             fontSize: "0.95rem",
           }}
         >
@@ -205,8 +231,8 @@ export default function SimulationLabPage() {
         <div
           className="panel"
           style={{
-            borderColor: "#d97706",
-            background: "#1f170a",
+            borderColor: "var(--status-warning-bg)",
+            background: "var(--status-warning-bg)",
             marginBottom: "36px",
           }}
         >
@@ -222,23 +248,37 @@ export default function SimulationLabPage() {
             <div>
               <span
                 className="badge"
-                style={{ borderColor: "#b45309", color: "#fbbf24" }}
+                style={{
+                  borderColor: "var(--status-warning-border)",
+                  color: "var(--status-warning-text)",
+                }}
               >
                 FAULT ACTIVE · {activeRun.scenario_id}
               </span>
-              <h2 style={{ margin: "12px 0 6px 0", color: "#fef3c7" }}>
+              <h2
+                style={{
+                  margin: "12px 0 6px 0",
+                  color: "var(--status-warning-text)",
+                }}
+              >
                 Active Simulation Run: {activeRun.id.slice(0, 8)}
               </h2>
-              <p style={{ margin: 0, fontSize: "0.9rem", color: "#d1d5db" }}>
-                Target Service: <strong>shop-api</strong> (
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: "0.9rem",
+                  color: "var(--text-primary)",
+                }}
+              >
+                Target Service: <strong>{activeRun.service_id}</strong> (
                 {activeRun.environment}) · Expected Cause:{" "}
                 <strong>{activeRun.expected_cause}</strong>
               </p>
               <p
                 style={{
                   margin: "6px 0 0 0",
-                  fontSize: "0.85rem",
-                  color: "#9ca3af",
+                  fontSize: "0.875rem",
+                  color: "var(--text-secondary)",
                 }}
               >
                 Started: {new Date(activeRun.started_at).toLocaleTimeString()} ·
@@ -251,8 +291,8 @@ export default function SimulationLabPage() {
                 onClick={() => handleResetRun(activeRun.id)}
                 disabled={isPending}
                 style={{
-                  background: "#dc2626",
-                  color: "#fff",
+                  background: "var(--status-error-bg)",
+                  color: "var(--text-primary)",
                   border: "none",
                   padding: "10px 18px",
                   borderRadius: "6px",
@@ -267,8 +307,8 @@ export default function SimulationLabPage() {
                 onClick={() => handleVerifyRecovery(activeRun.id)}
                 disabled={isPending}
                 style={{
-                  background: "#059669",
-                  color: "#fff",
+                  background: "var(--status-success-bg)",
+                  color: "var(--text-primary)",
                   border: "none",
                   padding: "10px 18px",
                   borderRadius: "6px",
@@ -286,7 +326,7 @@ export default function SimulationLabPage() {
             <div
               style={{
                 marginTop: "20px",
-                borderTop: "1px solid #3d2a0e",
+                borderTop: "1px solid var(--status-warning-bg)",
                 paddingTop: "16px",
               }}
             >
@@ -295,7 +335,7 @@ export default function SimulationLabPage() {
                   fontSize: "0.9rem",
                   textTransform: "uppercase",
                   letterSpacing: "1px",
-                  color: "#d97706",
+                  color: "var(--status-warning-text)",
                   margin: "0 0 10px 0",
                 }}
               >
@@ -311,19 +351,31 @@ export default function SimulationLabPage() {
                       display: "flex",
                       alignItems: "center",
                       gap: "12px",
-                      fontSize: "0.85rem",
-                      background: "#181408",
+                      fontSize: "0.875rem",
+                      background: "var(--status-warning-bg)",
                       padding: "8px 12px",
                       borderRadius: "4px",
                     }}
                   >
-                    <span style={{ color: "#fbbf24", fontFamily: "monospace" }}>
+                    <span
+                      style={{
+                        color: "var(--status-warning-text)",
+                        fontFamily: "monospace",
+                      }}
+                    >
                       {new Date(ev.created_at).toLocaleTimeString()}
                     </span>
-                    <span style={{ fontWeight: 600, color: "#fff" }}>
+                    <span
+                      style={{ fontWeight: 600, color: "var(--text-primary)" }}
+                    >
                       {ev.event_type}
                     </span>
-                    <span style={{ color: "#9ca3af", marginLeft: "auto" }}>
+                    <span
+                      style={{
+                        color: "var(--text-secondary)",
+                        marginLeft: "auto",
+                      }}
+                    >
                       actor: {ev.actor}
                     </span>
                   </div>
@@ -337,8 +389,8 @@ export default function SimulationLabPage() {
           className="panel"
           style={{
             marginBottom: "36px",
-            borderColor: "#1e3a2b",
-            background: "#0b1710",
+            borderColor: "var(--status-success-bg)",
+            background: "var(--status-success-bg)",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
@@ -347,16 +399,31 @@ export default function SimulationLabPage() {
                 width: "10px",
                 height: "10px",
                 borderRadius: "50%",
-                background: "#10b981",
+                background: "var(--status-success-bg)",
               }}
             />
             <div>
-              <h2 style={{ margin: 0, fontSize: "1.1rem", color: "#a7f3d0" }}>
-                Simulation Environment Normal
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: "1.1rem",
+                  color: "var(--status-success-text)",
+                }}
+              >
+                No active simulation displayed
               </h2>
-              <p style={{ margin: 0, fontSize: "0.9rem", color: "#6ee7b7" }}>
-                All background faults are cleared. Shop-API is operating
-                normally on staging.
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: "0.9rem",
+                  color: "var(--status-success-text)",
+                }}
+              >
+                {loading
+                  ? "Loading persisted simulation state…"
+                  : error
+                    ? "Simulation state unavailable. No health conclusion can be made."
+                    : "No ACTIVE run returned. Use recovery verification to check actual service health."}
               </p>
             </div>
           </div>
@@ -373,7 +440,8 @@ export default function SimulationLabPage() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+          gridTemplateColumns:
+            "repeat(auto-fill, minmax(min(100%, 340px), 1fr))",
           gap: "20px",
           marginBottom: "48px",
         }}
@@ -386,8 +454,12 @@ export default function SimulationLabPage() {
               className="panel"
               style={{
                 marginTop: 0,
-                borderColor: isActive ? "#d97706" : "#2d3739",
-                background: isActive ? "#1c160c" : "#171d20",
+                borderColor: isActive
+                  ? "var(--status-warning-bg)"
+                  : "var(--border-default)",
+                background: isActive
+                  ? "var(--status-warning-bg)"
+                  : "var(--bg-surface)",
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "space-between",
@@ -407,19 +479,19 @@ export default function SimulationLabPage() {
                     className="badge"
                     style={{
                       padding: "4px 8px",
-                      fontSize: "10px",
+                      fontSize: "0.875rem",
                       borderColor:
                         sc.risk_level === "HIGH"
-                          ? "#b91c1c"
+                          ? "var(--status-error-text)"
                           : sc.risk_level === "MEDIUM"
-                            ? "#d97706"
-                            : "#059669",
+                            ? "var(--status-warning-bg)"
+                            : "var(--status-success-bg)",
                       color:
                         sc.risk_level === "HIGH"
-                          ? "#fca5a5"
+                          ? "var(--status-error-text)"
                           : sc.risk_level === "MEDIUM"
-                            ? "#fcd34d"
-                            : "#a7f3d0",
+                            ? "var(--status-warning-text)"
+                            : "var(--status-success-text)",
                     }}
                   >
                     Risk: {sc.risk_level}
@@ -429,7 +501,7 @@ export default function SimulationLabPage() {
                   style={{
                     margin: "6px 0 10px 0",
                     fontSize: "1.15rem",
-                    color: "#fff",
+                    color: "var(--text-primary)",
                   }}
                 >
                   {sc.name}
@@ -437,7 +509,7 @@ export default function SimulationLabPage() {
                 <p
                   style={{
                     fontSize: "0.9rem",
-                    color: "#9ca3af",
+                    color: "var(--text-secondary)",
                     marginBottom: "14px",
                     lineHeight: "1.5",
                   }}
@@ -447,8 +519,8 @@ export default function SimulationLabPage() {
 
                 <div
                   style={{
-                    fontSize: "0.8rem",
-                    color: "#6b7280",
+                    fontSize: "0.875rem",
+                    color: "var(--text-secondary)",
                     marginBottom: "16px",
                   }}
                 >
@@ -470,7 +542,9 @@ export default function SimulationLabPage() {
                 <button
                   type="button"
                   onClick={() => handleStartScenario(sc.scenario_id)}
-                  disabled={isPending || (activeRun !== null && !isActive)}
+                  disabled={
+                    isPending || loading || !!error || activeRun !== null
+                  }
                   style={{
                     width: "100%",
                     padding: "10px",
@@ -481,8 +555,10 @@ export default function SimulationLabPage() {
                       (activeRun !== null && !isActive) || isPending
                         ? "not-allowed"
                         : "pointer",
-                    background: isActive ? "#f59e0b" : "#2563eb",
-                    color: "#fff",
+                    background: isActive
+                      ? "var(--status-warning-bg)"
+                      : "var(--status-info-bg)",
+                    color: "var(--text-primary)",
                     opacity: activeRun !== null && !isActive ? 0.4 : 1,
                   }}
                 >
@@ -504,7 +580,7 @@ export default function SimulationLabPage() {
 
       {proposals.length === 0 ? (
         <div className="panel" style={{ textAlign: "center", padding: "36px" }}>
-          <p style={{ margin: 0, color: "#6b7280" }}>
+          <p style={{ margin: 0, color: "var(--text-secondary)" }}>
             No remediation proposals submitted yet.
           </p>
         </div>
@@ -523,10 +599,10 @@ export default function SimulationLabPage() {
                 style={{
                   marginTop: 0,
                   borderColor: isSucceeded
-                    ? "#059669"
+                    ? "var(--status-success-bg)"
                     : isApproved
-                      ? "#2563eb"
-                      : "#374151",
+                      ? "var(--status-info-bg)"
+                      : "var(--border-default)",
                 }}
               >
                 <div
@@ -552,12 +628,12 @@ export default function SimulationLabPage() {
                         className="badge"
                         style={{
                           padding: "3px 8px",
-                          fontSize: "11px",
+                          fontSize: "0.875rem",
                           color: isSucceeded
-                            ? "#34d399"
+                            ? "var(--status-success-text)"
                             : isApproved
-                              ? "#60a5fa"
-                              : "#fbbf24",
+                              ? "var(--status-info-text)"
+                              : "var(--status-warning-text)",
                         }}
                       >
                         Status: {prop.status}
@@ -567,16 +643,16 @@ export default function SimulationLabPage() {
                       style={{
                         margin: "4px 0 8px 0",
                         fontSize: "1.1rem",
-                        color: "#fff",
+                        color: "var(--text-primary)",
                       }}
                     >
-                      Target: shop-api ({prop.environment})
+                      Target: {prop.service_id} ({prop.environment})
                     </h3>
                     <p
                       style={{
                         margin: "0 0 6px 0",
                         fontSize: "0.9rem",
-                        color: "#d1d5db",
+                        color: "var(--text-primary)",
                       }}
                     >
                       Reason: {prop.reason}
@@ -584,8 +660,8 @@ export default function SimulationLabPage() {
                     <p
                       style={{
                         margin: 0,
-                        fontSize: "0.85rem",
-                        color: "#9ca3af",
+                        fontSize: "0.875rem",
+                        color: "var(--text-secondary)",
                       }}
                     >
                       Expected Outcome: {prop.expected_outcome}
@@ -605,8 +681,8 @@ export default function SimulationLabPage() {
                         onClick={() => handleExecuteProposal(prop.id)}
                         disabled={isPending}
                         style={{
-                          background: "#059669",
-                          color: "#fff",
+                          background: "var(--status-success-bg)",
+                          color: "var(--text-primary)",
                           border: "none",
                           padding: "10px 18px",
                           borderRadius: "6px",
@@ -620,7 +696,10 @@ export default function SimulationLabPage() {
                     {isExecuting && (
                       <span
                         className="badge"
-                        style={{ borderColor: "#d97706", color: "#fbbf24" }}
+                        style={{
+                          borderColor: "var(--status-warning-bg)",
+                          color: "var(--status-warning-text)",
+                        }}
                       >
                         Claimed & Executing...
                       </span>
@@ -628,7 +707,10 @@ export default function SimulationLabPage() {
                     {isSucceeded && (
                       <span
                         className="badge"
-                        style={{ borderColor: "#059669", color: "#34d399" }}
+                        style={{
+                          borderColor: "var(--status-success-bg)",
+                          color: "var(--status-success-text)",
+                        }}
                       >
                         Execution Succeeded
                       </span>
@@ -640,11 +722,11 @@ export default function SimulationLabPage() {
                   style={{
                     marginTop: "16px",
                     padding: "12px",
-                    background: "#111618",
+                    background: "var(--bg-surface)",
                     borderRadius: "6px",
                     fontFamily: "monospace",
-                    fontSize: "0.8rem",
-                    color: "#9ca3af",
+                    fontSize: "0.875rem",
+                    color: "var(--text-secondary)",
                   }}
                 >
                   <div>Payload Hash: {prop.parameters_hash}</div>
@@ -652,8 +734,15 @@ export default function SimulationLabPage() {
                     Parameters: {JSON.stringify(prop.immutable_parameters)}
                   </div>
                   {exec && (
-                    <div style={{ marginTop: "6px", color: "#34d399" }}>
-                      Verified Post-State:{" "}
+                    <div
+                      style={{
+                        marginTop: "6px",
+                        color: "var(--status-success-text)",
+                      }}
+                    >
+                      Execution ID: {exec.id}
+                      <br />
+                      Recorded execution result:{" "}
                       {JSON.stringify(exec.post_execution_state)}
                     </div>
                   )}
@@ -676,15 +765,15 @@ export default function SimulationLabPage() {
               style={{
                 width: "100%",
                 borderCollapse: "collapse",
-                fontSize: "0.85rem",
+                fontSize: "0.875rem",
               }}
             >
               <thead>
                 <tr
                   style={{
                     textAlign: "left",
-                    color: "#9ca3af",
-                    borderBottom: "1px solid #374151",
+                    color: "var(--text-secondary)",
+                    borderBottom: "1px solid var(--border-default)",
                   }}
                 >
                   <th style={{ padding: "8px 12px" }}>Scenario</th>
@@ -696,12 +785,15 @@ export default function SimulationLabPage() {
               </thead>
               <tbody>
                 {runs.slice(0, 5).map((r) => (
-                  <tr key={r.id} style={{ borderBottom: "1px solid #1f2937" }}>
+                  <tr
+                    key={r.id}
+                    style={{ borderBottom: "1px solid var(--status-info-bg)" }}
+                  >
                     <td
                       style={{
                         padding: "8px 12px",
                         fontFamily: "monospace",
-                        color: "#fff",
+                        color: "var(--text-primary)",
                       }}
                     >
                       {r.scenario_id}
@@ -710,7 +802,7 @@ export default function SimulationLabPage() {
                       style={{
                         padding: "8px 12px",
                         fontFamily: "monospace",
-                        color: "#9ca3af",
+                        color: "var(--text-secondary)",
                       }}
                     >
                       {r.id.slice(0, 8)}
@@ -718,15 +810,25 @@ export default function SimulationLabPage() {
                     <td style={{ padding: "8px 12px" }}>
                       <span
                         className="badge"
-                        style={{ padding: "2px 6px", fontSize: "10px" }}
+                        style={{ padding: "2px 6px", fontSize: "0.875rem" }}
                       >
                         {r.status}
                       </span>
                     </td>
-                    <td style={{ padding: "8px 12px", color: "#9ca3af" }}>
+                    <td
+                      style={{
+                        padding: "8px 12px",
+                        color: "var(--text-secondary)",
+                      }}
+                    >
                       {r.cleanup_status}
                     </td>
-                    <td style={{ padding: "8px 12px", color: "#9ca3af" }}>
+                    <td
+                      style={{
+                        padding: "8px 12px",
+                        color: "var(--text-secondary)",
+                      }}
+                    >
                       {new Date(r.started_at).toLocaleTimeString()}
                     </td>
                   </tr>

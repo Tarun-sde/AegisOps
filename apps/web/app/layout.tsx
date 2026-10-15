@@ -1,40 +1,41 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import Link from "next/link";
+import { AppShell } from "./components/app-shell";
 import "./globals.css";
+import "./workspace.css";
+import "./analytics.css";
+import "./integration.css";
+import "./brand.css";
 
 export const metadata: Metadata = {
+  openGraph: {
+    title: "AegisOps · Evidence before action",
+    description:
+      "Application monitoring, scoped AI investigation and human-controlled staging response.",
+    images: [
+      {
+        url: "/aegisops-social.png",
+        width: 1200,
+        height: 630,
+        alt: "AegisOps service node mark and incident evidence workflow",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "AegisOps · Evidence before action",
+    images: ["/aegisops-social.png"],
+  },
   title: "AegisOps · Incident Intelligence & Response",
   description:
-    "Evidence-led incident investigation, deterministic monitoring, and human-approved remediation.",
+    "Evidence-led incident investigation, deterministic monitoring, and human-approved staging response.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body>
-        <a className="skip-link" href="#main">
-          Skip to content
-        </a>
-        <header>
-          <Link className="brand" href="/">
-            AEGIS<span>OPS</span>
-          </Link>
-          <nav aria-label="Main navigation">
-            <Link href="/app">Workspace</Link>
-            <Link href="/app/incidents">Incidents</Link>
-            <Link href="/app/runbooks">Runbooks</Link>
-            <Link href="/app/proposals">Proposals</Link>
-            <Link href="/app/simulation-lab">Simulation Lab</Link>
-            <Link href="/onboarding">Onboarding</Link>
-            <Link href="/login">Sign in</Link>
-          </nav>
-          <span className="badge">Phase 7 · Simulation & Remediation</span>
-        </header>
-        {children}
-        <footer>
-          Read-only foundation · No production connections or automated actions
-        </footer>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

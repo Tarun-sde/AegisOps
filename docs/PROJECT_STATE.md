@@ -1,10 +1,10 @@
 # AegisOps — Current Project State
 
-**Updated:** 2026-10-13  
-**Current phase:** Three-blocker release-gate remediation (DEC-336–DEC-338) — VERIFIED LOCALLY; Phase 8 — UNLOCKED for frontend development, NOT STARTED.
-**Overall state:** Triple isolated gate PASSED (3/3 consecutive runs): 8 Playwright passed, 0 failed/skipped; PostgreSQL multi-session concurrency suite verified (5 passed against real containerized PostgreSQL); persisted investigation and independent 403 denial verified; non-root Beat schedule, dispatch and unattended cleanup verified. Hosted CI NOT VERIFIED.
-**Source:** Master plan Phase 7/8; [audit](CODEBASE_AUDIT.md); [decision journal](ENGINEERING_DECISIONS.md), DEC-336–DEC-338 and BUG-20261012-001.
-**Governing ADR:** ADR-023, ADR-027; existing DEC-335 preserved.
+**Updated:** 2026-10-15
+**Current phase:** Phase 8 Final Source-First Design Parity — IMPLEMENTED, VERIFICATION IN PROGRESS.
+**Overall state:** Original design skeleton, CSS geometry and GSAP clocks restored in the existing frontend. The hero uses the source drawing/caption composition; workflow uses one continuously transforming operational drawing; previews retain the source window/layer structures. Workspace collections retain real authorized service/incident adapters. Matched Docker/source review and final regression gates are in progress; earlier Phase 8.4 completion is historical, not final parity acceptance.
+**Source:** User final design-parity migration brief; [active report](PHASE_REPORTS/PHASE_8_FINAL_DESIGN_PARITY.md); [source matrix](DESIGN_PARITY_SOURCE_MATRIX.md); [animation matrix](DESIGN_PARITY_ANIMATION_MATRIX.md).
+**Governing Decisions:** DEC-377–382; DEC-365 completed-scene navigation; ADR-023/027 security, ADR-028 functional integration, ADR-029/030 presentation. Earlier conflicting presentation choices are superseded as recorded in the journal.
 
 ---
 
@@ -49,7 +49,7 @@
 
 ---
 
-## 2. Current Test & Verification Summary
+## 2. Prior Phase 7 Test & Verification Summary
 
 | Check | Exact command | Actual result |
 |---|---|---|
@@ -74,13 +74,41 @@ All three gates used isolated PostgreSQL/Redis/API/worker/scheduler/shop-api sta
 
 ## 3. Phase Boundaries & Phase 8 Readiness
 
-### Untested / Blocked / Deferred (Strict Boundaries)
-- [ ] **Phase 8 Full UI Redesign:** `DEFERRED TO PHASE 8 (NOT STARTED)`.
+### Completed / Deferred / Forbidden (Strict Boundaries)
+- [x] **Phase 8 Frontend Integration:** `VERIFIED LOCALLY`; static/unit/browser/accessibility gates passed on 2026-10-14.
 - [ ] **Phase 9 40–60 Case Benchmark Evaluation:** `DEFERRED TO PHASE 9 (NOT STARTED)`.
 - [ ] **Automated Production Remediation:** `OUT OF SCOPE FOR V1 (STAGING/DEMO ONLY)`.
 - [ ] **Unrestricted Infrastructure Shell/Docker Access:** `STRICTLY FORBIDDEN (SECURITY INVARIANT)`.
 
-### Phase 8 Readiness
-**GO — local foundation ready for premium landing page, authentication UI and interactive dashboard development.**
+### Phase 8 Readiness (historical, before Phase 8.1 correction)
+**COMPLETE LOCALLY — selected frontend design integrated and acceptance gates passed; evidence limits below remain explicit.**
 
-All required targeted local gates passed. Phase 8 implementation remains NOT STARTED. Hosted CI and live model/full live-system verification are not established by this deterministic local gate. No commit or push performed.
+All Phase 7 targeted local gates passed. Phase 8 frontend integration is verified locally; acceptance evidence is in [the Phase 8 report](PHASE_REPORTS/PHASE_8_FRONTEND_INTEGRATION.md). Hosted CI and live model/full live-system verification are not established by this deterministic local gate. No commit or push performed.
+
+
+## Phase 8 integration progress — 2026-10-14
+
+Selected design source f469697 is integrated into the existing apps/web application on feat/phase8-frontend-integration. Real service cards, scoped session context, preserved incident UUID routes, persisted investigation/evidence explorer, native proposal review dialog and readable simulation/runbook controls are implemented. Dashboard time-series APIs are unavailable and explicitly labeled; backend and migrations are unchanged. Decisions ADR-028 and DEC-339–350. Final make check, make test (158 Python passed, 6 deselected; Express 1 passed), and make browser (16 passed in 23.4s plus real scheduler/expiry assertions) passed. Core accessibility/readability and 375/768/1440px layout checks passed; desktop/mobile captures reviewed. Local logs/captures: artifacts/phase8-20261014/. Phase 9 remains NOT STARTED.
+
+
+## Phase 8.1 correction complete locally — 2026-10-14
+
+Restored the committed reference’s full landing and motion, original workspace/card/list/sidebar, analytics frame and persisted investigation presentation. User-authorized ADR-029 supersedes the prior selective visual rewrite. Main Compose web was rebuilt/recreated without replacing API/Postgres/Redis or existing volumes. Final image `sha256:175cc0163b5d9ec2632cac1c5f1ad001e4e0eaf34c61de7630fc4a7416305b71`, Next build `fHtE5t1qf8t8KXjNtc4nA`; 49 runtime source/package hashes match. Main backend/agent/worker/infrastructure files are unchanged.
+
+`make check` PASS; `make test` 158 Python passed, 6 deselected, 132 warnings, Express 1 passed; `make browser` 17 passed in 41.3s on aegisops-browser-83700dc4 plus real scheduler expiry/idempotency checks. All six viewport comparisons passed; delivered hero/sidebar/card widths equal the reference. Actual images refreshed after the final scoped Simulation Lab fix. Nine-route Docker axe serious/critical findings: zero. Full commands, source map, failed attempts, screenshot links and intentional differences: [fidelity report](PHASE_8_1_VISUAL_FIDELITY_REPORT.md). Local evidence: artifacts/phase8-1/.
+
+Dedicated labeled Visual QA organization/service/incident/offline evidence remain available in the existing database for review; no existing user records were modified. Live telemetry aggregation, live-model correctness, Safari/Firefox, physical-device/assistive-technology sessions and hosted CI remain unverified. Six deselected PostgreSQL integration tests were not separately rerun. Work remains uncommitted on feat/phase8-frontend-integration; no push/merge/deploy. Phase 9 NOT STARTED.
+
+## Phase 8.4 — Hero & Scroll Storytelling Restoration Complete Locally — 2026-10-15
+
+Restored the original design reference's architectural hero composition, linework density, and interactive GSAP scroll storytelling using authentic, original AegisOps observability artwork:
+- **Hero Elevation & Blueprint:** Replaced the generic left-copy/right-flowchart layout with an expansive upper `.hero-drawing` technical canvas and lower editorial `.hero-caption` band in 54%/30%/16% split. Replaced the 8-box flowchart with the original "AegisOps System Blueprint" SVG (`TopologyDrawing`, 1200×600) featuring 4 layers: structural boundaries with dimension markers, OpenTelemetry trace bus and signal instrumentation, highlighted Shop API → PostgreSQL anomalous path with 720ms latency indicator, and interactive drag-to-inspect rectangle.
+- **Scene 01 (Observe) Time-Series Signal Repair:** De-coupled the time-series in `SignalChart` into a permanent 120ms baseline curve (`.signal-baseline`) visible from scroll progress 0.0, and an animated rising anomaly spike (`.signal-line`) with `pathLength="1"` crossing the 500ms threshold to 840ms, synchronized with a scaling alert beacon (`.signal-alert`) and dependency latency indicator.
+- **Continuous 4-Scene Incident Narrative:** Unified all four workflow scenes into one continuous investigation of sample incident `INC-DEMO-042` across Observe (latency spike), Investigate/Advise (trace waterfall + connection pool hypothesis), Act (human-governed staging remediation proposal + approval boundary), and Learn (incident ledger + runbook retrieval).
+- **Cross-Browser SVG Path Length Normalization:** Declared `pathLength="1"` on all animated stroke paths (`.signal-line`, `.evidence-link`, `.approval-route`, `.history-spine`) to ensure robust GSAP stroke-dash progress scrubbing across all browsers.
+- **Verification:** Rebuilt and recreated the live Docker container (`aegisops-web-1` on port 3000). Verified HTTP 200. Automated static checks (`UV_NO_SYNC=1 make check`) passed (Exit 0: Ruff, mypy, ESLint, Prettier, dual workspace TypeScript check). Playwright test suite (`apps/web/tests/branding.spec.ts`) passed (5/5 passed in 19.3s). Captured 24 visual QA screenshots across 5 viewports (1920×1080, 1440×900, 1024×768, 390×844, 375×812), all 4 scroll phases, reverse scrubbing, and reduced motion in `artifacts/hero-storytelling-qa/`. Decisions DEC-372–376. No commit, push, or merge performed.
+
+
+## Final design parity correction — 2026-10-15
+
+User-authorized correction in progress under DEC-377–382. Earlier local functional results do not establish final visual parity. See [active report](PHASE_REPORTS/PHASE_8_FINAL_DESIGN_PARITY.md). No phase-complete or 99% claim; Phase 9 remains NOT STARTED.

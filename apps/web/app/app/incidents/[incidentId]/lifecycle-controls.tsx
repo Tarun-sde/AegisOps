@@ -25,12 +25,36 @@ const STATUS_COLORS: Record<
   string,
   { bg: string; border: string; text: string }
 > = {
-  open: { bg: "#471818", border: "#8a2f2f", text: "#f59e9e" },
-  acknowledged: { bg: "#232b38", border: "#3b5270", text: "#a4c2e6" },
-  mitigating: { bg: "#3d2c14", border: "#805c24", text: "#edd098" },
-  resolved: { bg: "#1b2420", border: "#3a5746", text: "#a3d9b8" },
-  closed: { bg: "#1f2328", border: "#3d444d", text: "#8b949e" },
-  reopened: { bg: "#3b1e2b", border: "#7a2a4b", text: "#f29ec2" },
+  open: {
+    bg: "var(--status-error-bg)",
+    border: "var(--status-error-border)",
+    text: "var(--status-error-text)",
+  },
+  acknowledged: {
+    bg: "var(--status-info-bg)",
+    border: "var(--status-info-border)",
+    text: "var(--status-info-text)",
+  },
+  mitigating: {
+    bg: "var(--status-warning-bg)",
+    border: "var(--status-warning-border)",
+    text: "var(--status-warning-text)",
+  },
+  resolved: {
+    bg: "var(--bg-surface)",
+    border: "var(--border-default)",
+    text: "var(--status-success-text)",
+  },
+  closed: {
+    bg: "var(--bg-surface)",
+    border: "var(--border-default)",
+    text: "var(--text-secondary)",
+  },
+  reopened: {
+    bg: "var(--status-error-bg)",
+    border: "var(--status-error-border)",
+    text: "var(--status-error-text)",
+  },
 };
 
 interface LifecycleControlsProps {
@@ -103,7 +127,9 @@ export function LifecycleControls({
               {currentStatus.toUpperCase()}
             </span>
           </h2>
-          <span style={{ fontSize: "0.85rem", color: "#8b949e" }}>
+          <span
+            style={{ fontSize: "0.875rem", color: "var(--text-secondary)" }}
+          >
             Optimistic Concurrency: <code>v{currentVersion}</code> &bull;
             Auditable state transitions enforced
           </span>
@@ -118,17 +144,21 @@ export function LifecycleControls({
               disabled={submitting}
               onClick={() => handleTransition(target)}
               style={{
-                fontSize: "0.85rem",
+                fontSize: "0.875rem",
                 padding: "8px 14px",
-                borderColor: STATUS_COLORS[target]?.border || "#506047",
-                color: STATUS_COLORS[target]?.text || "#e1e4ea",
+                background: STATUS_COLORS[target]?.bg || "var(--bg-surface)",
+                borderColor:
+                  STATUS_COLORS[target]?.border || "var(--border-default)",
+                color: STATUS_COLORS[target]?.text || "var(--text-primary)",
               }}
             >
               {submitting ? "Updating..." : ACTION_LABELS[target] || target}
             </button>
           ))}
           {allowedNext.length === 0 && (
-            <span style={{ color: "#8b949e", fontSize: "0.9rem" }}>
+            <span
+              style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}
+            >
               Terminal state reached.
             </span>
           )}
@@ -140,8 +170,8 @@ export function LifecycleControls({
           htmlFor="transition-reason"
           style={{
             display: "block",
-            fontSize: "0.85rem",
-            color: "#8b949e",
+            fontSize: "0.875rem",
+            color: "var(--text-secondary)",
             marginBottom: "6px",
           }}
         >
@@ -156,10 +186,10 @@ export function LifecycleControls({
           style={{
             width: "100%",
             padding: "8px 12px",
-            background: "#0d1117",
-            border: "1px solid #30363d",
+            background: "var(--status-info-bg)",
+            border: "1px solid var(--border-default)",
             borderRadius: "6px",
-            color: "#e6edf3",
+            color: "var(--status-info-text)",
             fontSize: "0.9rem",
             boxSizing: "border-box",
           }}
@@ -172,11 +202,11 @@ export function LifecycleControls({
           style={{
             marginTop: "12px",
             padding: "8px 12px",
-            background: "#3b1e22",
-            border: "1px solid #8a2f2f",
+            background: "var(--status-error-bg)",
+            border: "1px solid var(--status-error-border)",
             borderRadius: "6px",
-            color: "#f85149",
-            fontSize: "0.85rem",
+            color: "var(--status-error-text)",
+            fontSize: "0.875rem",
           }}
         >
           <strong>Transition Error:</strong> {error}
@@ -188,11 +218,11 @@ export function LifecycleControls({
           style={{
             marginTop: "12px",
             padding: "8px 12px",
-            background: "#1b2a20",
-            border: "1px solid #3a5746",
+            background: "var(--bg-surface)",
+            border: "1px solid var(--border-default)",
             borderRadius: "6px",
-            color: "#7ee787",
-            fontSize: "0.85rem",
+            color: "var(--status-success-text)",
+            fontSize: "0.875rem",
           }}
         >
           {successMsg}

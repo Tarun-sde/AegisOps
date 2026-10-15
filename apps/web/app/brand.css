@@ -1,0 +1,114 @@
+/* DEC-377–380: only brand and essential accessibility adaptations over source CSS. */
+:root {
+  --paper: #e0e0da;
+  --ink: #282828;
+  --red: #2862a3;
+}
+.logo svg,
+.ws-brand svg,
+.intro-statement > svg {
+  color: #2862a3;
+}
+.issue-marker .marker-pin {
+  fill: #b43e35;
+}
+.issue-marker:focus-visible .marker-hit {
+  stroke: #2862a3;
+  stroke-width: 2;
+}
+.topology-drawing text {
+  user-select: none;
+}
+.hero {
+  position: relative;
+}
+.hero-inspection {
+  border-top: 1px solid var(--rule);
+  padding: 10px var(--gutter);
+  background: var(--paper);
+  font: 12px/1.5 var(--font-mono);
+}
+.hero-inspection p {
+  margin: 0;
+}
+.hero-inspection h2 {
+  font: inherit;
+  font-weight: 600;
+}
+.hero:has(.hero-inspection) {
+  height: auto;
+}
+.hero:has(.hero-inspection) .hero-drawing {
+  flex: none;
+  height: calc(100dvh - var(--header-height) - 140px);
+  min-height: 350px;
+}
+.marketing-surface .hero-metadata,
+.marketing-surface .feature-index,
+.marketing-surface .feature-tabs button .mono {
+  color: #51514b;
+}
+.marketing-surface .feature-tabs button[aria-pressed="true"] .mono {
+  color: #e0e0da;
+}
+.marketing-surface .arrow-link,
+.marketing-surface .nav-contact {
+  color: #2862a3;
+}
+.marketing-surface .approval-detail {
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.marketing-surface .product-preview::after {
+  pointer-events: none;
+}
+.practice-glyph svg {
+  width: 30px;
+  height: 30px;
+}
+/* Five real destinations occupy the reference's six-cell rail. */
+.desktop-nav {
+  grid-template-columns: 1fr 1.2fr 0.8fr 0.8fr 1.2fr;
+}
+@media (min-width: 992px) and (max-width: 1199px) {
+  .header .wordmark {
+    width: 35%;
+  }
+  .desktop-nav {
+    width: 65%;
+  }
+}
+@media (max-width: 600px) {
+  .hero .hero-metadata {
+    font-size: 9px;
+  }
+  .hero-metadata > span:last-child {
+    display: none;
+  }
+  .hero .drawing-toolbar {
+    gap: 8px;
+  }
+  .hero .drawing-toolbar > span:last-child {
+    font-size: 8px;
+  }
+  .phase-nav button {
+    flex-wrap: wrap;
+  }
+  .feature-tabs {
+    overflow-x: auto;
+    grid-template-columns: repeat(5, minmax(112px, 1fr));
+  }
+}
+
+@media (max-width: 991px) {
+  .hero:has(.hero-inspection) .hero-drawing {
+    height: auto;
+    min-height: 480px;
+  }
+}
+@media (max-width: 600px) {
+  .hero:has(.hero-inspection) .hero-drawing {
+    min-height: 400px;
+  }
+}

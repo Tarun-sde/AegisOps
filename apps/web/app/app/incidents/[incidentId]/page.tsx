@@ -1,312 +1,177 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getIncident, getIncidentEvents } from "../../../lib/api";
+import { getIncident, getIncidentEvents, getServices } from "../../../lib/api";
+import { StatusBadge } from "../../../components/status-badge";
 import { InvestigationPanel } from "./investigation-panel";
 import { LifecycleControls } from "./lifecycle-controls";
 import { DeploymentContext } from "./deployment-context";
 import { TraceViewer } from "./trace-viewer";
-
 export const dynamic = "force-dynamic";
-
-interface PageProps {
+const utc = (value: string) =>
+  new Date(value).toISOString().replace("T", " ").slice(0, 19) + " UTC";
+export default async function IncidentDetailPage({
+  params,
+}: {
   params: Promise<{ incidentId: string }>;
-}
-
-function getEventBadgeStyle(eventType: string): {
-  bg: string;
-  border: string;
-  color: string;
-} {
-  switch (eventType) {
-    case "alert_correlated":
-      return { bg: "#1f2233", border: "#3b4870", color: "#a4b9f2" };
-    case "incident_created":
-      return { bg: "#3d1f1f", border: "#7a2f2f", color: "#f2a4a4" };
-    case "incident_status_changed":
-      return { bg: "#172733", border: "#2f5c80", color: "#8ec4f5" };
-    case "alert_firing_duplicate":
-      return { bg: "#362615", border: "#6e4a21", color: "#e6b485" };
-    case "incident_resolved":
-    case "alert_resolved":
-      return { bg: "#1b2a20", border: "#3a5746", color: "#a3d9b8" };
-    case "incident_closed":
-      return { bg: "#1c2128", border: "#3d444d", color: "#8b949e" };
-    case "incident_reopened":
-      return { bg: "#3b1e2b", border: "#7a2a4b", color: "#f29ec2" };
-    default:
-      return { bg: "#161b22", border: "#30363d", color: "#c9d1d9" };
-  }
-}
-
-export default async function IncidentDetailPage({ params }: PageProps) {
+}) {
   const { incidentId } = await params;
   const {
     data: incident,
     error,
-    notFound: is404,
+    notFound: missing,
   } = await getIncident(incidentId);
-
-  if (is404) {
-    notFound();
-  }
-
-  if (error || !incident) {
+  if (missing) notFound();
+  if (error || !incident)
     return (
-      <main id="main">
-        <p className="eyebrow">Workspace / Incidents</p>
-        <div className="panel" style={{ borderColor: "#8c3b3b" }}>
-          <h2>Incident Load Error</h2>
-          <p>{error || "Unable to retrieve incident."}</p>
-          <Link href="/app/incidents" className="button">
-            &larr; Back to Incidents
-          </Link>
-        </div>
+      <main id="main" className="ws-content an-investigation">
+        <h1>Incident Load Error</h1>
+        <p role="alert">{error || "Incident unavailable"}</p>
+        <Link href="/app/incidents">Back to Incidents</Link>
       </main>
     );
-  }
-
-  const { data: events } = await getIncidentEvents(incidentId);
-
-  const isCritical = incident.severity.toLowerCase() === "critical";
-  const isOpen =
-    incident.status.toLowerCase() === "open" ||
-    incident.status.toLowerCase() === "reopened";
-
+  const [events, services] = await Promise.all([
+    getIncidentEvents(incidentId),
+    getServices(),
+  ]);
+  const service = services.data?.find((s) => s.id === incident.service_id);
+  const duration = Math.max(
+    0,
+    Math.floor(
+      ((incident.resolved_at
+        ? new Date(incident.resolved_at).getTime()
+        : Date.now()) -
+        new Date(incident.started_at).getTime()) /
+        60000,
+    ),
+  );
   return (
-    <main id="main">
-      <p className="eyebrow">
-        <Link
-          href="/app/incidents"
-          style={{ color: "#b9d391", textDecoration: "none" }}
-        >
-          &larr; Incidents
-        </Link>{" "}
-        / {incident.id}
+    <main id="main" className="ws-content an-investigation">
+      <p className="an-eyebrow">
+        <Link href="/app/incidents">← Incidents</Link> / {incident.id}
       </p>
-
-      <div className="heading">
+      <div className="an-investigation-header">
         <h1>{incident.title}</h1>
-        <div>
-          <span
-            className="badge"
-            style={{
-              background: isOpen
-                ? isCritical
-                  ? "#471818"
-                  : "#3d2c14"
-                : "#1b2420",
-              borderColor: isOpen
-                ? isCritical
-                  ? "#8a2f2f"
-                  : "#805c24"
-                : "#3a5746",
-              color: isOpen ? (isCritical ? "#f59e9e" : "#edd098") : "#a3d9b8",
-              marginRight: "8px",
-            }}
-          >
-            {incident.status.toUpperCase()}
-          </span>
-          <span
-            className="badge"
-            style={{
-              borderColor: isCritical ? "#8a2f2f" : "#805c24",
-              color: isCritical ? "#f59e9e" : "#edd098",
-            }}
-          >
-            {incident.severity.toUpperCase()}
-          </span>
+        <div className="citations">
+          <StatusBadge value={incident.severity} />
+          <StatusBadge value={incident.status} />
         </div>
       </div>
-
+      <div className="an-inline incident-meta">
+        <Link href={`/app/services/${incident.service_id}`}>
+          {service?.name ?? incident.service_id}
+        </Link>
+        <span>{incident.environment ?? "Environment not reported"}</span>
+        <span>Started {utc(incident.started_at)}</span>
+        <span>
+          {duration} minutes{" "}
+          {incident.resolved_at ? "to resolution" : "at page load"}
+        </span>
+        <span>
+          {incident.correlated_alert_count ?? "Unknown"} correlated alerts
+        </span>
+      </div>
+      <nav className="ws-project-tabs" aria-label="Incident sections">
+        <a href="#investigation">Investigation & evidence</a>
+        <a href="#timeline">Timeline</a>
+        <a href="#deployment-context-title">Deployments</a>
+        <a href="#trace-section">Trace viewer</a>
+        <Link href="/app/proposals">Action proposals</Link>
+      </nav>
       <LifecycleControls
         incidentId={incident.id}
         currentStatus={incident.status}
-        currentVersion={incident.version || 1}
+        currentVersion={incident.version ?? 1}
       />
-
-      <div className="grid" style={{ marginTop: "24px" }}>
-        <section aria-labelledby="meta-title" className="panel">
-          <p className="eyebrow">Operational Scope</p>
-          <h2 id="meta-title">Incident Metadata</h2>
-          <ul
-            style={{
-              listStyle: "none",
-              padding: 0,
-              lineHeight: 2,
-              color: "#b7c3c6",
-            }}
+      <InvestigationPanel
+        key={incident.id}
+        incidentId={incident.id}
+        timeline={
+          <section
+            id="timeline"
+            aria-labelledby="timeline-title"
+            className="an-panel an-timeline"
           >
-            <li>
-              <strong>Incident ID:</strong> <code>{incident.id}</code>
-            </li>
-            <li>
-              <strong>Environment:</strong>{" "}
-              <code style={{ color: "#79c0ff" }}>
-                {incident.environment || "staging"}
-              </code>
-            </li>
-            <li>
-              <strong>Correlated Alerts:</strong>{" "}
-              <strong style={{ color: "#e6edf3" }}>
-                {incident.correlated_alert_count || 1}
-              </strong>
-            </li>
-            <li>
-              <strong>Fingerprint:</strong> <code>{incident.fingerprint}</code>
-            </li>
-            <li>
-              <strong>State Version:</strong>{" "}
-              <code>v{incident.version || 1}</code>
-            </li>
-            <li>
-              <strong>Started:</strong>{" "}
-              {new Date(incident.started_at).toLocaleString()}
-            </li>
-            {incident.resolved_at && (
-              <li>
-                <strong>Resolved:</strong>{" "}
-                {new Date(incident.resolved_at).toLocaleString()}
-              </li>
+            <p className="an-eyebrow">Durable audit trail</p>
+            <h2 id="timeline-title">Incident Timeline Events</h2>
+            {events.error ? (
+              <p role="alert">{events.error}</p>
+            ) : !events.data?.length ? (
+              <p>No timeline events recorded.</p>
+            ) : (
+              events.data.map((ev) => (
+                <details key={ev.id} className="timeline-event">
+                  <summary>
+                    <StatusBadge value={ev.event_type} /> {utc(ev.occurred_at)}{" "}
+                    · {ev.actor}
+                  </summary>
+                  <pre>{JSON.stringify(ev.payload, null, 2)}</pre>
+                </details>
+              ))
             )}
-            <li>
-              <strong>Source Provider:</strong> Prometheus &bull; Alertmanager
-            </li>
-          </ul>
-        </section>
-
-        <section aria-labelledby="ai-title" className="panel">
-          <p className="eyebrow">Phase 4 Investigation Subsystem</p>
-          <h2 id="ai-title">Google ADK Incident Investigator</h2>
-          <p style={{ color: "#9eaeb2", fontSize: "0.9rem", lineHeight: 1.6 }}>
-            Autonomous investigation agent integrating verified service metrics,
-            structured logs, distributed traces, and authorized GitHub
-            deployment context with anti-hallucination evidence validation.
-          </p>
-          <div
-            style={{
-              marginTop: "12px",
-              display: "flex",
-              gap: "8px",
-              flexWrap: "wrap",
-            }}
-          >
-            <span
-              className="badge"
-              style={{
-                background: "#1c261e",
-                borderColor: "#3d5742",
-                color: "#9ee0a9",
-              }}
-            >
-              Google ADK 2.11.0
-            </span>
-            <span
-              className="badge"
-              style={{
-                background: "#172733",
-                borderColor: "#2f5c80",
-                color: "#8ec4f5",
-              }}
-            >
-              Celery + Redis Worker
-            </span>
-            <span
-              className="badge"
-              style={{
-                background: "#221d2b",
-                borderColor: "#4a3563",
-                color: "#c69eed",
-              }}
-            >
-              Scoped GitHub Read-Only
-            </span>
+          </section>
+        }
+      />
+      <section className="an-panel an-actions" aria-labelledby="actions-title">
+        <div className="an-section-heading">
+          <div>
+            <span className="an-eyebrow">04 / Governed next steps</span>
+            <h2 id="actions-title">Review before acting.</h2>
           </div>
-        </section>
-      </div>
-
+          <span className="an-demo">Human review required</span>
+        </div>
+        <div className="an-action-grid">
+          <article>
+            <span>01 · Diagnose</span>
+            <h3>Inspect the evidence</h3>
+            <p>
+              Review supporting records, contradictions and missing context.
+            </p>
+            <a className="ws-button" href="#investigation">
+              Review investigation ↗
+            </a>
+          </article>
+          <article>
+            <span>02 · Review</span>
+            <h3>Review exact parameters</h3>
+            <p>
+              Approval binds to an immutable payload. It does not execute an
+              action.
+            </p>
+            <Link className="ws-button ws-primary" href="/app/proposals">
+              Open proposals ↗
+            </Link>
+          </article>
+          <article>
+            <span>03 · Verify</span>
+            <h3>Observe recovery</h3>
+            <p>
+              Allowlisted staging execution and recovery verification remain
+              separate.
+            </p>
+            <Link className="ws-button" href="/app/simulation-lab">
+              Open Simulation Lab ↗
+            </Link>
+          </article>
+        </div>
+      </section>
       <DeploymentContext
         serviceId={incident.service_id}
         incidentEnvironment={incident.environment}
       />
-
-      <InvestigationPanel incidentId={incident.id} />
-
-      <section
-        aria-labelledby="timeline-title"
-        className="panel"
-        style={{ marginTop: "24px" }}
-      >
-        <p className="eyebrow">Durable Audit Trail</p>
-        <h2 id="timeline-title">Incident Timeline Events</h2>
-
-        {!events || events.length === 0 ? (
-          <p>No timeline events recorded for this incident.</p>
-        ) : (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "12px",
-              marginTop: "16px",
-            }}
-          >
-            {events.map((ev) => {
-              const badgeStyle = getEventBadgeStyle(ev.event_type);
-              return (
-                <div
-                  key={ev.id}
-                  style={{
-                    borderLeft: `2px solid ${badgeStyle.border}`,
-                    paddingLeft: "16px",
-                    paddingBottom: "8px",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "12px",
-                      alignItems: "center",
-                    }}
-                  >
-                    <span
-                      className="badge"
-                      style={{
-                        padding: "4px 8px",
-                        background: badgeStyle.bg,
-                        borderColor: badgeStyle.border,
-                        color: badgeStyle.color,
-                        fontSize: "0.8rem",
-                      }}
-                    >
-                      {ev.event_type}
-                    </span>
-                    <span style={{ fontSize: "0.85rem", color: "#9eaeb2" }}>
-                      {new Date(ev.occurred_at).toLocaleString()} by{" "}
-                      <code>{ev.actor}</code>
-                    </span>
-                  </div>
-                  {ev.payload && Object.keys(ev.payload).length > 0 && (
-                    <pre
-                      style={{
-                        background: "#101416",
-                        padding: "8px 12px",
-                        borderRadius: "4px",
-                        marginTop: "8px",
-                        fontSize: "0.8rem",
-                        overflowX: "auto",
-                      }}
-                    >
-                      {JSON.stringify(ev.payload, null, 2)}
-                    </pre>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+      <div id="trace-section">
+        <TraceViewer />
+      </div>
+      <section className="an-panel">
+        <h2>Incident metadata</h2>
+        <p>
+          Fingerprint: <code>{incident.fingerprint}</code>
+        </p>
+        <p>
+          State version: {incident.version ?? "Not reported"} · Service:{" "}
+          <code>{incident.service_id}</code>
+        </p>
+        {incident.resolved_at && <p>Resolved {utc(incident.resolved_at)}</p>}
       </section>
-
-      <TraceViewer />
     </main>
   );
 }

@@ -56,3 +56,11 @@ flowchart TD
 ## Change control
 
 Add/extend an ADR before changing a major boundary. Record all behavior-affecting defaults and smaller decisions using `DEC-XXX` entries. Update this file only after developer-authorized design changes, and update statuses after implementation evidence exists.
+
+## Phase 8.1 presentation integration — ADR-029 (2026-10-14)
+
+The canonical Next.js application remains `apps/web`. Public marketing uses the committed design reference’s complete architectural SVGs, GSAP timelines and Lenis scroll clock, with reduced-motion handling and route cleanup. The marketing preloader/cursor/Lenis are isolated from operational forms; the route curtain is shared. Original reference base, workspace and analytics CSS precede scoped integration rules. Operational screens share the approved readable workspace palette and sidebar, backed by the existing session organization and service UUIDs. `/app/services/{serviceId}` resolves against the authorized services response; existing incident, runbook, proposal and Simulation Lab routes remain.
+
+No Project entity, new backend endpoint, browser-local operational state, or infrastructure credential is introduced. API calls still pass through `app/lib/api.ts`. Incident pagination uses existing backend query parameters. Investigation history provides the authoritative execution mode; the existing detail response omits that persisted field. Evidence explorer citations resolve only against records matching the selected run, organization and service, in addition to backend validation.
+
+Dashboard rate/latency/SLI/error-budget series are explicitly unavailable: the observability stack does not yet expose a scoped dashboard aggregation API. Existing trace, deployment and evidence reads continue through FastAPI. The native proposal review dialog shows immutable parameters and their full hash before invoking the existing approval operation. Approval, execution and recovery remain separate; production execution stays disabled. See the Phase 8.1 visual fidelity report for current verification and the Phase 8 report for historical functional evidence. ADR-029 supersedes ADR-028’s selective visual rewrite, without changing its API/security boundaries.

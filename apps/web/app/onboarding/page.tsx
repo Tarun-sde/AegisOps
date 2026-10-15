@@ -6,14 +6,10 @@ import { createService, verifyServiceConnection } from "../lib/api";
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const [name, setName] = useState("shop-api");
-  const [environment, setEnvironment] = useState("production");
-  const [description, setDescription] = useState(
-    "Core e-commerce checkout and catalog API",
-  );
-  const [connectorUrl, setConnectorUrl] = useState(
-    "http://shop-api:8080/healthz",
-  );
+  const [name, setName] = useState("");
+  const [environment, setEnvironment] = useState("");
+  const [description, setDescription] = useState("");
+  const [connectorUrl, setConnectorUrl] = useState("");
   const [serviceId, setServiceId] = useState<string | null>(null);
 
   const [savingService, setSavingService] = useState(false);
@@ -67,7 +63,7 @@ export default function OnboardingPage() {
       <p className="eyebrow">AegisOps / Workspace Onboarding</p>
       <div className="heading">
         <h1>Connect your first service</h1>
-        <span className="badge">Phase 3 · Foundation</span>
+        <span className="badge">Service registration</span>
       </div>
       <p className="intro">
         Configure a monitored service to correlate alerts, distributed traces,
@@ -76,13 +72,14 @@ export default function OnboardingPage() {
 
       {error && (
         <div
+          role="alert"
           style={{
-            background: "#2d1616",
-            border: "1px solid #6b2828",
-            color: "#f87171",
+            background: "var(--status-error-bg)",
+            border: "1px solid var(--status-error-border)",
+            color: "var(--status-error-text)",
             padding: "10px 14px",
             borderRadius: "5px",
-            fontSize: "13px",
+            fontSize: "0.875rem",
             marginBottom: "16px",
           }}
         >
@@ -98,9 +95,9 @@ export default function OnboardingPage() {
               htmlFor="service-name-input"
               style={{
                 display: "block",
-                fontSize: "12px",
+                fontSize: "0.875rem",
                 marginBottom: "6px",
-                color: "#9eaeb2",
+                color: "var(--text-secondary)",
               }}
             >
               Service Name
@@ -116,10 +113,10 @@ export default function OnboardingPage() {
               style={{
                 width: "100%",
                 padding: "10px 12px",
-                background: "#101416",
-                border: "1px solid #343e40",
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border-default)",
                 borderRadius: "5px",
-                color: "#edf1f2",
+                color: "var(--text-primary)",
                 fontSize: "14px",
               }}
             />
@@ -130,28 +127,32 @@ export default function OnboardingPage() {
               htmlFor="env-select"
               style={{
                 display: "block",
-                fontSize: "12px",
+                fontSize: "0.875rem",
                 marginBottom: "6px",
-                color: "#9eaeb2",
+                color: "var(--text-secondary)",
               }}
             >
               Environment
             </label>
             <select
               id="env-select"
+              required
               disabled={!!serviceId}
               value={environment}
               onChange={(e) => setEnvironment(e.target.value)}
               style={{
                 width: "100%",
                 padding: "10px 12px",
-                background: "#101416",
-                border: "1px solid #343e40",
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border-default)",
                 borderRadius: "5px",
-                color: "#edf1f2",
+                color: "var(--text-primary)",
                 fontSize: "14px",
               }}
             >
+              <option value="" disabled>
+                Select environment
+              </option>
               <option value="production">Production</option>
               <option value="staging">Staging</option>
               <option value="development">Development</option>
@@ -163,9 +164,9 @@ export default function OnboardingPage() {
               htmlFor="service-desc-input"
               style={{
                 display: "block",
-                fontSize: "12px",
+                fontSize: "0.875rem",
                 marginBottom: "6px",
-                color: "#9eaeb2",
+                color: "var(--text-secondary)",
               }}
             >
               Description
@@ -180,10 +181,10 @@ export default function OnboardingPage() {
               style={{
                 width: "100%",
                 padding: "10px 12px",
-                background: "#101416",
-                border: "1px solid #343e40",
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border-default)",
                 borderRadius: "5px",
-                color: "#edf1f2",
+                color: "var(--text-primary)",
                 fontSize: "14px",
               }}
             />
@@ -203,7 +204,11 @@ export default function OnboardingPage() {
             </button>
           ) : (
             <div
-              style={{ color: "#a3d9b8", fontSize: "13px", marginTop: "8px" }}
+              style={{
+                color: "var(--status-success-text)",
+                fontSize: "0.875rem",
+                marginTop: "8px",
+              }}
             >
               ✓ Service registered successfully (ID: {serviceId})
             </div>
@@ -214,7 +219,7 @@ export default function OnboardingPage() {
       {serviceId && (
         <div className="panel">
           <h2 style={{ marginTop: 0 }}>2. Verify Healthcheck Connector</h2>
-          <p style={{ fontSize: "13px" }}>
+          <p style={{ fontSize: "0.875rem" }}>
             Test endpoint connectivity with server-side SSRF validation
             (protects cloud metadata & private networks).
           </p>
@@ -224,9 +229,9 @@ export default function OnboardingPage() {
               htmlFor="connector-url-input"
               style={{
                 display: "block",
-                fontSize: "12px",
+                fontSize: "0.875rem",
                 marginBottom: "6px",
-                color: "#9eaeb2",
+                color: "var(--text-secondary)",
               }}
             >
               Healthcheck URL
@@ -236,14 +241,14 @@ export default function OnboardingPage() {
               type="url"
               value={connectorUrl}
               onChange={(e) => setConnectorUrl(e.target.value)}
-              placeholder="http://shop-api:8080/healthz"
+              placeholder="https://your-service.example/healthz"
               style={{
                 width: "100%",
                 padding: "10px 12px",
-                background: "#101416",
-                border: "1px solid #343e40",
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border-default)",
                 borderRadius: "5px",
-                color: "#edf1f2",
+                color: "var(--text-primary)",
                 fontSize: "14px",
               }}
             />
@@ -266,8 +271,10 @@ export default function OnboardingPage() {
             {verifyResult && (
               <span
                 style={{
-                  color: verifyResult.success ? "#a3d9b8" : "#f87171",
-                  fontSize: "13px",
+                  color: verifyResult.success
+                    ? "var(--status-success-text)"
+                    : "var(--status-error-text)",
+                  fontSize: "0.875rem",
                 }}
               >
                 {verifyResult.success ? "✓" : "✗"} {verifyResult.message}

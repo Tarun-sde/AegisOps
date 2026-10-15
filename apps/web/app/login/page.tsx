@@ -56,7 +56,7 @@ export default function LoginPage() {
             display: "flex",
             gap: "12px",
             marginBottom: "24px",
-            borderBottom: "1px solid #30383a",
+            borderBottom: "1px solid var(--border-default)",
             paddingBottom: "12px",
           }}
         >
@@ -69,7 +69,9 @@ export default function LoginPage() {
             style={{
               background: "none",
               border: "none",
-              color: !isRegister ? "#c9e6a0" : "#9eaeb2",
+              color: !isRegister
+                ? "var(--status-success-text)"
+                : "var(--text-secondary)",
               fontWeight: !isRegister ? 700 : 400,
               cursor: "pointer",
               fontSize: "14px",
@@ -87,7 +89,9 @@ export default function LoginPage() {
             style={{
               background: "none",
               border: "none",
-              color: isRegister ? "#c9e6a0" : "#9eaeb2",
+              color: isRegister
+                ? "var(--status-success-text)"
+                : "var(--text-secondary)",
               fontWeight: isRegister ? 700 : 400,
               cursor: "pointer",
               fontSize: "14px",
@@ -100,13 +104,14 @@ export default function LoginPage() {
 
         {error && (
           <div
+            role="alert"
             style={{
-              background: "#2d1616",
-              border: "1px solid #6b2828",
-              color: "#f87171",
+              background: "var(--status-error-bg)",
+              border: "1px solid var(--status-error-border)",
+              color: "var(--status-error-text)",
               padding: "10px 14px",
               borderRadius: "5px",
-              fontSize: "13px",
+              fontSize: "0.875rem",
               marginBottom: "16px",
             }}
           >
@@ -121,9 +126,9 @@ export default function LoginPage() {
                 htmlFor="name-input"
                 style={{
                   display: "block",
-                  fontSize: "12px",
+                  fontSize: "0.875rem",
                   marginBottom: "6px",
-                  color: "#9eaeb2",
+                  color: "var(--text-secondary)",
                 }}
               >
                 Full Name
@@ -137,10 +142,10 @@ export default function LoginPage() {
                 style={{
                   width: "100%",
                   padding: "10px 12px",
-                  background: "#101416",
-                  border: "1px solid #343e40",
+                  background: "var(--bg-surface)",
+                  border: "1px solid var(--border-default)",
                   borderRadius: "5px",
-                  color: "#edf1f2",
+                  color: "var(--text-primary)",
                   fontSize: "14px",
                 }}
               />
@@ -152,15 +157,16 @@ export default function LoginPage() {
               htmlFor="email-input"
               style={{
                 display: "block",
-                fontSize: "12px",
+                fontSize: "0.875rem",
                 marginBottom: "6px",
-                color: "#9eaeb2",
+                color: "var(--text-secondary)",
               }}
             >
               Work Email
             </label>
             <input
               id="email-input"
+              autoComplete="email"
               type="email"
               required
               value={email}
@@ -169,10 +175,10 @@ export default function LoginPage() {
               style={{
                 width: "100%",
                 padding: "10px 12px",
-                background: "#101416",
-                border: "1px solid #343e40",
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border-default)",
                 borderRadius: "5px",
-                color: "#edf1f2",
+                color: "var(--text-primary)",
                 fontSize: "14px",
               }}
             />
@@ -183,15 +189,16 @@ export default function LoginPage() {
               htmlFor="password-input"
               style={{
                 display: "block",
-                fontSize: "12px",
+                fontSize: "0.875rem",
                 marginBottom: "6px",
-                color: "#9eaeb2",
+                color: "var(--text-secondary)",
               }}
             >
               Password
             </label>
             <input
               id="password-input"
+              autoComplete={isRegister ? "new-password" : "current-password"}
               type="password"
               required
               minLength={8}
@@ -201,10 +208,10 @@ export default function LoginPage() {
               style={{
                 width: "100%",
                 padding: "10px 12px",
-                background: "#101416",
-                border: "1px solid #343e40",
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border-default)",
                 borderRadius: "5px",
-                color: "#edf1f2",
+                color: "var(--text-primary)",
                 fontSize: "14px",
               }}
             />
@@ -234,13 +241,13 @@ export default function LoginPage() {
           style={{
             marginTop: "20px",
             textAlign: "center",
-            fontSize: "12px",
-            color: "#9eaeb2",
+            fontSize: "0.875rem",
+            color: "var(--text-secondary)",
           }}
         >
-          Demo instance:{" "}
-          <Link href="/app" style={{ color: "#aedcd0" }}>
-            Enter as demo guest
+          Workspace access:{" "}
+          <Link href="/app" style={{ color: "var(--status-success-text)" }}>
+            Open workspace (sign-in required)
           </Link>
         </div>
       </div>

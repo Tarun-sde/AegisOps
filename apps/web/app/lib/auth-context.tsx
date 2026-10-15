@@ -60,13 +60,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    try {
-      await logoutUser();
-    } finally {
-      setUser(null);
-      setActiveOrg(null);
-      setRole(null);
-    }
+    const result = await logoutUser();
+    if (result.error) throw new Error(result.error);
+    setUser(null);
+    setActiveOrg(null);
+    setRole(null);
   }, []);
 
   useEffect(() => {

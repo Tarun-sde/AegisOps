@@ -28,3 +28,18 @@ Governed by `ADR-017`, `DEC-209`–`DEC-228`. Commit lockfiles after software is
 - Linux LiteLLM wheel SHA-256 **416c3538ea78b08d637ec45564a919232aa2093e73adb9dd7752f7cff2ec585e** matched PyPI metadata; no `.pth`, `sitecustomize.py` or `usercustomize.py`. Pre-install exported-lock audit found no known vulnerabilities. This is scoped evidence, not a complete supply-chain assurance claim.
 - Groq combined native tools/schema capability is disabled to follow vendor documentation; ADK's existing structured response tool is used instead. Gemini retains its native ADK adapter. Offline HTTP tests verify the bridge; neither live provider has passed yet.
 - Final check commands/outcomes: [comparison report](PHASE_REPORTS/PHASE_00_MODEL_COMPARISON.md).
+
+## Phase 8 frontend integration — DEC-342 / DEC-350 (historical)
+
+- Runtime Next.js 16.4.0 / React 19.3.0 pins unchanged; no runtime package added.
+- Development-only `@axe-core/playwright` **4.13.0**, transitive `axe-core` **4.13.0**, exact package-lock records. Installed package README confirms `new AxeBuilder({page}).analyze()` integration. `npm install` reported 0 known vulnerabilities in the resolved 367-package tree on 2026-10-14.
+- Local Inter and Geist Mono Latin variable WOFF2 files copied selectively from design source's installed Fontsource packages, with original OFL notices under `apps/web/public/licenses/`. They load from the application origin; no external font service.
+- Phase 8 originally avoided GSAP/Lenis; this visual strategy is superseded by Phase 8.1 below. No Python dependency change.
+
+
+## Phase 8.1 design fidelity — ADR-029 / DEC-351–358
+
+- Next.js **16.4.0** and React **19.3.0** remain unchanged.
+- Runtime additions match the reference lock: **gsap 3.15.0**, **@gsap/react 2.1.2**, **lenis 1.3.26**. Exact pins and integrity records are in the main package lock. No design-repository lockfile is imported.
+- Installed READMEs/types verified the GSAP context/revert lifecycle and Lenis ticker/CSS/cleanup integration. Their original source choreography is required by the explicit Phase 8.1 correction; a native approximation was rejected. These dependencies enlarge the frontend runtime/test surface; no performance gain is claimed.
+- Existing licensed local fonts and axe development dependency remain. No Python/backend/worker dependency changes.

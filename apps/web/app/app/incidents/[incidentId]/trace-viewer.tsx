@@ -58,12 +58,12 @@ export function TraceViewer({ initialTraceId = "" }: TraceViewerProps) {
           style={{
             flex: 1,
             padding: "8px 12px",
-            background: "#101416",
-            border: "1px solid #343e40",
+            background: "var(--bg-surface)",
+            border: "1px solid var(--border-default)",
             borderRadius: "5px",
-            color: "#edf1f2",
+            color: "var(--text-primary)",
             fontFamily: "monospace",
-            fontSize: "13px",
+            fontSize: "0.875rem",
           }}
         />
         <button
@@ -83,12 +83,12 @@ export function TraceViewer({ initialTraceId = "" }: TraceViewerProps) {
       {error && (
         <div
           style={{
-            background: "#2d1616",
-            border: "1px solid #6b2828",
-            color: "#f87171",
+            background: "var(--status-error-bg)",
+            border: "1px solid var(--status-error-border)",
+            color: "var(--status-error-text)",
             padding: "10px 14px",
             borderRadius: "5px",
-            fontSize: "13px",
+            fontSize: "0.875rem",
             marginBottom: "16px",
           }}
         >
@@ -104,31 +104,33 @@ export function TraceViewer({ initialTraceId = "" }: TraceViewerProps) {
               gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
               gap: "12px",
               padding: "12px 16px",
-              background: "#101416",
+              background: "var(--bg-surface)",
               borderRadius: "6px",
-              border: "1px solid #283032",
+              border: "1px solid var(--border-default)",
               marginBottom: "20px",
             }}
           >
             <div>
               <div
                 style={{
-                  fontSize: "11px",
-                  color: "#9eaeb2",
+                  fontSize: "0.875rem",
+                  color: "var(--text-secondary)",
                   textTransform: "uppercase",
                 }}
               >
                 Root Service
               </div>
-              <div style={{ fontWeight: 600, color: "#c9e6a0" }}>
+              <div
+                style={{ fontWeight: 600, color: "var(--status-success-text)" }}
+              >
                 {trace.service_name}
               </div>
             </div>
             <div>
               <div
                 style={{
-                  fontSize: "11px",
-                  color: "#9eaeb2",
+                  fontSize: "0.875rem",
+                  color: "var(--text-secondary)",
                   textTransform: "uppercase",
                 }}
               >
@@ -139,8 +141,8 @@ export function TraceViewer({ initialTraceId = "" }: TraceViewerProps) {
             <div>
               <div
                 style={{
-                  fontSize: "11px",
-                  color: "#9eaeb2",
+                  fontSize: "0.875rem",
+                  color: "var(--text-secondary)",
                   textTransform: "uppercase",
                 }}
               >
@@ -153,8 +155,8 @@ export function TraceViewer({ initialTraceId = "" }: TraceViewerProps) {
             <div>
               <div
                 style={{
-                  fontSize: "11px",
-                  color: "#9eaeb2",
+                  fontSize: "0.875rem",
+                  color: "var(--text-secondary)",
                   textTransform: "uppercase",
                 }}
               >
@@ -168,10 +170,10 @@ export function TraceViewer({ initialTraceId = "" }: TraceViewerProps) {
 
           <h3
             style={{
-              fontSize: "13px",
+              fontSize: "0.875rem",
               textTransform: "uppercase",
               letterSpacing: "1px",
-              color: "#9eaeb2",
+              color: "var(--text-secondary)",
               marginBottom: "12px",
             }}
           >
@@ -195,8 +197,8 @@ export function TraceViewer({ initialTraceId = "" }: TraceViewerProps) {
                 <div
                   key={span.span_id}
                   style={{
-                    background: "#121719",
-                    border: "1px solid #283032",
+                    background: "var(--bg-surface)",
+                    border: "1px solid var(--border-default)",
                     borderRadius: "4px",
                     padding: "8px 12px",
                   }}
@@ -218,17 +220,19 @@ export function TraceViewer({ initialTraceId = "" }: TraceViewerProps) {
                     >
                       <span
                         style={{
-                          fontSize: "11px",
+                          fontSize: "0.875rem",
                           fontFamily: "monospace",
-                          color: "#9eaeb2",
-                          background: "#1c2225",
+                          color: "var(--text-secondary)",
+                          background: "var(--bg-surface)",
                           padding: "2px 6px",
                           borderRadius: "3px",
                         }}
                       >
                         {span.service_name}
                       </span>
-                      <strong style={{ fontSize: "13px" }}>{span.name}</strong>
+                      <strong style={{ fontSize: "0.875rem" }}>
+                        {span.name}
+                      </strong>
                     </div>
 
                     <div
@@ -238,18 +242,27 @@ export function TraceViewer({ initialTraceId = "" }: TraceViewerProps) {
                         alignItems: "center",
                       }}
                     >
-                      <span style={{ fontSize: "12px", color: "#9eaeb2" }}>
+                      <span
+                        style={{
+                          fontSize: "0.875rem",
+                          color: "var(--text-secondary)",
+                        }}
+                      >
                         {span.duration_ms.toFixed(2)} ms
                       </span>
                       <span
                         style={{
-                          fontSize: "10px",
+                          fontSize: "0.875rem",
                           fontWeight: 700,
                           padding: "2px 6px",
                           borderRadius: "3px",
-                          background: isError ? "#3d1414" : "#142d1e",
-                          color: isError ? "#f87171" : "#a3d9b8",
-                          border: `1px solid ${isError ? "#6b2828" : "#285e3a"}`,
+                          background: isError
+                            ? "var(--status-error-bg)"
+                            : "var(--status-success-bg)",
+                          color: isError
+                            ? "var(--status-error-text)"
+                            : "var(--status-success-text)",
+                          border: `1px solid ${isError ? "var(--status-error-border)" : "var(--status-success-border)"}`,
                         }}
                       >
                         {isError ? "ERROR" : "OK"}
@@ -262,7 +275,7 @@ export function TraceViewer({ initialTraceId = "" }: TraceViewerProps) {
                     style={{
                       width: "100%",
                       height: "6px",
-                      background: "#1c2225",
+                      background: "var(--bg-surface)",
                       borderRadius: "3px",
                       overflow: "hidden",
                     }}
@@ -271,7 +284,9 @@ export function TraceViewer({ initialTraceId = "" }: TraceViewerProps) {
                       style={{
                         width: `${widthPercent}%`,
                         height: "100%",
-                        background: isError ? "#ef4444" : "#84cc16",
+                        background: isError
+                          ? "var(--status-error-bg)"
+                          : "var(--status-success-text)",
                         borderRadius: "3px",
                       }}
                     />

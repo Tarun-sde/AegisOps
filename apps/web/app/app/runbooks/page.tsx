@@ -171,9 +171,9 @@ export default function RunbooksPage() {
         <span
           className="badge"
           style={{
-            background: "#1b2420",
-            borderColor: "#3a5746",
-            color: "#a3d9b8",
+            background: "var(--bg-surface)",
+            borderColor: "var(--border-default)",
+            color: "var(--status-success-text)",
           }}
         >
           READY · INDEXED
@@ -185,9 +185,9 @@ export default function RunbooksPage() {
         <span
           className="badge"
           style={{
-            background: "#2b1d1d",
-            borderColor: "#6b3333",
-            color: "#f87171",
+            background: "var(--bg-surface)",
+            borderColor: "var(--status-error-border)",
+            color: "var(--status-error-text)",
           }}
         >
           FAILED
@@ -198,9 +198,9 @@ export default function RunbooksPage() {
       <span
         className="badge"
         style={{
-          background: "#2b2615",
-          borderColor: "#63552d",
-          color: "#fbbf24",
+          background: "var(--status-warning-bg)",
+          borderColor: "var(--status-warning-border)",
+          color: "var(--status-warning-text)",
         }}
       >
         {s}
@@ -209,11 +209,11 @@ export default function RunbooksPage() {
   }
 
   return (
-    <main id="main">
+    <main id="main" className="ws-content">
       <p className="eyebrow">Workspace / Knowledge Subsystem</p>
       <div className="heading">
         <h1>Operational Runbooks</h1>
-        <span className="badge">Phase 5 · Hybrid RAG Engine</span>
+        <span className="badge">Scoped runbook knowledge</span>
       </div>
       <p className="intro">
         Tenant-scoped knowledge base providing verified troubleshooting runbooks
@@ -224,9 +224,9 @@ export default function RunbooksPage() {
         <div
           className="panel"
           style={{
-            borderColor: "#3a5746",
-            background: "#16201b",
-            color: "#a3d9b8",
+            borderColor: "var(--border-default)",
+            background: "var(--bg-surface)",
+            color: "var(--status-success-text)",
             padding: "16px",
             marginBottom: "20px",
           }}
@@ -254,7 +254,7 @@ export default function RunbooksPage() {
                   display: "block",
                   marginBottom: "4px",
                   fontSize: "14px",
-                  color: "#9cb1b5",
+                  color: "var(--text-secondary)",
                 }}
               >
                 Select File (.md, .txt)
@@ -267,10 +267,10 @@ export default function RunbooksPage() {
                 style={{
                   width: "100%",
                   padding: "8px",
-                  background: "#101416",
-                  border: "1px solid #343e40",
+                  background: "var(--bg-surface)",
+                  border: "1px solid var(--border-default)",
                   borderRadius: "6px",
-                  color: "#edf1f2",
+                  color: "var(--text-primary)",
                 }}
               />
             </div>
@@ -282,7 +282,7 @@ export default function RunbooksPage() {
                   display: "block",
                   marginBottom: "4px",
                   fontSize: "14px",
-                  color: "#9cb1b5",
+                  color: "var(--text-secondary)",
                 }}
               >
                 Document Title (Optional)
@@ -296,10 +296,10 @@ export default function RunbooksPage() {
                 style={{
                   width: "100%",
                   padding: "8px 12px",
-                  background: "#101416",
-                  border: "1px solid #343e40",
+                  background: "var(--bg-surface)",
+                  border: "1px solid var(--border-default)",
                   borderRadius: "6px",
-                  color: "#edf1f2",
+                  color: "var(--text-primary)",
                 }}
               />
             </div>
@@ -311,7 +311,7 @@ export default function RunbooksPage() {
                   display: "block",
                   marginBottom: "4px",
                   fontSize: "14px",
-                  color: "#9cb1b5",
+                  color: "var(--text-secondary)",
                 }}
               >
                 Markdown Content
@@ -325,12 +325,12 @@ export default function RunbooksPage() {
                 style={{
                   width: "100%",
                   padding: "8px 12px",
-                  background: "#101416",
-                  border: "1px solid #343e40",
+                  background: "var(--bg-surface)",
+                  border: "1px solid var(--border-default)",
                   borderRadius: "6px",
-                  color: "#edf1f2",
+                  color: "var(--text-primary)",
                   fontFamily: "monospace",
-                  fontSize: "13px",
+                  fontSize: "0.875rem",
                 }}
               />
             </div>
@@ -338,7 +338,7 @@ export default function RunbooksPage() {
             {uploadError && (
               <p
                 style={{
-                  color: "#f87171",
+                  color: "var(--status-error-text)",
                   fontSize: "14px",
                   marginBottom: "12px",
                 }}
@@ -349,7 +349,7 @@ export default function RunbooksPage() {
             {uploadSuccess && (
               <p
                 style={{
-                  color: "#a3d9b8",
+                  color: "var(--status-success-text)",
                   fontSize: "14px",
                   marginBottom: "12px",
                 }}
@@ -362,8 +362,8 @@ export default function RunbooksPage() {
               type="submit"
               disabled={isUploading}
               style={{
-                background: "#b9d391",
-                color: "#101416",
+                background: "var(--status-success-text)",
+                color: "var(--bg-surface)",
                 border: "none",
                 padding: "10px 18px",
                 borderRadius: "6px",
@@ -394,7 +394,7 @@ export default function RunbooksPage() {
                   display: "block",
                   marginBottom: "4px",
                   fontSize: "14px",
-                  color: "#9cb1b5",
+                  color: "var(--text-secondary)",
                 }}
               >
                 Operational Query
@@ -408,10 +408,10 @@ export default function RunbooksPage() {
                 style={{
                   width: "100%",
                   padding: "8px 12px",
-                  background: "#101416",
-                  border: "1px solid #343e40",
+                  background: "var(--bg-surface)",
+                  border: "1px solid var(--border-default)",
                   borderRadius: "6px",
-                  color: "#edf1f2",
+                  color: "var(--text-primary)",
                 }}
               />
             </div>
@@ -424,7 +424,7 @@ export default function RunbooksPage() {
                     display: "block",
                     marginBottom: "4px",
                     fontSize: "14px",
-                    color: "#9cb1b5",
+                    color: "var(--text-secondary)",
                   }}
                 >
                   Retrieval Mode
@@ -440,10 +440,10 @@ export default function RunbooksPage() {
                   style={{
                     width: "100%",
                     padding: "8px 12px",
-                    background: "#101416",
-                    border: "1px solid #343e40",
+                    background: "var(--bg-surface)",
+                    border: "1px solid var(--border-default)",
                     borderRadius: "6px",
-                    color: "#edf1f2",
+                    color: "var(--text-primary)",
                   }}
                 >
                   <option value="hybrid">Hybrid (RRF k=60)</option>
@@ -459,7 +459,7 @@ export default function RunbooksPage() {
                     display: "block",
                     marginBottom: "4px",
                     fontSize: "14px",
-                    color: "#9cb1b5",
+                    color: "var(--text-secondary)",
                   }}
                 >
                   Limit
@@ -471,10 +471,10 @@ export default function RunbooksPage() {
                   style={{
                     width: "100%",
                     padding: "8px 12px",
-                    background: "#101416",
-                    border: "1px solid #343e40",
+                    background: "var(--bg-surface)",
+                    border: "1px solid var(--border-default)",
                     borderRadius: "6px",
-                    color: "#edf1f2",
+                    color: "var(--text-primary)",
                   }}
                 >
                   <option value={3}>Top 3</option>
@@ -487,7 +487,7 @@ export default function RunbooksPage() {
             {searchError && (
               <p
                 style={{
-                  color: "#f87171",
+                  color: "var(--status-error-text)",
                   fontSize: "14px",
                   marginBottom: "12px",
                 }}
@@ -500,9 +500,9 @@ export default function RunbooksPage() {
               type="submit"
               disabled={isSearching}
               style={{
-                background: "#243236",
-                color: "#d0dfa9",
-                border: "1px solid #506047",
+                background: "var(--status-success-bg)",
+                color: "var(--status-success-text)",
+                border: "1px solid var(--border-default)",
                 padding: "10px 18px",
                 borderRadius: "6px",
                 fontWeight: 600,
@@ -539,7 +539,7 @@ export default function RunbooksPage() {
           </div>
 
           {searchResults.length === 0 ? (
-            <p style={{ marginTop: "16px", color: "#9cb1b5" }}>
+            <p style={{ marginTop: "16px", color: "var(--text-secondary)" }}>
               No relevant runbook sections matched this query within the
               authorized scope.
             </p>
@@ -556,8 +556,8 @@ export default function RunbooksPage() {
                 <div
                   key={chunk.chunk_id}
                   style={{
-                    background: "#121719",
-                    border: "1px solid #2e3739",
+                    background: "var(--bg-surface)",
+                    border: "1px solid var(--border-default)",
                     borderRadius: "8px",
                     padding: "16px",
                   }}
@@ -573,21 +573,26 @@ export default function RunbooksPage() {
                     <div>
                       <span
                         style={{
-                          fontSize: "12px",
+                          fontSize: "0.875rem",
                           fontFamily: "monospace",
-                          color: "#b9d391",
+                          color: "var(--status-success-text)",
                           marginRight: "8px",
                         }}
                       >
                         #{idx + 1}
                       </span>
-                      <strong style={{ fontSize: "15px", color: "#edf1f2" }}>
+                      <strong
+                        style={{
+                          fontSize: "15px",
+                          color: "var(--text-primary)",
+                        }}
+                      >
                         {chunk.title}
                       </strong>
                       <span
                         style={{
-                          fontSize: "12px",
-                          color: "#839496",
+                          fontSize: "0.875rem",
+                          color: "var(--text-secondary)",
                           marginLeft: "8px",
                         }}
                       >
@@ -604,20 +609,20 @@ export default function RunbooksPage() {
                       <span
                         className="badge"
                         style={{
-                          fontSize: "11px",
+                          fontSize: "0.875rem",
                           padding: "4px 8px",
-                          background: "#192224",
+                          background: "var(--bg-surface)",
                         }}
                       >
                         Score: {chunk.relevance_score.toFixed(4)}
                       </span>
                       <code
                         style={{
-                          fontSize: "11px",
-                          background: "#1b2528",
+                          fontSize: "0.875rem",
+                          background: "var(--bg-surface)",
                           padding: "3px 6px",
                           borderRadius: "4px",
-                          color: "#aedcd0",
+                          color: "var(--status-success-text)",
                         }}
                       >
                         {chunk.evidence_id}
@@ -629,10 +634,10 @@ export default function RunbooksPage() {
                     style={{
                       margin: "8px 0 0 0",
                       padding: "12px",
-                      background: "#0c0f11",
+                      background: "var(--bg-surface)",
                       borderRadius: "6px",
-                      fontSize: "13px",
-                      color: "#c7d2d4",
+                      fontSize: "0.875rem",
+                      color: "var(--text-primary)",
                       whiteSpace: "pre-wrap",
                       fontFamily: "monospace",
                       lineHeight: "1.5",
@@ -671,11 +676,11 @@ export default function RunbooksPage() {
             onClick={loadData}
             style={{
               background: "transparent",
-              color: "#aedcd0",
-              border: "1px solid #343e40",
+              color: "var(--status-success-text)",
+              border: "1px solid var(--border-default)",
               padding: "6px 14px",
               borderRadius: "5px",
-              fontSize: "13px",
+              fontSize: "0.875rem",
               cursor: "pointer",
             }}
           >
@@ -684,7 +689,7 @@ export default function RunbooksPage() {
         </div>
 
         {fetchError ? (
-          <div style={{ marginTop: "16px", color: "#f87171" }}>
+          <div style={{ marginTop: "16px", color: "var(--status-error-text)" }}>
             Failed to load runbooks: {fetchError}
           </div>
         ) : loading ? (
@@ -710,8 +715,8 @@ export default function RunbooksPage() {
               <thead>
                 <tr
                   style={{
-                    borderBottom: "1px solid #343e40",
-                    color: "#8a9ea2",
+                    borderBottom: "1px solid var(--border-default)",
+                    color: "var(--text-secondary)",
                   }}
                 >
                   <th style={{ padding: "10px 12px" }}>Title / Filename</th>
@@ -728,14 +733,14 @@ export default function RunbooksPage() {
                 {runbooks.map((doc) => (
                   <tr
                     key={doc.id}
-                    style={{ borderBottom: "1px solid #232c2e" }}
+                    style={{ borderBottom: "1px solid var(--border-default)" }}
                   >
                     <td style={{ padding: "12px" }}>
                       <strong>{doc.title}</strong>
                       <div
                         style={{
-                          fontSize: "12px",
-                          color: "#7a8f94",
+                          fontSize: "0.875rem",
+                          color: "var(--text-secondary)",
                           marginTop: "2px",
                         }}
                       >
@@ -744,8 +749,8 @@ export default function RunbooksPage() {
                       {doc.error_message && (
                         <div
                           style={{
-                            fontSize: "12px",
-                            color: "#f87171",
+                            fontSize: "0.875rem",
+                            color: "var(--status-error-text)",
                             marginTop: "4px",
                           }}
                         >
@@ -756,11 +761,11 @@ export default function RunbooksPage() {
                     <td style={{ padding: "12px" }}>
                       <span
                         style={{
-                          background: "#1a2224",
+                          background: "var(--bg-surface)",
                           padding: "2px 6px",
                           borderRadius: "4px",
                           fontFamily: "monospace",
-                          fontSize: "12px",
+                          fontSize: "0.875rem",
                         }}
                       >
                         v{doc.version}
@@ -773,8 +778,8 @@ export default function RunbooksPage() {
                     <td
                       style={{
                         padding: "12px",
-                        color: "#9cb1b5",
-                        fontSize: "13px",
+                        color: "var(--text-secondary)",
+                        fontSize: "0.875rem",
                       }}
                     >
                       {doc.indexed_at
@@ -794,11 +799,11 @@ export default function RunbooksPage() {
                           onClick={() => handleReindex(doc.id, doc.title)}
                           style={{
                             background: "transparent",
-                            border: "1px solid #4a5a5e",
-                            color: "#aedcd0",
+                            border: "1px solid var(--border-default)",
+                            color: "var(--status-success-text)",
                             borderRadius: "4px",
                             padding: "4px 8px",
-                            fontSize: "12px",
+                            fontSize: "0.875rem",
                             cursor: "pointer",
                           }}
                         >
@@ -809,11 +814,11 @@ export default function RunbooksPage() {
                           onClick={() => handleDelete(doc.id, doc.title)}
                           style={{
                             background: "transparent",
-                            border: "1px solid #6b3333",
-                            color: "#f87171",
+                            border: "1px solid var(--status-error-border)",
+                            color: "var(--status-error-text)",
                             borderRadius: "4px",
                             padding: "4px 8px",
-                            fontSize: "12px",
+                            fontSize: "0.875rem",
                             cursor: "pointer",
                           }}
                         >

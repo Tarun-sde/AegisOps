@@ -56,40 +56,46 @@ export function DeploymentContext({
             Scoped GitHub Read-Only Integration
           </p>
           <h2 id="deployment-context-title" style={{ margin: "4px 0" }}>
-            Verified Deployment Context
+            Deployment Context
           </h2>
         </div>
         <span
           className="badge"
           style={{
-            background: "#161b22",
-            borderColor: "#30363d",
-            color: "#8b949e",
-            fontSize: "0.8rem",
+            background: "var(--bg-surface)",
+            borderColor: "var(--border-default)",
+            color: "var(--text-secondary)",
+            fontSize: "0.875rem",
           }}
         >
-          Environment: {incidentEnvironment || "staging"}
+          Environment: {incidentEnvironment || "Not reported"}
         </span>
       </div>
 
       <p
         style={{
-          color: "#8b949e",
-          fontSize: "0.85rem",
+          color: "var(--text-secondary)",
+          fontSize: "0.875rem",
           marginTop: "6px",
           lineHeight: 1.5,
         }}
       >
         Server-scoped repository metadata retrieved via least-privilege GitHub
         read adapter.
-        <em style={{ color: "#d29922", marginLeft: "6px" }}>
+        <em style={{ color: "var(--status-warning-text)", marginLeft: "6px" }}>
           Note: Deployment timing is correlation context, not automated root
           cause proof.
         </em>
       </p>
 
       {loading && (
-        <p style={{ color: "#8b949e", fontSize: "0.9rem", marginTop: "12px" }}>
+        <p
+          style={{
+            color: "var(--text-secondary)",
+            fontSize: "0.9rem",
+            marginTop: "12px",
+          }}
+        >
           Querying authorized GitHub repository deployments...
         </p>
       )}
@@ -99,11 +105,11 @@ export function DeploymentContext({
           style={{
             marginTop: "12px",
             padding: "8px 12px",
-            background: "#211a1d",
-            border: "1px solid #63333e",
+            background: "var(--bg-surface)",
+            border: "1px solid var(--status-error-border)",
             borderRadius: "6px",
-            color: "#f85149",
-            fontSize: "0.85rem",
+            color: "var(--status-error-text)",
+            fontSize: "0.875rem",
           }}
         >
           <strong>GitHub Integration Warning:</strong> {error} (investigator
@@ -116,11 +122,11 @@ export function DeploymentContext({
           style={{
             marginTop: "12px",
             padding: "12px",
-            background: "#0d1117",
-            border: "1px dashed #30363d",
+            background: "var(--status-info-bg)",
+            border: "1px dashed var(--border-default)",
             borderRadius: "6px",
-            color: "#8b949e",
-            fontSize: "0.85rem",
+            color: "var(--text-secondary)",
+            fontSize: "0.875rem",
           }}
         >
           No deployments or recent commits recorded for this service.
@@ -141,8 +147,8 @@ export function DeploymentContext({
             <div
               key={dep.deployment_id}
               style={{
-                background: "#0d1117",
-                border: "1px solid #30363d",
+                background: "var(--status-info-bg)",
+                border: "1px solid var(--border-default)",
                 borderRadius: "6px",
                 padding: "10px 14px",
                 display: "flex",
@@ -159,22 +165,33 @@ export function DeploymentContext({
                   <span
                     className="badge"
                     style={{
-                      background: dep.is_deployment ? "#1b2a20" : "#232b38",
-                      borderColor: dep.is_deployment ? "#3a5746" : "#3b5270",
-                      color: dep.is_deployment ? "#7ee787" : "#a4c2e6",
-                      fontSize: "0.75rem",
+                      background: dep.is_deployment
+                        ? "var(--bg-surface)"
+                        : "var(--border-default)",
+                      borderColor: dep.is_deployment
+                        ? "var(--border-default)"
+                        : "var(--status-info-border)",
+                      color: dep.is_deployment
+                        ? "var(--status-success-text)"
+                        : "var(--status-info-text)",
+                      fontSize: "0.875rem",
                     }}
                   >
                     {dep.is_deployment ? "DEPLOYMENT" : "COMMIT"}
                   </span>
-                  <strong style={{ color: "#e6edf3", fontSize: "0.9rem" }}>
+                  <strong
+                    style={{
+                      color: "var(--status-info-text)",
+                      fontSize: "0.9rem",
+                    }}
+                  >
                     {dep.repository}
                   </strong>
                   {dep.version && (
                     <span
                       style={{
-                        color: "#d2a8ff",
-                        fontSize: "0.85rem",
+                        color: "var(--status-info-text)",
+                        fontSize: "0.875rem",
                         fontWeight: 600,
                       }}
                     >
@@ -183,9 +200,9 @@ export function DeploymentContext({
                   )}
                   <code
                     style={{
-                      fontSize: "0.8rem",
-                      color: "#79c0ff",
-                      background: "#161b22",
+                      fontSize: "0.875rem",
+                      color: "var(--status-info-text)",
+                      background: "var(--bg-surface)",
                       padding: "2px 6px",
                       borderRadius: "4px",
                     }}
@@ -197,8 +214,8 @@ export function DeploymentContext({
                   <p
                     style={{
                       margin: "4px 0 0 0",
-                      color: "#8b949e",
-                      fontSize: "0.8rem",
+                      color: "var(--text-secondary)",
+                      fontSize: "0.875rem",
                     }}
                   >
                     {dep.message}
@@ -209,12 +226,17 @@ export function DeploymentContext({
               <div
                 style={{
                   textAlign: "right",
-                  fontSize: "0.8rem",
-                  color: "#8b949e",
+                  fontSize: "0.875rem",
+                  color: "var(--text-secondary)",
                 }}
               >
                 <div>{new Date(dep.deployed_at).toLocaleString()}</div>
-                <div style={{ fontSize: "0.75rem", color: "#58a6ff" }}>
+                <div
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "var(--status-info-text)",
+                  }}
+                >
                   via {dep.source}
                 </div>
               </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import { ReviewDialog } from "../../components/review-dialog";
 import {
   approveProposal,
   getOutboxDeliveries,
@@ -39,6 +40,7 @@ export default function ProposalsPage() {
       setProposals(pRes.data.items);
     }
 
+    if (dRes.error) setError(dRes.error);
     if (dRes.data) {
       setDeliveries(dRes.data.items);
     }
@@ -112,8 +114,9 @@ export default function ProposalsPage() {
 
   return (
     <main
+      className="ws-content proposals-page"
       id="main"
-      style={{ padding: "2rem", maxWidth: "1200px", margin: "0 auto" }}
+      style={{ padding: "2rem" }}
     >
       <div
         style={{
@@ -129,7 +132,7 @@ export default function ProposalsPage() {
               fontSize: "1.75rem",
               fontWeight: 700,
               margin: 0,
-              color: "var(--foreground, #fff)",
+              color: "var(--foreground, var(--text-primary))",
             }}
           >
             Remediation Proposals & Outbox Automations
@@ -137,20 +140,20 @@ export default function ProposalsPage() {
           <p
             style={{
               margin: "0.25rem 0 0",
-              color: "#888",
+              color: "var(--text-secondary)",
               fontSize: "0.875rem",
             }}
           >
-            Phase 6 human-governed remediation review, exact parameter hashing,
-            and transactional outbox observability.
+            Human-governed remediation review, exact parameter hashing, and
+            transactional outbox observability.
           </p>
         </div>
         <button
           onClick={handleFlushOutbox}
           style={{
-            background: "rgba(255, 255, 255, 0.08)",
-            border: "1px solid rgba(255, 255, 255, 0.2)",
-            color: "#fff",
+            background: "var(--bg-surface-hover)",
+            border: "1px solid var(--bg-surface-hover)",
+            color: "var(--text-primary)",
             padding: "0.5rem 1rem",
             borderRadius: "6px",
             fontSize: "0.875rem",
@@ -172,7 +175,9 @@ export default function ProposalsPage() {
               ? "rgba(239, 68, 68, 0.15)"
               : "rgba(16, 185, 129, 0.15)",
             border: `1px solid ${actionMessage.includes("failed") ? "rgba(239, 68, 68, 0.4)" : "rgba(16, 185, 129, 0.4)"}`,
-            color: actionMessage.includes("failed") ? "#fca5a5" : "#6ee7b7",
+            color: actionMessage.includes("failed")
+              ? "var(--status-error-text)"
+              : "var(--status-success-text)",
             fontSize: "0.875rem",
           }}
         >
@@ -185,7 +190,7 @@ export default function ProposalsPage() {
         style={{
           background: "rgba(245, 158, 11, 0.08)",
           border: "1px solid rgba(245, 158, 11, 0.3)",
-          borderRadius: "8px",
+          borderRadius: "var(--radius-lg)",
           padding: "1rem",
           marginBottom: "2rem",
           display: "flex",
@@ -196,25 +201,27 @@ export default function ProposalsPage() {
         <span style={{ fontSize: "1.25rem" }}>🛡️</span>
         <div>
           <strong
-            style={{ color: "#fcd34d", display: "block", fontSize: "0.875rem" }}
+            style={{
+              color: "var(--status-warning-text)",
+              display: "block",
+              fontSize: "0.875rem",
+            }}
           >
-            Phase 6 Governance & Non-Execution Invariant
+            Human approval / Separate staging execution
           </strong>
           <p
             style={{
               margin: "0.25rem 0 0",
-              fontSize: "0.8125rem",
-              color: "#d1d5db",
+              fontSize: "0.875rem",
+              color: "var(--text-primary)",
             }}
           >
             Proposals are created by deterministic backend policies or suggested
             by verified AI investigations. Approving an action cryptographically
             binds human authorization to the exact SHA-256 payload hash.
-            <strong>
-              {" "}
-              In Phase 6, zero remediation actions are executed.
-            </strong>{" "}
-            Execution is deferred to the Phase 7 security gate.
+            <strong> Approval does not execute an action.</strong> Review and
+            execute approved staging actions in the Simulation Lab. Production
+            execution is disabled.
           </p>
         </div>
       </div>
@@ -228,18 +235,20 @@ export default function ProposalsPage() {
         </h2>
 
         {loading ? (
-          <p style={{ color: "#888" }}>Loading remediation proposals...</p>
+          <p style={{ color: "var(--text-secondary)" }}>
+            Loading remediation proposals...
+          </p>
         ) : error ? (
-          <p style={{ color: "#f87171" }}>Error: {error}</p>
+          <p style={{ color: "var(--status-error-text)" }}>Error: {error}</p>
         ) : proposals.length === 0 ? (
           <div
             style={{
               padding: "2rem",
               textAlign: "center",
-              background: "rgba(255, 255, 255, 0.02)",
-              borderRadius: "8px",
-              border: "1px dashed rgba(255, 255, 255, 0.1)",
-              color: "#888",
+              background: "var(--bg-surface-hover)",
+              borderRadius: "var(--radius-lg)",
+              border: "1px dashed var(--bg-surface-hover)",
+              color: "var(--text-secondary)",
             }}
           >
             No remediation proposals created yet. Proposals appear when an
@@ -254,20 +263,21 @@ export default function ProposalsPage() {
               const isExpired = p.status === "EXPIRED";
 
               const statusColor = isApproved
-                ? "#10b981"
+                ? "var(--status-success-text)"
                 : isRejected
-                  ? "#ef4444"
+                  ? "var(--status-error-text)"
                   : isExpired
-                    ? "#6b7280"
-                    : "#f59e0b";
+                    ? "var(--text-secondary)"
+                    : "var(--status-warning-text)";
 
               return (
                 <div
                   key={p.id}
+                  className="proposal-card"
                   style={{
-                    background: "rgba(255, 255, 255, 0.03)",
-                    border: "1px solid rgba(255, 255, 255, 0.08)",
-                    borderRadius: "8px",
+                    background: "var(--bg-surface-hover)",
+                    border: "1px solid var(--bg-surface-hover)",
+                    borderRadius: "var(--radius-lg)",
                     padding: "1.25rem",
                   }}
                 >
@@ -292,24 +302,24 @@ export default function ProposalsPage() {
                         </span>
                         <span
                           style={{
-                            fontSize: "0.75rem",
+                            fontSize: "0.875rem",
                             padding: "0.15rem 0.5rem",
-                            borderRadius: "4px",
-                            background: "rgba(255, 255, 255, 0.08)",
-                            color: "#9ca3af",
+                            borderRadius: "var(--radius-sm)",
+                            background: "var(--bg-surface-hover)",
+                            color: "var(--text-secondary)",
                           }}
                         >
                           {p.environment}
                         </span>
                         <span
                           style={{
-                            fontSize: "0.75rem",
+                            fontSize: "0.875rem",
                             padding: "0.15rem 0.5rem",
-                            borderRadius: "4px",
+                            borderRadius: "var(--radius-sm)",
                             fontWeight: 600,
-                            background: `${statusColor}22`,
+                            background: "var(--bg-surface)",
                             color: statusColor,
-                            border: `1px solid ${statusColor}44`,
+                            border: `1px solid ${statusColor}`,
                           }}
                         >
                           {p.status}
@@ -318,11 +328,11 @@ export default function ProposalsPage() {
                       <p
                         style={{
                           margin: "0.25rem 0 0",
-                          color: "#9ca3af",
-                          fontSize: "0.8125rem",
+                          color: "var(--text-secondary)",
+                          fontSize: "0.875rem",
                         }}
                       >
-                        ID: <code style={{ fontSize: "0.75rem" }}>{p.id}</code>{" "}
+                        ID: <code style={{ fontSize: "0.875rem" }}>{p.id}</code>{" "}
                         · Expires: {new Date(p.expires_at).toLocaleString()}
                       </p>
                     </div>
@@ -332,12 +342,12 @@ export default function ProposalsPage() {
                         <button
                           onClick={() => handleOpenApprove(p)}
                           style={{
-                            background: "#059669",
-                            color: "#fff",
+                            background: "var(--status-success-bg)",
+                            color: "var(--text-primary)",
                             border: "none",
                             padding: "0.4rem 0.8rem",
-                            borderRadius: "4px",
-                            fontSize: "0.8125rem",
+                            borderRadius: "var(--radius-sm)",
+                            fontSize: "0.875rem",
                             fontWeight: 600,
                             cursor: "pointer",
                           }}
@@ -349,10 +359,10 @@ export default function ProposalsPage() {
                           style={{
                             background: "rgba(239, 68, 68, 0.2)",
                             border: "1px solid rgba(239, 68, 68, 0.4)",
-                            color: "#fca5a5",
+                            color: "var(--status-error-text)",
                             padding: "0.4rem 0.8rem",
-                            borderRadius: "4px",
-                            fontSize: "0.8125rem",
+                            borderRadius: "var(--radius-sm)",
+                            fontSize: "0.875rem",
                             fontWeight: 500,
                             cursor: "pointer",
                           }}
@@ -366,23 +376,35 @@ export default function ProposalsPage() {
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
+                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                       gap: "1rem",
                       margin: "0.75rem 0",
-                      fontSize: "0.8125rem",
+                      fontSize: "0.875rem",
                     }}
                   >
                     <div>
-                      <span style={{ color: "#6b7280" }}>Reason:</span>
-                      <p style={{ margin: "0.25rem 0", color: "#e5e7eb" }}>
+                      <span style={{ color: "var(--text-secondary)" }}>
+                        Reason:
+                      </span>
+                      <p
+                        style={{
+                          margin: "0.25rem 0",
+                          color: "var(--text-primary)",
+                        }}
+                      >
                         {p.reason}
                       </p>
                     </div>
                     <div>
-                      <span style={{ color: "#6b7280" }}>
+                      <span style={{ color: "var(--text-secondary)" }}>
                         Expected Outcome:
                       </span>
-                      <p style={{ margin: "0.25rem 0", color: "#e5e7eb" }}>
+                      <p
+                        style={{
+                          margin: "0.25rem 0",
+                          color: "var(--text-primary)",
+                        }}
+                      >
                         {p.expected_outcome}
                       </p>
                     </div>
@@ -391,30 +413,35 @@ export default function ProposalsPage() {
                   <div
                     style={{
                       marginTop: "0.5rem",
-                      fontSize: "0.75rem",
-                      color: "#6b7280",
+                      fontSize: "0.875rem",
+                      color: "var(--text-secondary)",
                     }}
                   >
                     <span>SHA-256 Hash: </span>
-                    <code style={{ color: "#93c5fd" }}>
+                    <code style={{ color: "var(--status-info-text)" }}>
                       {p.parameters_hash}
                     </code>
                   </div>
 
                   <details
-                    style={{ marginTop: "0.75rem", fontSize: "0.75rem" }}
+                    style={{ marginTop: "0.75rem", fontSize: "0.875rem" }}
                   >
-                    <summary style={{ cursor: "pointer", color: "#9ca3af" }}>
+                    <summary
+                      style={{
+                        cursor: "pointer",
+                        color: "var(--text-secondary)",
+                      }}
+                    >
                       View Immutable Parameters JSON
                     </summary>
                     <pre
                       style={{
                         background: "rgba(0, 0, 0, 0.3)",
                         padding: "0.75rem",
-                        borderRadius: "4px",
+                        borderRadius: "var(--radius-sm)",
                         overflowX: "auto",
                         marginTop: "0.5rem",
-                        color: "#d1d5db",
+                        color: "var(--text-primary)",
                       }}
                     >
                       {JSON.stringify(p.immutable_parameters, null, 2)}
@@ -436,15 +463,15 @@ export default function ProposalsPage() {
         </h2>
 
         {deliveries.length === 0 ? (
-          <p style={{ color: "#888", fontSize: "0.875rem" }}>
+          <p style={{ color: "var(--text-secondary)", fontSize: "0.875rem" }}>
             No outbound deliveries recorded yet.
           </p>
         ) : (
           <div
             style={{
-              background: "rgba(255, 255, 255, 0.02)",
-              border: "1px solid rgba(255, 255, 255, 0.08)",
-              borderRadius: "8px",
+              background: "var(--bg-surface-hover)",
+              border: "1px solid var(--bg-surface-hover)",
+              borderRadius: "var(--radius-lg)",
               overflowX: "auto",
             }}
           >
@@ -452,15 +479,15 @@ export default function ProposalsPage() {
               style={{
                 width: "100%",
                 borderCollapse: "collapse",
-                fontSize: "0.8125rem",
+                fontSize: "0.875rem",
                 textAlign: "left",
               }}
             >
               <thead>
                 <tr
                   style={{
-                    borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
-                    background: "rgba(255, 255, 255, 0.03)",
+                    borderBottom: "1px solid var(--bg-surface-hover)",
+                    background: "var(--bg-surface-hover)",
                   }}
                 >
                   <th style={{ padding: "0.75rem 1rem" }}>Event Type</th>
@@ -478,35 +505,40 @@ export default function ProposalsPage() {
                   const isDelivered = ev.status === "DELIVERED";
                   const isDeadLetter = ev.status === "DEAD_LETTERED";
                   const statusBg = isDelivered
-                    ? "#10b98122"
+                    ? "var(--status-success-bg)"
                     : isDeadLetter
-                      ? "#ef444422"
-                      : "#f59e0b22";
+                      ? "var(--status-error-bg)"
+                      : "var(--status-warning-bg)";
                   const statusFg = isDelivered
-                    ? "#34d399"
+                    ? "var(--status-success-text)"
                     : isDeadLetter
-                      ? "#f87171"
-                      : "#fbbf24";
+                      ? "var(--status-error-text)"
+                      : "var(--status-warning-text)";
 
                   return (
                     <tr
                       key={ev.id}
                       style={{
-                        borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+                        borderBottom: "1px solid var(--bg-surface-hover)",
                       }}
                     >
                       <td style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
                         {ev.event_type}
                       </td>
-                      <td style={{ padding: "0.75rem 1rem", color: "#9ca3af" }}>
+                      <td
+                        style={{
+                          padding: "0.75rem 1rem",
+                          color: "var(--text-secondary)",
+                        }}
+                      >
                         <code>{ev.aggregate_id.slice(0, 12)}...</code>
                       </td>
                       <td style={{ padding: "0.75rem 1rem" }}>
                         <span
                           style={{
                             padding: "0.15rem 0.4rem",
-                            borderRadius: "4px",
-                            fontSize: "0.75rem",
+                            borderRadius: "var(--radius-sm)",
+                            fontSize: "0.875rem",
                             fontWeight: 600,
                             background: statusBg,
                             color: statusFg,
@@ -518,7 +550,12 @@ export default function ProposalsPage() {
                       <td style={{ padding: "0.75rem 1rem" }}>
                         {ev.attempt_count} / {ev.max_attempts}
                       </td>
-                      <td style={{ padding: "0.75rem 1rem", color: "#9ca3af" }}>
+                      <td
+                        style={{
+                          padding: "0.75rem 1rem",
+                          color: "var(--text-secondary)",
+                        }}
+                      >
                         {ev.delivered_at
                           ? new Date(ev.delivered_at).toLocaleTimeString()
                           : new Date(ev.next_attempt_at).toLocaleTimeString()}
@@ -526,7 +563,9 @@ export default function ProposalsPage() {
                       <td
                         style={{
                           padding: "0.75rem 1rem",
-                          color: ev.last_error_summary ? "#fca5a5" : "#6b7280",
+                          color: ev.last_error_summary
+                            ? "var(--status-error-text)"
+                            : "var(--text-secondary)",
                         }}
                       >
                         {ev.last_error_summary
@@ -544,22 +583,12 @@ export default function ProposalsPage() {
 
       {/* Confirmation Modal */}
       {modalMode && selectedProposal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0, 0, 0, 0.7)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 100,
-          }}
-        >
+        <ReviewDialog onClose={() => setModalMode(null)} busy={isSubmitting}>
           <div
             style={{
-              background: "#18181b",
-              border: "1px solid rgba(255, 255, 255, 0.15)",
-              borderRadius: "8px",
+              background: "var(--bg-surface)",
+              border: "1px solid var(--bg-surface-hover)",
+              borderRadius: "var(--radius-lg)",
               padding: "1.5rem",
               width: "100%",
               maxWidth: "500px",
@@ -571,7 +600,7 @@ export default function ProposalsPage() {
                 : "Reject Remediation Proposal"}
             </h3>
 
-            <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
+            <p style={{ fontSize: "0.875rem", color: "var(--text-secondary)" }}>
               Action: <strong>{selectedProposal.action_catalog_id}</strong> on{" "}
               <strong>{selectedProposal.environment}</strong>
             </p>
@@ -579,23 +608,27 @@ export default function ProposalsPage() {
             <div
               style={{
                 margin: "1rem 0",
-                fontSize: "0.75rem",
-                color: "#6b7280",
+                fontSize: "0.875rem",
+                color: "var(--text-secondary)",
               }}
             >
-              <span>Verified Hash: </span>
-              <code style={{ color: "#93c5fd" }}>
-                {selectedProposal.parameters_hash.slice(0, 32)}...
+              <span>Parameters hash: </span>
+              <code style={{ color: "var(--status-info-text)" }}>
+                {selectedProposal.parameters_hash}
               </code>
             </div>
 
+            <pre>
+              {JSON.stringify(selectedProposal.immutable_parameters, null, 2)}
+            </pre>
+            {actionMessage && <p role="alert">{actionMessage}</p>}
             <label
               htmlFor="approval-comment"
               style={{
                 display: "block",
-                fontSize: "0.8125rem",
+                fontSize: "0.875rem",
                 marginBottom: "0.25rem",
-                color: "#d1d5db",
+                color: "var(--text-primary)",
               }}
             >
               Review Comment (Optional):
@@ -609,11 +642,11 @@ export default function ProposalsPage() {
 
               style={{
                 width: "100%",
-                background: "rgba(255, 255, 255, 0.05)",
-                border: "1px solid rgba(255, 255, 255, 0.2)",
-                borderRadius: "4px",
+                background: "var(--bg-surface-hover)",
+                border: "1px solid var(--bg-surface-hover)",
+                borderRadius: "var(--radius-sm)",
                 padding: "0.5rem",
-                color: "#fff",
+                color: "var(--text-primary)",
                 fontSize: "0.875rem",
                 marginBottom: "1.5rem",
               }}
@@ -631,10 +664,10 @@ export default function ProposalsPage() {
                 disabled={isSubmitting}
                 style={{
                   background: "transparent",
-                  border: "1px solid rgba(255, 255, 255, 0.2)",
-                  color: "#d1d5db",
+                  border: "1px solid var(--bg-surface-hover)",
+                  color: "var(--text-primary)",
                   padding: "0.5rem 1rem",
-                  borderRadius: "4px",
+                  borderRadius: "var(--radius-sm)",
                   cursor: "pointer",
                 }}
               >
@@ -644,11 +677,14 @@ export default function ProposalsPage() {
                 onClick={handleConfirmAction}
                 disabled={isSubmitting}
                 style={{
-                  background: modalMode === "approve" ? "#059669" : "#dc2626",
+                  background:
+                    modalMode === "approve"
+                      ? "var(--status-success-bg)"
+                      : "var(--status-error-bg)",
                   border: "none",
-                  color: "#fff",
+                  color: "var(--text-primary)",
                   padding: "0.5rem 1rem",
-                  borderRadius: "4px",
+                  borderRadius: "var(--radius-sm)",
                   fontWeight: 600,
                   cursor: "pointer",
                 }}
@@ -661,7 +697,7 @@ export default function ProposalsPage() {
               </button>
             </div>
           </div>
-        </div>
+        </ReviewDialog>
       )}
     </main>
   );

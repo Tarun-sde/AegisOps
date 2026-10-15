@@ -3,17 +3,29 @@ import { expect, test, type Page } from "@playwright/test";
 test("shell navigates to workspace and incidents feed on desktop and mobile", async ({
   page,
 }) => {
+  await login(page);
   await page.goto("/");
-  await page.getByRole("link", { name: "Open workspace" }).click();
+  await page
+    .locator(".desktop-nav")
+    .getByRole("link", { name: "Workspace" })
+    .click();
   await expect(
-    page.getByRole("heading", { name: "Operational overview" }),
+    page.getByRole("heading", { name: /Operational Overview/ }),
   ).toBeVisible();
+  const serviceResponse = await page.request.get(`${api}/api/v1/services`);
+  expect(serviceResponse.status()).toBe(200);
+  const services = await serviceResponse.json();
   await expect(
-    page.getByRole("heading", { name: "Connected Services (1)" }),
+    page.getByRole("heading", {
+      name: `Registered services (${services.length})`,
+    }),
   ).toBeVisible();
 
   // Navigate to incidents feed
-  await page.getByRole("link", { name: "Incidents" }).click();
+  await page
+    .locator(".ws-nav")
+    .getByRole("link", { name: "Incidents", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Incident Feed" }),
   ).toBeVisible();
@@ -188,12 +200,15 @@ test("responsive layout prevents horizontal document overflow across core routes
     "/app",
     "/app/incidents",
     "/app/runbooks",
+    "/platform",
+    "/app/services",
     "/app/proposals",
     "/app/simulation-lab",
     "/login",
     "/onboarding",
   ];
 
+  await login(page);
   for (const vp of viewports) {
     await page.setViewportSize(vp);
     for (const route of routes) {
@@ -221,4 +236,117 @@ test("simulation lab renders catalog and environment controls", async ({
   await expect(
     page.getByRole("heading", { name: /Failure Scenario Catalog/i }),
   ).toBeVisible();
+});
+
+test("Phase 8.3 navigation matrix: distinct public routes and valid destinations", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.locator(".header")).toHaveCount(1);
+
+  // Platform
+  await page
+    .locator(".desktop-nav")
+    .getByRole("link", { name: "Platform" })
+    .click();
+  await expect(page).toHaveURL(/\/platform$/);
+  await expect(page.locator(".header")).toHaveCount(1);
+
+  // How It Works anchor
+  await page.goto("/");
+  await page
+    .locator(".desktop-nav")
+    .getByRole("link", { name: "How It Works" })
+    .click();
+  await expect(page).toHaveURL(/\/#how-it-works$/);
+  await expect(page.locator("#how-it-works")).toBeVisible();
+
+  // GitHub external link verification
+  const githubLink = page.locator(".desktop-nav a.nav-github");
+  await expect(githubLink).toHaveAttribute(
+    "href",
+    "https://github.com/Tarun-sde/AegisOps",
+  );
+  await expect(githubLink).toHaveAttribute("target", "_blank");
+
+  // Sign In link
+  await page.locator(".desktop-nav a.nav-contact").click();
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByLabel("Work Email")).toBeVisible();
+});
+
+test("Source hero caption and workspace navigation retain distinct destinations", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.locator(".preloader")).not.toBeVisible({ timeout: 10000 });
+  await expect(
+    page.getByRole("heading", {
+      name: "An AI agent that works across your applications",
+    }),
+  ).toBeVisible();
+
+  // Primary CTA navigates to /platform
+  await page.locator(".hero-caption .arrow-link").click();
+  await expect(page).toHaveURL(/\/platform$/);
+
+  // Secondary CTA navigates to /app
+  await page.goto("/");
+  await expect(page.locator(".preloader")).not.toBeVisible({ timeout: 10000 });
+  await page.locator(".desktop-nav a[href='/app']").click();
+  await expect(page).toHaveURL(/\/login|\/app/);
+});
+
+test("Phase 8.3 operational workspace navigation and active states", async ({
+  page,
+}) => {
+  await login(page);
+
+  // 1. Overview (/app)
+  await expect(page).toHaveURL(/\/app$/);
+  await expect(page.locator(".ws-sidebar a[href='/app']")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(
+    page.getByRole("heading", { name: /Operational Overview/ }),
+  ).toBeVisible();
+
+  // 2. Services (/app/services)
+  await page.locator(".ws-sidebar a[href='/app/services']").click();
+  await expect(page).toHaveURL(/\/app\/services$/);
+  await expect(
+    page.locator(".ws-sidebar a[href='/app/services']"),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    page.getByRole("heading", { name: /Monitored Services/i }),
+  ).toBeVisible();
+
+  // 3. Incidents (/app/incidents)
+  await page.locator(".ws-sidebar a[href='/app/incidents']").click();
+  await expect(page).toHaveURL(/\/app\/incidents$/);
+  await expect(
+    page.locator(".ws-sidebar a[href='/app/incidents']"),
+  ).toHaveAttribute("aria-current", "page");
+
+  // 4. Runbooks (/app/runbooks)
+  await page.locator(".ws-sidebar a[href='/app/runbooks']").click();
+  await expect(page).toHaveURL(/\/app\/runbooks$/);
+  await expect(
+    page.locator(".ws-sidebar a[href='/app/runbooks']"),
+  ).toHaveAttribute("aria-current", "page");
+
+  // 5. Proposals (/app/proposals)
+  await page.locator(".ws-sidebar a[href='/app/proposals']").click();
+  await expect(page).toHaveURL(/\/app\/proposals$/);
+  await expect(
+    page.locator(".ws-sidebar a[href='/app/proposals']"),
+  ).toHaveAttribute("aria-current", "page");
+
+  // 6. Simulation Lab (/app/simulation-lab)
+  await page.locator(".ws-sidebar a[href='/app/simulation-lab']").click();
+  await expect(page).toHaveURL(/\/app\/simulation-lab$/);
+  await expect(
+    page.locator(".ws-sidebar a[href='/app/simulation-lab']"),
+  ).toHaveAttribute("aria-current", "page");
 });
