@@ -193,3 +193,85 @@ def test_incident_query_filters_and_404():
 
     res_events = client.get(f"/api/v1/incidents/{uuid.uuid4()}/events")
     assert res_events.status_code == 404
+
+
+def test_application_incidents_filter_before_pagination_and_inventory_counts():
+    """DEC-385: unrelated recent incidents must not hide older application records."""
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from apps.api.app.models import Incident
+
+    with TestingSessionLocal() as db:
+        service = db.scalar(select(Service))
+        org_id, service_id = service.organization_id, service.id
+        other = Service(organization_id=org_id, name="another-app")
+        foreign_org = Organization(name="Foreign workspace")
+        db.add_all([other, foreign_org])
+        db.flush()
+        foreign = Service(organization_id=foreign_org.id, name="foreign-app")
+        db.add(foreign)
+        db.flush()
+        foreign_id = foreign.id
+        now = datetime.now(UTC)
+        for index in range(25):
+            db.add(
+                Incident(
+                    organization_id=org_id,
+                    service_id=other.id,
+                    title=f"Unrelated {index}",
+                    severity="warning",
+                    status="open",
+                    fingerprint=f"other-{index}",
+                    started_at=now,
+                )
+            )
+        for index, lifecycle in enumerate(
+            ["open", "acknowledged", "mitigating", "reopened", "resolved", "closed"]
+        ):
+            db.add(
+                Incident(
+                    organization_id=org_id,
+                    service_id=service_id,
+                    title=f"Selected {index}",
+                    severity="critical",
+                    status=lifecycle,
+                    fingerprint=f"selected-{index}",
+                    started_at=now - timedelta(days=index + 1),
+                )
+            )
+        db.add(
+            Incident(
+                organization_id=foreign_org.id,
+                service_id=foreign_id,
+                title="Foreign private incident",
+                severity="critical",
+                status="open",
+                fingerprint="foreign",
+                started_at=now,
+            )
+        )
+        db.commit()
+    response = client.get(f"/api/v1/incidents?service_id={service_id}&size=2&page=2")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 6
+    assert [i["title"] for i in payload["items"]] == ["Selected 2", "Selected 3"]
+    assert all(i["service_id"] == str(service_id) for i in payload["items"])
+    filtered = client.get(
+        f"/api/v1/incidents?service_id={service_id}&status=resolved&severity=critical"
+    ).json()
+    assert filtered["total"] == 1
+    assert filtered["items"][0]["title"] == "Selected 4"
+    services = client.get("/api/v1/services").json()
+    selected = next(s for s in services if s["id"] == str(service_id))
+    assert selected["active_incident_count"] == 4
+    assert selected["last_incident_at"] is not None
+    assert len(services) == 2
+    assert client.get(f"/api/v1/incidents?service_id={foreign_id}").status_code == 404
+    assert client.get(f"/api/v1/incidents?service_id={uuid.uuid4()}").status_code == 404
+    assert client.get("/api/v1/incidents?service_id=not-a-uuid").status_code == 422
+    client.cookies.clear()
+    assert client.get(f"/api/v1/incidents?service_id={service_id}").status_code == 401
+    assert client.get("/api/v1/services").status_code == 401

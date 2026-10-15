@@ -1,13 +1,9 @@
 import Link from "next/link";
-import { getServices, getIncidents, getMe } from "../lib/api";
+import { getServices, getMe } from "../lib/api";
 import { ServiceCollection } from "../components/service-collection";
 export const dynamic = "force-dynamic";
 export default async function OperationalOverviewPage() {
-  const [services, incidents, session] = await Promise.all([
-    getServices(),
-    getIncidents(),
-    getMe(),
-  ]);
+  const [services, session] = await Promise.all([getServices(), getMe()]);
   return (
     <main id="main" className="ws-content">
       <div className="ws-page-heading">
@@ -15,18 +11,21 @@ export default async function OperationalOverviewPage() {
           <span className="mono ws-eyebrow">
             WORKSPACE / APPLICATION OVERSIGHT
           </span>
-          <h1 tabIndex={-1} aria-label="Operational Overview">
-            Operational Overview
+          <h1 tabIndex={-1} aria-label="Your Applications">
+            Your Applications
             <span className="ws-title-count">
               {services.data
                 ? String(services.data.length).padStart(2, "0")
                 : "—"}
             </span>
           </h1>
-          <p>One place to oversee every registered service.</p>
+          <p>
+            Monitor your connected services, investigate incidents and review
+            operational activity from one workspace.
+          </p>
         </div>
         <Link className="ws-button ws-primary" href="/onboarding">
-          Register service <span aria-hidden="true">＋</span>
+          Connect Application <span aria-hidden="true">＋</span>
         </Link>
       </div>
       <div className="ws-summary">
@@ -38,7 +37,7 @@ export default async function OperationalOverviewPage() {
           <small>{session.data?.role ?? "No active membership"}</small>
         </div>
         <div>
-          <span className="mono">REGISTERED SERVICES</span>
+          <span className="mono">APPLICATIONS</span>
           <strong>
             {services.data
               ? String(services.data.length).padStart(2, "0")
@@ -47,16 +46,22 @@ export default async function OperationalOverviewPage() {
           <small>Connection health not reported</small>
         </div>
         <div>
-          <span className="mono">PERSISTED INCIDENTS</span>
-          <strong>{incidents.data?.total ?? "—"}</strong>
-          <small>Authorized incident records</small>
+          <span className="mono">ACTIVE INCIDENTS</span>
+          <strong>
+            {services.data?.every((s) => s.active_incident_count != null)
+              ? services.data.reduce((n, s) => n + s.active_incident_count!, 0)
+              : "—"}
+          </strong>
+          <small>Open, acknowledged, mitigating or reopened</small>
         </div>
         <div className="ws-summary-note">
           <span className="mono">AUTHORIZED DATA / TELEMETRY BOUNDARY</span>
           <p>
-            Registration is not a health signal.
+            {services.data?.filter((s) => (s.active_incident_count ?? 0) > 0)
+              .length ?? "—"}{" "}
+            applications with active incidents.
             <br />
-            Review evidence before taking action.
+            Monitoring health remains unknown.
           </p>
         </div>
       </div>
@@ -67,10 +72,7 @@ export default async function OperationalOverviewPage() {
           <Link href="/login">Sign in to access your organization</Link>
         </section>
       ) : (
-        <ServiceCollection
-          services={services.data ?? []}
-          incidents={incidents.data}
-        />
+        <ServiceCollection services={services.data ?? []} />
       )}
     </main>
   );

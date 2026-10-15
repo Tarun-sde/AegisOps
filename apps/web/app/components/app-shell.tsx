@@ -17,6 +17,7 @@ import { AegisMark } from "./project-visuals";
 import { Selector } from "./selector";
 import { keepDialogFocus } from "./dialog-focus";
 import { SiteShell, PageLink } from "./marketing/site-shell";
+import "../workspace-redesign.css";
 const Favorites = createContext({
   pinned: [] as string[],
   toggle: (_id: string) => {
@@ -25,8 +26,7 @@ const Favorites = createContext({
 });
 export const useFavorites = () => useContext(Favorites);
 const links = [
-  ["/app", "Overview", "⊞"],
-  ["/app/services", "Services", "⎘"],
+  ["/app", "Applications", "⊞"],
   ["/app/incidents", "Incidents", "△"],
   ["/app/runbooks", "Runbooks", "≋"],
   ["/app/proposals", "Proposals", "⋈"],
@@ -40,6 +40,22 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
     [collapsed, setCollapsed] = useState(false),
     [pinned, setPinned] = useState<string[]>([]),
     [services, setServices] = useState<Service[]>([]);
+  const preferenceKey =
+    user && activeOrg ? `aegisops:${user.id}:${activeOrg.id}:favorites` : null;
+  useEffect(() => {
+    try {
+      const saved: unknown = preferenceKey
+        ? JSON.parse(localStorage.getItem(preferenceKey) ?? "[]")
+        : [];
+      setPinned(
+        Array.isArray(saved)
+          ? saved.filter((id): id is string => typeof id === "string")
+          : [],
+      );
+    } catch {
+      setPinned([]);
+    }
+  }, [preferenceKey]);
   const drawer = useRef<HTMLDialogElement>(null),
     root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -130,9 +146,9 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
               ]
         }
       />
-      <button className="ws-find" onClick={search} title="Find services">
+      <button className="ws-find" onClick={search} title="Find applications">
         <span aria-hidden="true">⌕</span>
-        <span className="ws-rail-label">Find services</span>
+        <span className="ws-rail-label">Find applications</span>
         <kbd className="ws-rail-label">F</kbd>
       </button>
       <div className="ws-nav-caption mono ws-rail-label">
@@ -146,7 +162,7 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
             title={label}
             aria-current={
               href === "/app"
-                ? path === "/app"
+                ? path === "/app" || path.startsWith("/app/services")
                   ? "page"
                   : undefined
                 : path === href || path.startsWith(`${href}/`)
@@ -156,25 +172,13 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
           >
             <span aria-hidden="true">{icon}</span>
             <span className="ws-rail-label">{label}</span>
-            {href === "/app/services" && (
+            {href === "/app" && (
               <small className="ws-rail-label">
                 {String(services.length).padStart(2, "0")}
               </small>
             )}
           </Link>
         ))}
-        {current &&
-          [
-            ["Overview", "overview"],
-            ["Analytics", "analytics"],
-            ["Services", "services"],
-            ["Activity", "activity"],
-          ].map(([label, id]) => (
-            <Link key={id} href={`#${id}`} title={label}>
-              <span aria-hidden="true">↗</span>
-              <span className="ws-rail-label">{label}</span>
-            </Link>
-          ))}
       </nav>
       <div className="ws-sidebar-favorites ws-rail-label">
         <span className="mono">
@@ -190,7 +194,7 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
               </Link>
             ))
         ) : (
-          <p>Pin services to keep them close.</p>
+          <p>Favorite applications to keep them close.</p>
         )}
       </div>
     </>
@@ -225,9 +229,18 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
       value={{
         pinned,
         toggle: (id) =>
-          setPinned((p) =>
-            p.includes(id) ? p.filter((v) => v !== id) : [...p, id],
-          ),
+          setPinned((p) => {
+            const next = p.includes(id)
+              ? p.filter((v) => v !== id)
+              : [...p, id];
+            try {
+              if (preferenceKey)
+                localStorage.setItem(preferenceKey, JSON.stringify(next));
+            } catch {
+              /* Preferences remain usable without storage. */
+            }
+            return next;
+          }),
       }}
     >
       <div
@@ -276,7 +289,7 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
               {path === "/app" && (
                 <>
                   <span>/</span>
-                  <span aria-current="page">Overview</span>
+                  <span aria-current="page">Applications</span>
                 </>
               )}
               {path.startsWith("/app/services") && (
@@ -284,12 +297,12 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
                   <span>/</span>
                   {current ? (
                     <>
-                      <PageLink href="/app/services">Services</PageLink>
+                      <PageLink href="/app">Applications</PageLink>
                       <span>/</span>
                       <span aria-current="page">{current.name}</span>
                     </>
                   ) : (
-                    <span aria-current="page">Services</span>
+                    <span aria-current="page">Applications</span>
                   )}
                 </>
               )}
@@ -336,16 +349,13 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
             ☰<span>Menu</span>
           </button>
           <Link href="/app">
-            ⊞<span>Overview</span>
-          </Link>
-          <Link href="/app/services">
-            ⎘<span>Services</span>
+            ⊞<span>Applications</span>
           </Link>
           <Link href="/app/incidents">
             △<span>Incidents</span>
           </Link>
           <Link href="/onboarding">
-            ＋<span>Register</span>
+            ＋<span>Connect</span>
           </Link>
         </nav>
         {/* Native modal traps keyboard focus and delegates link activation. */}

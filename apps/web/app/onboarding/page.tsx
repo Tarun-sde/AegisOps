@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createService, verifyServiceConnection } from "../lib/api";
@@ -32,7 +33,9 @@ export default function OnboardingPage() {
       setSavingService(false);
       return;
     }
+    setName(res.data.name);
     setServiceId(res.data.id);
+    router.refresh();
     setSavingService(false);
   };
 
@@ -59,248 +62,159 @@ export default function OnboardingPage() {
   };
 
   return (
-    <main id="main" style={{ maxWidth: "680px" }}>
-      <p className="eyebrow">AegisOps / Workspace Onboarding</p>
-      <div className="heading">
-        <h1>Connect your first service</h1>
-        <span className="badge">Service registration</span>
+    <main id="main" className="ws-content application-connect">
+      <div className="ws-project-context">
+        <Link href="/app">← All applications</Link>
+        <span className="mono">APPLICATION SETUP</span>
       </div>
-      <p className="intro">
-        Configure a monitored service to correlate alerts, distributed traces,
-        and AI investigations.
-      </p>
-
-      {error && (
-        <div
-          role="alert"
-          style={{
-            background: "var(--status-error-bg)",
-            border: "1px solid var(--status-error-border)",
-            color: "var(--status-error-text)",
-            padding: "10px 14px",
-            borderRadius: "5px",
-            fontSize: "0.875rem",
-            marginBottom: "16px",
-          }}
-        >
-          {error}
-        </div>
-      )}
-
-      <div className="panel">
-        <h2 style={{ marginTop: 0 }}>1. Register Service</h2>
-        <form onSubmit={handleCreateService}>
-          <div style={{ marginBottom: "16px" }}>
-            <label
-              htmlFor="service-name-input"
-              style={{
-                display: "block",
-                fontSize: "0.875rem",
-                marginBottom: "6px",
-                color: "var(--text-secondary)",
-              }}
-            >
-              Service Name
-            </label>
-            <input
-              id="service-name-input"
-              type="text"
-              required
-              disabled={!!serviceId}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. payment-service"
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                background: "var(--bg-surface)",
-                border: "1px solid var(--border-default)",
-                borderRadius: "5px",
-                color: "var(--text-primary)",
-                fontSize: "14px",
-              }}
-            />
-          </div>
-
-          <div style={{ marginBottom: "16px" }}>
-            <label
-              htmlFor="env-select"
-              style={{
-                display: "block",
-                fontSize: "0.875rem",
-                marginBottom: "6px",
-                color: "var(--text-secondary)",
-              }}
-            >
-              Environment
-            </label>
-            <select
-              id="env-select"
-              required
-              disabled={!!serviceId}
-              value={environment}
-              onChange={(e) => setEnvironment(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                background: "var(--bg-surface)",
-                border: "1px solid var(--border-default)",
-                borderRadius: "5px",
-                color: "var(--text-primary)",
-                fontSize: "14px",
-              }}
-            >
-              <option value="" disabled>
-                Select environment
-              </option>
-              <option value="production">Production</option>
-              <option value="staging">Staging</option>
-              <option value="development">Development</option>
-            </select>
-          </div>
-
-          <div style={{ marginBottom: "16px" }}>
-            <label
-              htmlFor="service-desc-input"
-              style={{
-                display: "block",
-                fontSize: "0.875rem",
-                marginBottom: "6px",
-                color: "var(--text-secondary)",
-              }}
-            >
-              Description
-            </label>
-            <input
-              id="service-desc-input"
-              type="text"
-              disabled={!!serviceId}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Operational description"
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                background: "var(--bg-surface)",
-                border: "1px solid var(--border-default)",
-                borderRadius: "5px",
-                color: "var(--text-primary)",
-                fontSize: "14px",
-              }}
-            />
-          </div>
-
-          {!serviceId ? (
-            <button
-              type="submit"
-              disabled={savingService}
-              className="button"
-              style={{
-                marginTop: "8px",
-                cursor: savingService ? "not-allowed" : "pointer",
-              }}
-            >
-              {savingService ? "Registering..." : "Save Service & Continue"}
-            </button>
-          ) : (
-            <div
-              style={{
-                color: "var(--status-success-text)",
-                fontSize: "0.875rem",
-                marginTop: "8px",
-              }}
-            >
-              ✓ Service registered successfully (ID: {serviceId})
-            </div>
-          )}
-        </form>
-      </div>
-
-      {serviceId && (
-        <div className="panel">
-          <h2 style={{ marginTop: 0 }}>2. Verify Healthcheck Connector</h2>
-          <p style={{ fontSize: "0.875rem" }}>
-            Test endpoint connectivity with server-side SSRF validation
-            (protects cloud metadata & private networks).
+      <div className="ws-page-heading">
+        <div>
+          <span className="mono ws-eyebrow">Your workspace</span>
+          <h1>
+            {serviceId ? "Application registered" : "Connect an application"}
+          </h1>
+          <p>
+            Register your application, then verify an optional HTTP healthcheck.
           </p>
-
-          <div style={{ marginBottom: "16px" }}>
-            <label
-              htmlFor="connector-url-input"
-              style={{
-                display: "block",
-                fontSize: "0.875rem",
-                marginBottom: "6px",
-                color: "var(--text-secondary)",
-              }}
-            >
-              Healthcheck URL
-            </label>
-            <input
-              id="connector-url-input"
-              type="url"
-              value={connectorUrl}
-              onChange={(e) => setConnectorUrl(e.target.value)}
-              placeholder="https://your-service.example/healthz"
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                background: "var(--bg-surface)",
-                border: "1px solid var(--border-default)",
-                borderRadius: "5px",
-                color: "var(--text-primary)",
-                fontSize: "14px",
-              }}
-            />
-          </div>
-
-          <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-            <button
-              type="button"
-              onClick={handleVerifyConnector}
-              disabled={verifying}
-              className="button"
-              style={{
-                marginTop: "0",
-                cursor: verifying ? "not-allowed" : "pointer",
-              }}
-            >
-              {verifying ? "Probing..." : "Test Connector"}
-            </button>
-
-            {verifyResult && (
-              <span
-                style={{
-                  color: verifyResult.success
-                    ? "var(--status-success-text)"
-                    : "var(--status-error-text)",
-                  fontSize: "0.875rem",
-                }}
-              >
-                {verifyResult.success ? "✓" : "✗"} {verifyResult.message}
-                {verifyResult.latency_ms && ` (${verifyResult.latency_ms}ms)`}
-              </span>
-            )}
-          </div>
         </div>
-      )}
-
-      <div
-        style={{
-          marginTop: "24px",
-          display: "flex",
-          justifyContent: "flex-end",
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => router.push("/app")}
-          className="button"
-          style={{ cursor: "pointer" }}
-        >
-          Go to Workspace Overview &rarr;
-        </button>
       </div>
+      {error && (
+        <p role="alert" className="application-error">
+          {error}
+        </p>
+      )}
+      <div className="application-connect-grid">
+        <section className="an-panel">
+          <span className="an-eyebrow">01 / Application identity</span>
+          <h2>Register your application</h2>
+          <form onSubmit={handleCreateService} className="application-form">
+            <label htmlFor="service-name-input">
+              Application name
+              <input
+                id="service-name-input"
+                required
+                maxLength={120}
+                disabled={!!serviceId || savingService}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Your application’s name"
+              />
+            </label>
+            <label htmlFor="env-select">
+              Environment
+              <select
+                id="env-select"
+                aria-label="Environment"
+                required
+                disabled={!!serviceId || savingService}
+                value={environment}
+                onChange={(e) => setEnvironment(e.target.value)}
+              >
+                <option value="" disabled>
+                  Select environment
+                </option>
+                <option value="production">Production</option>
+                <option value="staging">Staging</option>
+                <option value="development">Development</option>
+              </select>
+            </label>
+            <label htmlFor="service-desc-input">
+              Description <span>(optional)</span>
+              <textarea
+                id="service-desc-input"
+                rows={3}
+                disabled={!!serviceId || savingService}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="What does this application do?"
+              />
+            </label>
+            {!serviceId ? (
+              <button
+                type="submit"
+                disabled={savingService}
+                className="ws-button ws-primary"
+              >
+                {savingService ? "Registering…" : "Register application →"}
+              </button>
+            ) : (
+              <div role="status">
+                <strong>{name} is registered.</strong>
+                <p className="application-uuid">Service ID: {serviceId}</p>
+                <div className="application-incident-picker">
+                  <Link className="ws-button ws-primary" href="/app">
+                    View applications →
+                  </Link>
+                  <Link
+                    className="ws-button"
+                    href={`/app/services/${serviceId}`}
+                  >
+                    Open application ↗
+                  </Link>
+                </div>
+              </div>
+            )}
+          </form>
+        </section>
+        <aside className="application-connect-note">
+          <span className="an-eyebrow">What happens next</span>
+          <h2>A home for your operational context.</h2>
+          <ol>
+            <li>Register the application in your organization.</li>
+            <li>Optionally test its HTTP healthcheck.</li>
+            <li>
+              Open its dashboard to review incidents, investigations and
+              evidence.
+            </li>
+          </ol>
+          <p>
+            Registration does not configure telemetry. Monitoring remains
+            unknown until verified signals are available.
+          </p>
+        </aside>
+      </div>
+      {serviceId && (
+        <section className="an-panel application-section">
+          <span className="an-eyebrow">02 / Optional verification</span>
+          <h2>Verify healthcheck connector</h2>
+          <p>
+            A successful HTTP probe confirms endpoint reachability only. It does
+            not establish a metrics, logs or traces pipeline.
+          </p>
+          <form
+            className="application-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleVerifyConnector();
+            }}
+          >
+            <label htmlFor="connector-url-input">
+              Healthcheck URL
+              <input
+                id="connector-url-input"
+                type="url"
+                required
+                value={connectorUrl}
+                onChange={(e) => setConnectorUrl(e.target.value)}
+                placeholder="https://your-service.example/healthz"
+              />
+            </label>
+            <button type="submit" disabled={verifying} className="ws-button">
+              {verifying ? "Probing…" : "Test Connector"}
+            </button>
+            {verifyResult && (
+              <p role="status">
+                {verifyResult.success
+                  ? "HTTP probe succeeded"
+                  : "HTTP probe failed"}
+                : {verifyResult.message}
+                {verifyResult.latency_ms != null &&
+                  ` (${verifyResult.latency_ms} ms)`}
+              </p>
+            )}
+          </form>
+        </section>
+      )}
     </main>
   );
 }

@@ -2,7 +2,7 @@
 
 Reference: `Tarun-sde/AegisOps-Design`, `f46969734ce644be97003f558bd738dd5e76832f`, checked against remote HEAD 2026-10-15. Local reference generated files (next-env.d.ts and Next.js AGENTS.md) are preserved; reference implementation is unchanged. Main branch `feat/phase8-frontend-integration`, baseline HEAD `ef374d2562a8c05b5f859fc4c812ff9b13c8f5bc`; substantial pre-existing uncommitted work preserved in `artifacts/final-design-parity/working-tree-checkpoint.tar.gz` and baseline.patch. No commits or resets.
 
-Decisions: DEC-377–383; ADR-029/030 presentation, ADR-023/027/028 security. Status: IMPLEMENTED; source comparison and functional gates verified locally, final five-viewport visual review in progress.
+Decisions: DEC-377–383; ADR-029/030 presentation, ADR-023/027/028 security. Status: IMPLEMENTED; source comparison and functional gates verified locally, final five-viewport visual review complete; user acceptance pending.
 
 | Original source | Destination | Structure / styles / animation / interaction | Content and API adaptation |
 |---|---|---|---|

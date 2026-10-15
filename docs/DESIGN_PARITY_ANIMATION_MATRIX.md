@@ -1,6 +1,6 @@
 # Final animation migration matrix
 
-Reference `f46969734ce644be97003f558bd738dd5e76832f`. DEC-378–380/382. Source reuse verified by direct diff. Desktop/tablet/mobile rendered comparisons and behavioral checks completed during iteration; final gallery refresh pending. Source reuse alone is not proof of parity.
+Reference `f46969734ce644be97003f558bd738dd5e76832f`. DEC-378–380/382. Source reuse verified by direct diff. Desktop/tablet/mobile rendered comparisons and behavioral checks completed during iteration; final gallery refreshed and reviewed at all five requested viewports. Source reuse alone is not proof of parity.
 
 | Reference animation | Original source | AegisOps target | Reuse / fidelity status |
 |---|---|---|---|

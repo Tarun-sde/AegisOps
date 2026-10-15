@@ -38,20 +38,18 @@ test("service collection uses authenticated records, filters, list and detail wi
   ).toBeVisible();
   await page.getByLabel("Search services").fill("nonexistent-service");
   await expect(
-    page.getByRole("heading", { name: "No matching services" }),
+    page.getByRole("heading", { name: "No matching applications" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Reset filters" }).click();
+  await page.getByRole("button", { name: "Clear filters" }).click();
   await page.getByLabel("Environment", { exact: true }).selectOption("staging");
   await page.getByRole("button", { name: "List view" }).click();
   await expect(page.locator(".service-collection")).toHaveClass(/list/);
   await page.getByRole("link", { name: "shop-api", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/app/services/${serviceId}$`));
   await expect(
-    page.getByText("Live series unavailable", { exact: true }),
+    page.getByText("No performance data available yet.", { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByText("Health unknown · Connection not reported"),
-  ).toBeVisible();
+  await expect(page.getByText("Monitoring unknown").first()).toBeVisible();
   await page.reload();
   await expect(
     page.getByRole("heading", { name: "shop-api", exact: true }),
@@ -95,8 +93,8 @@ test("onboarding persists a real service and denied connector verification stays
 }) => {
   await login(page);
   await page.goto("/onboarding");
-  await expect(page.getByLabel("Service Name")).toHaveValue("");
-  await page.getByLabel("Service Name").fill("phase8-browser-service");
+  await expect(page.getByLabel("Application name")).toHaveValue("");
+  await page.getByLabel("Application name").fill("phase8-browser-service");
   await page
     .getByLabel("Environment", { exact: true })
     .selectOption("development");
@@ -104,7 +102,7 @@ test("onboarding persists a real service and denied connector verification stays
     (r) =>
       r.url() === `${api}/api/v1/services` && r.request().method() === "POST",
   );
-  await page.getByRole("button", { name: "Save Service & Continue" }).click();
+  await page.getByRole("button", { name: "Register application →" }).click();
   expect((await created).status()).toBe(201);
   await page
     .getByLabel("Healthcheck URL")
@@ -493,4 +491,131 @@ test("mobile sign out invalidates the real session", async ({ page }) => {
   await expect(page).toHaveURL(/\/login$/);
   const response = await page.request.get(`${api}/api/v1/me`);
   expect(response.status()).toBe(401);
+});
+
+test("application tabs preserve service scope, history, favorites and real evidence routes", async ({
+  page,
+}) => {
+  await login(page);
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
+  const card = page.locator(`[data-project="${serviceId}"]`);
+  await card.getByRole("button", { name: "Pin shop-api", exact: true }).click();
+  await page.reload();
+  await expect(
+    card.getByRole("button", { name: "Unpin shop-api", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await card.getByRole("button", { name: "Actions for shop-api" }).click();
+  await page.getByRole("menuitem", { name: "View analytics" }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/app/services/${serviceId}\\?view=analytics$`),
+  );
+  await expect(
+    page.getByRole("heading", { name: "No performance data available yet." }),
+  ).toBeVisible();
+  await page.getByLabel("Performance metric").selectOption("1");
+  await expect(page.locator("#chart-title")).toHaveText("Error rate");
+  await page.reload();
+  await expect(
+    page.locator(".ws-project-tabs a[aria-current=page]"),
+  ).toHaveText("Analytics");
+  await page
+    .locator(".ws-project-tabs")
+    .getByRole("link", { name: "Incidents", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Application incidents" }),
+  ).toContainText("Browser Gate Incident");
+  await page
+    .locator(".ws-project-tabs")
+    .getByRole("link", { name: "Investigations", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: "AI Incident Investigator",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page
+    .locator(".ws-project-tabs")
+    .getByRole("link", { name: "Evidence", exact: true })
+    .click();
+  await expect(page.locator(".application-context-picker")).toContainText(
+    "Evidence",
+  );
+  await page
+    .locator(".ws-project-tabs")
+    .getByRole("link", { name: "Activity", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Operational history" }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(
+    page.locator(".ws-project-tabs a[aria-current=page]"),
+  ).toHaveText("Evidence");
+  await page
+    .getByRole("link", { name: "← All applications", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/app$/);
+});
+
+test("empty organization registers its first application and cannot read another organization's service", async ({
+  page,
+}) => {
+  const registration = await page.request.post(`${api}/api/v1/auth/register`, {
+    data: {
+      email: `workspace-${Date.now()}@example.test`,
+      password: process.env.BROWSER_TEST_PASSWORD!,
+      name: "Workspace journey QA",
+    },
+  });
+  expect(registration.status()).toBe(201);
+  await page.goto("/app");
+  await expect(
+    page.getByRole("heading", { name: "No applications connected yet." }),
+  ).toBeVisible();
+  await page
+    .getByRole("link", { name: "Connect Your First Application" })
+    .click();
+  const input = page.getByLabel("Application name");
+  await expect(input).toBeInViewport();
+  await input.fill("Exact Application Name · QA");
+  await page
+    .getByLabel("Environment", { exact: true })
+    .selectOption("development");
+  await page
+    .getByLabel("Description")
+    .fill("Synthetic browser QA registration, not production telemetry.");
+  const response = page.waitForResponse(
+    (r) =>
+      r.url() === `${api}/api/v1/services` && r.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Register application →" }).click();
+  const created = await response;
+  expect(created.status()).toBe(201);
+  const service = await created.json();
+  await page.getByRole("link", { name: "View applications →" }).click();
+  const card = page.locator(`[data-project="${service.id}"]`);
+  await expect(card).toContainText("Exact Application Name · QA");
+  await card.locator(".ws-card-link").click();
+  await expect(page).toHaveURL(new RegExp(`/app/services/${service.id}$`));
+  await page
+    .locator(".ws-project-tabs")
+    .getByRole("link", { name: "Incidents", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "No incidents recorded." }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Browser Gate Incident", { exact: true }),
+  ).toHaveCount(0);
+  expect(
+    (
+      await page.request.get(`${api}/api/v1/incidents?service_id=${serviceId}`)
+    ).status(),
+  ).toBe(404);
+  await page.goto(`/app/services/${serviceId}`);
+  await expect(
+    page.getByRole("heading", { name: "shop-api", exact: true }),
+  ).toHaveCount(0);
 });

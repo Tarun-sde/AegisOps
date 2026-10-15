@@ -122,11 +122,13 @@ export async function getIncidents(
   statusFilter?: string,
   page = 1,
   severity?: string,
+  serviceId?: string,
 ): Promise<{ data: IncidentListResponse | null; error: string | null }> {
   try {
     const url = new URL(`${API_BASE}/api/v1/incidents`);
     url.searchParams.set("page", String(page));
     if (severity) url.searchParams.set("severity", severity);
+    if (serviceId) url.searchParams.set("service_id", serviceId);
     if (statusFilter) {
       url.searchParams.set("status", statusFilter);
     }
@@ -461,6 +463,11 @@ export interface Service {
   status: string;
   created_at: string;
   updated_at: string;
+  github_repo?: string | null;
+  current_version?: string | null;
+  current_commit_sha?: string | null;
+  active_incident_count?: number | null;
+  last_incident_at?: string | null;
 }
 
 export interface ServiceVerifyResponse {

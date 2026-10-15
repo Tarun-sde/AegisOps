@@ -3578,3 +3578,86 @@ User-authorized visual correction under ADR-029/030; backend ADR-023/027/028 rem
 - Console diagnostic localized repeated GSAP missing targets to app-shell's collection-only entrance on operational routes without a collection. Skip the tween when its selected target list is empty; retain the existing duration/stagger on collection routes. Do not suppress console warnings globally or invent new motion.
 - Alternatives: overriding the source grid again or fabricating placeholder animation elements rejected. Downside: no collection entrance on routes without collection elements, as intended. Revisit if operational heading motion is separately approved.
 - Verification: refreshed source/Docker captures and existing browser checks pending. Previous actual captures have zero overflow/page errors and zero serious/critical axe findings on audited home/incident, but 15 attributable empty-target warnings; not represented as warning-free.
+
+### Final parity verification addendum — DEC-377–383 / DEC-365 — 2026-10-15
+
+Evidence status: VERIFIED LOCALLY with user visual acceptance pending. Initial design entries are preserved above. Static gate exit 0; unit gate 158 Python passed/6 deselected/132 warnings and Express 1 passed; final isolated browser gate 25 passed (1.2m), real non-root scheduler dispatch, unattended expiry and idempotent cleanup passed. Docker image sha256:8d3b117c5d6a47d1cbc539f687a08bc39a307084e65dae3627429bfc8fe63436 matches all 62 app/package/public asset hashes. Localhost login and SSR reload verified.
+
+Gallery: 435 PNGs, five required viewports, ten final source/actual result files. Actual runs: zero page errors, console warnings and overflow. Audited actual home/incident serious/critical axe findings: zero. Reference's existing 20–22 missing-target warnings remain separately recorded. No observed unresolved P0/P1 after source comparison; P2 caption/drawing split shifts of 18.94px at 1024 and 16.89px at 375 remain due to content/control wrapping. Other hero envelope/split geometry matches to rounding. Real records and accessible controls intentionally differ. No numerical 99% assertion, production/live-model evidence, hosted CI or cross-browser claim.
+
+DEC-377 restores source CSS/tree instead of stacked redesign overrides; DEC-378 provides original operational vector subjects in source envelopes; DEC-379 preserves continuous workflow clocks; DEC-380 preserves preview/feature/entrance/footer layers; DEC-381 restores collection markup and removes obsolete list overrides while retaining real APIs; DEC-382 separates functional checks from matched visual evidence; DEC-383 fixes exact loopback origin continuity. DEC-365 retains completed-scene click checkpoints. ADR-023/027/028 security and ADR-029/030 presentation remain governing; no new architecture deviation.
+
+The initial failures and repairs in BUG-20261015-001/002 are verified by the later gates. The final list gallery normalizes scroll to zero after toggling view; unequal data counts previously caused browser scroll clamping to different offsets. This is capture alignment, not a product layout change.
+
+An external local commit 7e8b41cb84c5bb4ca8ae9828b1bea0bd567f524b appeared during the task (Tarun-sde author/committer). It was preserved. The agent did not commit/push/merge/deploy. Final documentation/capture refinements are working-tree changes after that commit. Main database volumes and non-QA records remain preserved. Final report: PHASE_REPORTS/PHASE_8_FINAL_DESIGN_PARITY.md.
+
+### DEC-384 — Freeze approved public surfaces for Phase 8.4
+- Date / scope: 2026-10-15; user-authorized authenticated workspace redesign.
+- Status: ACCEPTED — verification pending.
+- Context: Landing and sign-in are explicitly approved and frozen; prior uncommitted work must survive.
+- Choice: Capture anonymous landing/login at all five required sizes before implementation; record source/dependency hashes and working-tree patch in artifacts/workspace-analytics. Keep existing global styles, marketing, login, fonts and root layout unchanged. New rules live in a workspace-prefixed stylesheet imported by the authenticated shell.
+- Alternatives: Global token changes rejected because they could alter approved pages; copying a second frontend rejected by scope.
+- Reason: Reuses the actual approved identity while making regression evidence independently reviewable.
+- Downside: Shared shell changes still require pixel and behavioral regression checks.
+- Revisit: Explicit approval to redesign public surfaces.
+- Evidence: Source audit and baseline capture script; final comparison pending.
+
+### DEC-385 — Accurate application inventory and service-filtered incident pagination
+- Date / scope: 2026-10-15; existing services/incidents read contracts.
+- Status: ACCEPTED — implementation and verification pending.
+- Context: Filtering the first organization incident page hides selected-service incidents and misstates counts.
+- Choice: Add optional UUID service_id filter to the existing incident list, verify service ownership, and apply it to both rows and count before pagination. Add organization-scoped grouped active counts and latest incident timestamps to service inventory responses; no new table or per-card requests. Active means existing nonterminal lifecycle states, excluding RESOLVED/CLOSED.
+- Alternatives: Downloading every incident page is unbounded; per-card queries introduce N+1 work; client-only filtering is incorrect. No new telemetry endpoint.
+- Reason: Applications map directly to existing authorized Service UUIDs; counts remain complete across pages and tenant-safe.
+- Downside: Inventory reads perform an additional grouped incident query. Revisit with measured inventory scale and query plans.
+- Evidence: main.py list_incidents currently filters only status/severity; authorization and pagination regression tests required.
+
+### DEC-386 — Source-derived collection and persistent application tabs
+- Date / scope: 2026-10-15; authenticated navigation and collection.
+- Status: ACCEPTED — implementation and verification pending.
+- Choice: Adapt original workspace-shell, project-collection, project-card/row, selector and project-detail compositions. Canonical /app is Your Applications; /app/services remains a compatibility redirect. Query parameter view selects Overview, Analytics, Incidents, Investigations, Evidence or Activity under the service UUID. Remove duplicate sidebar destinations; keep context tabs in content. Favorites and grid/list preference may persist by user+organization; backend records never persist in browser storage. Search names, filter environment/favorites, sort name or latest persisted activity; omit unsupported monitoring filters.
+- Alternatives: New Projects entity, name slugs, anchor-only tabs and duplicate global/service navigation rejected as misleading or unnecessary.
+- Reason: User-requested Vercel-like organization with the approved source geometry, linework, typography and functioning menus.
+- Downside: Query navigation loads authorized server data; preferences are browser-local. Revisit when multi-device preferences or additional verified monitoring fields exist.
+- Evidence: Source f469697 workspace components inspected; functional and visual verification pending.
+
+### DEC-387 — Truthful analytics and bounded incident-context investigation/history
+- Date / scope: 2026-10-15; service detail content.
+- Status: ACCEPTED — implementation and verification pending.
+- Choice: Retain approved AnalyticsDashboard KPI/chart/legend hierarchy and TimeSeries empty-state geometry without demo series or unsupported range/comparison controls. Show active incident counts from inventory, unavailable performance metrics, and service-scoped paginated incidents. Investigations/evidence use a selected authorized incident and existing persisted run/evidence controls, with explicit incident selection; activity uses real service registration and selected-incident events. Overview links to these views and shows recent runs for its selected recent incident. Existing global incident lifecycle/proposal/trace tooling remains reachable by real UUID.
+- Alternatives: Fabricated graphs, arbitrary PromQL, new telemetry infrastructure and unbounded fan-out across incident history rejected. User explicitly permits unavailable charts.
+- Reason: Stripe-inspired analytic hierarchy with source AegisOps identity, honest data boundaries and existing secured investigation implementation.
+- Downside: Performance time series remain unsupported; investigation/activity history is explicitly incident-contextual with pagination, not an invented exhaustive feed.
+- Revisit: Approved scoped telemetry API or service-wide bounded operational-history endpoint.
+- Evidence: Existing API has no authorized time-series endpoint; current investigation/evidence components already adapt the approved console. Final tests pending.
+
+### DEC-388 — Visible registration and explicit connector semantics
+- Date / scope: 2026-10-15; authenticated /onboarding.
+- Status: ACCEPTED — implementation and verification pending.
+- Choice: Replace the onboarding paragraph's marketing intro class with workspace heading/form composition. Preserve existing create/verify APIs, required name/environment and description. Offer return-to-collection and exact UUID details after success; healthcheck success explicitly does not establish telemetry. Omit source repository input because current create_service ignores that schema field.
+- Alternatives: Global intro CSS changes violate the freeze; adding unsupported repository persistence and relaxing SSRF are unnecessary.
+- Reason: Fix the missing visible form at its class collision and preserve authenticated registration/security behavior.
+- Downside: Connector probe remains optional and does not configure metrics/logs/traces. Revisit with a separately supported ingestion setup flow.
+- Evidence: Onboarding p.intro shares large marketing section rules; browser reproduction and final regression pending.
+
+### DEC-389 — Phase 8.4 acceptance evidence
+- Date / scope: 2026-10-15; local verification.
+- Status: ACCEPTED — verification pending.
+- Choice: Extend existing meaningful API/browser tests for service pagination/isolation, registration, collection and persistent tabs; run make check/test/browser, build/recreate only changed local services without deleting volumes; capture five-size before/after gallery and axe/overflow results. Preserve private synthetic QA credentials in ignored restrictive files.
+- Alternatives: Green tests alone cannot establish visual quality; screenshots alone cannot establish authorization. Neither is sufficient.
+- Reason: User requires both actual Docker localhost journeys and visual review with frozen public baselines.
+- Downside: Local Chromium evidence does not establish hosted deployment or all-browser acceptance. Revisit with supported browser/deployment scope.
+- Evidence: Fresh baseline attempt briefly hit connection refused while web restarted; retry against healthy unchanged container. No product edits preceded baseline.
+
+### BUG-20261015-003 — Registration form hidden by marketing class and incomplete service incidents
+- Reproduction: /onboarding paragraph used global `.intro` (min-height 720px), pushing the form below introductory whitespace. Application details fetched organization page 1 then filtered it, excluding older selected-service incidents.
+- Confirmed causes: class-name collision; filter performed after pagination.
+- Repair: DEC-388 workspace form classes; DEC-385 backend ownership/filter/count before pagination, grouped inventory aggregates. Rejected global style override and fetching unbounded pages.
+- Verification: targeted API suite 5 passed including 25 newer unrelated incidents, older selected records, status/severity filters, lifecycle count exclusions, foreign/missing/malformed UUID and anonymous requests. Full units 159 passed, 6 deselected, 132 warnings; Express 1 passed. Static gate passed after retaining keyboard focusability on the scrollable table with the repository's documented accessibility-rule exception. Browser/visual verification pending.
+- Capture sequencing: first after-capture attempts started before compose had finished waiting for API/web health and failed with connection refused. Retried only after web started; failed attempts are not evidence of page content.
+- Lesson: namespace content roles separately from marketing section classes; apply record scope before paginating or aggregating.
+
+#### DEC-386/388/389 visual and journey refinement
+- Fresh Docker review confirms visible registration fields; the new exact-label journey exposed that a label wrapping the environment select also included option text in its accessible name. Add explicit Environment accessible name; keep real required select validation.
+- Source/global heading rules uppercase application names; workspace-only sentence-case overrides preserve exact stored-name presentation and readable onboarding headings. Reduce detail heading padding while retaining source geometry.
+- Frozen login comparison initially differs in a tiny input-edge region; diagnosing rasterization before accepting the freeze gate. No protected source hash changed.

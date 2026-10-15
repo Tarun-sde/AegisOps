@@ -1,0 +1,263 @@
+/* DEC-384/386/387/388: authenticated-only refinements of the approved source. */
+.workspace .ws-page-heading h1 {
+  font-size: clamp(30px, 3vw, 44px);
+  line-height: 1.12;
+}
+.workspace .ws-page-heading p {
+  max-width: 650px;
+  line-height: 1.6;
+}
+.workspace .ws-project-actions {
+  position: relative;
+  z-index: 3;
+}
+.workspace .ws-project-card:has(.ws-popover),
+.workspace .ws-project-row:has(.ws-popover) {
+  z-index: 5;
+}
+.workspace .ws-project-card {
+  overflow: visible;
+}
+.workspace .ws-controls > .ws-button {
+  align-self: end;
+  min-height: 42px;
+}
+.workspace .ws-button[aria-pressed="true"],
+.workspace .ws-button[aria-current="page"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+.workspace .ws-project-tabs a[aria-current="page"] {
+  color: var(--ink);
+  border-bottom: 2px solid var(--ink);
+  background: #eeeee7;
+}
+.workspace .application-detail .ws-detail-heading {
+  margin-bottom: 18px;
+}
+.workspace .application-detail .ws-project-badges {
+  gap: 12px 20px;
+  flex-wrap: wrap;
+}
+.workspace .application-detail .ws-project-tabs {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  margin-bottom: 28px;
+}
+.workspace .application-detail .ws-project-tabs a {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  min-height: 44px;
+}
+.workspace .application-analytics .an-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.workspace .application-analytics .an-metric {
+  padding: 20px;
+}
+.workspace .application-analytics .an-toolbar {
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.workspace .application-analytics .an-toolbar p {
+  color: var(--muted);
+  font-size: 14px;
+}
+.workspace .application-analytics .an-empty-chart {
+  min-height: 260px;
+}
+.workspace .application-analytics .an-empty-chart > div {
+  max-width: 560px;
+}
+.workspace .application-incident-metric {
+  --series: var(--rule);
+}
+.workspace .application-section {
+  margin-top: 26px;
+}
+.workspace .application-overview-bottom {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+  margin-top: 24px;
+}
+.workspace .application-overview-bottom > * {
+  min-width: 0;
+}
+.workspace .application-run {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 18px;
+}
+.workspace .application-run a {
+  display: block;
+  margin-top: 12px;
+  text-decoration: underline;
+}
+.workspace .application-run p {
+  line-height: 1.6;
+}
+.workspace .application-pagination,
+.workspace .application-incident-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 18px 0;
+}
+.workspace .application-incident-picker a {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.workspace .application-context-picker {
+  padding: 0 0 24px;
+  border-bottom: 1px solid var(--rule);
+}
+.workspace .application-context-picker p {
+  line-height: 1.6;
+  margin-top: 10px;
+}
+.workspace .application-empty {
+  padding: 32px 0;
+}
+.workspace .application-empty p {
+  margin: 12px 0 20px;
+}
+.workspace .application-detail .an-service-table th a {
+  display: block;
+  margin-top: 10px;
+  text-decoration: underline;
+}
+.workspace .application-detail .an-service-table time {
+  white-space: nowrap;
+}
+.workspace .application-connect-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 48px;
+  align-items: start;
+  max-width: 1100px;
+}
+.workspace .application-form {
+  display: grid;
+  gap: 22px;
+  margin-top: 26px;
+}
+.workspace .application-form label {
+  display: grid;
+  gap: 9px;
+  font-size: 15px;
+}
+.workspace .application-form label > span {
+  color: var(--muted);
+  display: contents;
+}
+.workspace .application-form input,
+.workspace .application-form select,
+.workspace .application-form textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  background: white;
+  font: inherit;
+  border-radius: 0;
+  color: var(--ink);
+}
+.workspace .application-form textarea {
+  resize: vertical;
+}
+.workspace .application-form .ws-button {
+  justify-self: start;
+  min-height: 44px;
+}
+.workspace .application-connect-note {
+  padding: 24px 0;
+}
+.workspace .application-connect-note h2 {
+  font-size: 28px;
+  line-height: 1.3;
+  margin: 16px 0 24px;
+}
+.workspace .application-connect-note ol {
+  padding-left: 22px;
+}
+.workspace .application-connect-note li {
+  padding: 0 0 20px 8px;
+  line-height: 1.6;
+}
+.workspace .application-connect-note p {
+  color: var(--muted);
+  line-height: 1.6;
+  margin-top: 16px;
+}
+.workspace .application-uuid {
+  overflow-wrap: anywhere;
+  margin: 12px 0;
+}
+.workspace .application-error {
+  padding: 16px;
+  border: 1px solid #b91c1c;
+  margin-bottom: 24px;
+}
+.workspace .ws-mobile-bar {
+  grid-template-columns: repeat(4, 1fr);
+}
+@media (max-width: 1100px) {
+  .workspace .application-analytics .an-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .workspace .application-connect-grid {
+    gap: 28px;
+  }
+}
+@media (max-width: 700px) {
+  .workspace .application-overview-bottom,
+  .workspace .application-connect-grid {
+    grid-template-columns: 1fr;
+  }
+  .workspace .application-connect-note {
+    border-top: 1px solid var(--rule);
+  }
+  .workspace .application-analytics .an-metric {
+    padding: 16px;
+  }
+  .workspace .application-analytics .an-metric-context {
+    display: none;
+  }
+  .workspace .application-analytics .an-toolbar {
+    align-items: start;
+  }
+  .workspace .application-detail .ws-project-context > span {
+    display: none;
+  }
+  .workspace .application-detail .ws-page-heading {
+    flex-direction: row;
+    align-items: start;
+    gap: 12px;
+  }
+  .workspace .application-detail .ws-page-heading > div:first-child {
+    min-width: 0;
+  }
+  .workspace .application-detail .ws-page-heading h1 {
+    overflow-wrap: anywhere;
+  }
+  .workspace .application-detail .ws-project-actions {
+    flex-shrink: 0;
+  }
+  .workspace .application-analytics .an-empty-chart {
+    min-height: 240px;
+  }
+}
+
+.workspace .ws-page-heading h1,
+.workspace .application-connect h2,
+.workspace .application-overview-bottom h2 {
+  text-transform: none;
+}
+.workspace .application-detail .ws-page-heading {
+  padding: 22px 0 18px;
+}

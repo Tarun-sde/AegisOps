@@ -1,36 +1,52 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { ServiceDrawing, HealthStatus } from "./project-visuals";
+import { ApplicationActions } from "./application-actions";
+import { useAuth } from "../lib/auth-context";
 import { useFavorites } from "./app-shell";
-import type { Service, IncidentListResponse } from "../lib/api";
-export function ServiceCollection({
-  services,
-  incidents,
-}: {
-  services: Service[];
-  incidents: IncidentListResponse | null;
-}) {
-  const { pinned, toggle } = useFavorites();
+import type { Service } from "../lib/api";
+export function ServiceCollection({ services }: { services: Service[] }) {
+  const { pinned } = useFavorites();
   const searchInput = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
   const [environment, setEnvironment] = useState("");
-  const [status, setStatus] = useState("");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sort, setSort] = useState("name");
   const [view, setView] = useState("grid");
+  const { user, activeOrg } = useAuth();
+  const viewKey =
+    user && activeOrg ? `aegisops:${user.id}:${activeOrg.id}:view` : null;
+  useEffect(() => {
+    try {
+      setView(
+        viewKey && localStorage.getItem(viewKey) === "list" ? "list" : "grid",
+      );
+    } catch {
+      /* Grid is the default without storage. */
+    }
+  }, [viewKey]);
+  const chooseView = (next: string) => {
+    setView(next);
+    try {
+      if (viewKey) localStorage.setItem(viewKey, next);
+    } catch {
+      /* In-memory preference still works. */
+    }
+  };
+  const activity = (s: Service) =>
+    [s.updated_at, s.last_incident_at ?? ""].sort().at(-1)!;
   const shown = services
     .filter(
       (s) =>
-        `${s.name} ${s.description ?? ""} ${s.environment}`
-          .toLowerCase()
-          .includes(search.toLowerCase()) &&
+        s.name.toLowerCase().includes(search.toLowerCase()) &&
         (!environment || s.environment === environment) &&
-        (!status || s.status === status),
+        (!favoritesOnly || pinned.includes(s.id)),
     )
     .sort(
       (a, b) =>
         (sort === "recent"
-          ? b.created_at.localeCompare(a.created_at)
+          ? activity(b).localeCompare(activity(a))
           : a.name.localeCompare(b.name)) || a.id.localeCompare(b.id),
     );
   return (
@@ -51,7 +67,7 @@ export function ServiceCollection({
             onKeyDown={(e) => {
               if (e.key === "Escape") setSearch("");
             }}
-            placeholder="Search services or environment…"
+            placeholder="Search applications…"
           />
           {search ? (
             <button
@@ -82,19 +98,13 @@ export function ServiceCollection({
               ))}
           </select>
         </label>
-        <label>
-          <span>Registration</span>
-          <select
-            aria-label="Registration"
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-          >
-            <option value="">All statuses</option>
-            {[...new Set(services.map((s) => s.status))].sort().map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
-        </label>
+        <button
+          className="ws-button"
+          aria-pressed={favoritesOnly}
+          onClick={() => setFavoritesOnly(!favoritesOnly)}
+        >
+          ★ Favorites
+        </button>
         <label>
           <span>Sort services</span>
           <select
@@ -103,21 +113,21 @@ export function ServiceCollection({
             onChange={(e) => setSort(e.target.value)}
           >
             <option value="name">Name (A–Z)</option>
-            <option value="recent">Recently registered</option>
+            <option value="recent">Recent activity</option>
           </select>
         </label>
         <div className="ws-view-toggle">
           <button
             aria-label="Grid view"
             aria-pressed={view === "grid"}
-            onClick={() => setView("grid")}
+            onClick={() => chooseView("grid")}
           >
             ⊞
           </button>
           <button
             aria-label="List view"
             aria-pressed={view === "list"}
-            onClick={() => setView("list")}
+            onClick={() => chooseView("list")}
           >
             ☰
           </button>
@@ -127,12 +137,12 @@ export function ServiceCollection({
         <span role="status" className="mono">
           Showing {shown.length} of {services.length} services
         </span>
-        {search || environment || status ? (
+        {search || environment || favoritesOnly ? (
           <button
             onClick={() => {
               setSearch("");
               setEnvironment("");
-              setStatus("");
+              setFavoritesOnly(false);
               searchInput.current?.focus();
             }}
           >
@@ -210,16 +220,11 @@ export function ServiceCollection({
                           <HealthStatus health="unknown" />
                         </div>
                         <div>
-                          <small>Services / incidents</small>
+                          <small>Active incidents</small>
                           <span className="mono">
-                            1 /{" "}
-                            {incidents
-                              ? incidents.items.filter(
-                                  (inc) => inc.service_id === s.id,
-                                ).length
-                              : "—"}
+                            {s.active_incident_count ?? "—"}
                           </span>
-                          <small>Latest incident page</small>
+                          <small>Across all incident records</small>
                         </div>
                         <div>
                           <small>Registered</small>
@@ -227,23 +232,7 @@ export function ServiceCollection({
                             {s.created_at.slice(0, 10)} UTC
                           </span>
                         </div>
-                        <div className="ws-project-actions">
-                          <button
-                            className="ws-pin"
-                            aria-label={`${pinned.includes(s.id) ? "Unpin" : "Pin"} ${s.name}`}
-                            aria-pressed={pinned.includes(s.id)}
-                            onClick={() => toggle(s.id)}
-                          >
-                            {pinned.includes(s.id) ? "★" : "☆"}
-                          </button>
-                          <Link
-                            className="ws-pin"
-                            aria-label={`Details for ${s.name}`}
-                            href={`/app/services/${s.id}`}
-                          >
-                            ···
-                          </Link>
-                        </div>
+                        <ApplicationActions service={s} />
                       </li>
                     ))}
                 </ul>
@@ -262,23 +251,7 @@ export function ServiceCollection({
                   <span className="ws-card-id mono">
                     [{String(i + 1).padStart(2, "0")}] / {s.id.slice(0, 8)}
                   </span>
-                  <div className="ws-project-actions">
-                    <button
-                      className="ws-pin"
-                      aria-label={`${pinned.includes(s.id) ? "Unpin" : "Pin"} ${s.name}`}
-                      aria-pressed={pinned.includes(s.id)}
-                      onClick={() => toggle(s.id)}
-                    >
-                      {pinned.includes(s.id) ? "★" : "☆"}
-                    </button>
-                    <Link
-                      className="ws-pin"
-                      aria-label={`Details for ${s.name}`}
-                      href={`/app/services/${s.id}`}
-                    >
-                      ···
-                    </Link>
-                  </div>
+                  <ApplicationActions service={s} />
                 </div>
                 <div className="ws-card-identity">
                   <h2>
@@ -321,9 +294,9 @@ export function ServiceCollection({
                     <b>01</b> service
                   </span>
                   <span>
-                    {incidents
-                      ? `${incidents.items.filter((inc) => inc.service_id === s.id).length} incidents on latest page`
-                      : "Incident count unavailable"}
+                    {s.active_incident_count == null
+                      ? "Incident count unavailable"
+                      : `${s.active_incident_count} active incidents`}
                   </span>
                   <span className="ws-open-arrow" aria-hidden="true">
                     ↗
@@ -331,7 +304,11 @@ export function ServiceCollection({
                 </div>
                 <div className="ws-card-signal">
                   <span className="mono">REGISTRATION / {s.status}</span>
-                  <p>Telemetry freshness is not reported.</p>
+                  <p>
+                    {s.current_version
+                      ? `Version ${s.current_version}`
+                      : "Telemetry freshness is not reported."}
+                  </p>
                   <span className="mono">
                     {new Date(s.created_at).toISOString().slice(0, 10)} UTC
                   </span>
@@ -345,23 +322,29 @@ export function ServiceCollection({
         <div className="ws-empty">
           <h3>
             {services.length
-              ? "No matching services"
-              : "No registered services"}
+              ? "No matching applications"
+              : "No applications connected yet."}
           </h3>
           <p>
             {services.length
               ? "Adjust your search or filters."
-              : "Register a service to start connecting operational signals."}
+              : "Connect your first application to begin organizing its operational data and incident investigations."}
           </p>
-          <button
-            onClick={() => {
-              setSearch("");
-              setEnvironment("");
-              setStatus("");
-            }}
-          >
-            Reset filters
-          </button>
+          {services.length ? (
+            <button
+              onClick={() => {
+                setSearch("");
+                setEnvironment("");
+                setFavoritesOnly(false);
+              }}
+            >
+              Clear filters
+            </button>
+          ) : (
+            <Link className="ws-button ws-primary" href="/onboarding">
+              Connect Your First Application →
+            </Link>
+          )}
         </div>
       )}
     </section>

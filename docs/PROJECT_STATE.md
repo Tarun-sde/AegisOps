@@ -1,10 +1,10 @@
 # AegisOps — Current Project State
 
 **Updated:** 2026-10-15
-**Current phase:** Phase 8 Final Source-First Design Parity — IMPLEMENTED, VERIFICATION IN PROGRESS.
-**Overall state:** Original design skeleton, CSS geometry and GSAP clocks restored in the existing frontend. The hero uses the source drawing/caption composition; workflow uses one continuously transforming operational drawing; previews retain the source window/layer structures. Workspace collections retain real authorized service/incident adapters. Matched Docker/source review and final regression gates are in progress; earlier Phase 8.4 completion is historical, not final parity acceptance.
-**Source:** User final design-parity migration brief; [active report](PHASE_REPORTS/PHASE_8_FINAL_DESIGN_PARITY.md); [source matrix](DESIGN_PARITY_SOURCE_MATRIX.md); [animation matrix](DESIGN_PARITY_ANIMATION_MATRIX.md).
-**Governing Decisions:** DEC-377–382; DEC-365 completed-scene navigation; ADR-023/027 security, ADR-028 functional integration, ADR-029/030 presentation. Earlier conflicting presentation choices are superseded as recorded in the journal.
+**Current phase:** Phase 8.4 Professional Workspace & Application Analytics — IMPLEMENTED, VERIFICATION IN PROGRESS.
+**Overall state:** User-authorized authenticated redesign now maps registered services to an application collection and distinct service-scoped views. Landing/sign-in are frozen, with fresh five-size baselines. Existing prior parity work is preserved. Full regression and visual gates are running; Phase 9 remains locked.
+**Source:** User Phase 8.4 brief; [active report](PHASE_REPORTS/PHASE_8_4_WORKSPACE_ANALYTICS.md); [prior final-parity report](PHASE_REPORTS/PHASE_8_FINAL_DESIGN_PARITY.md).
+**Governing Decisions:** DEC-384–389; ADR-023/027/028 security and ADR-029/030 source identity. DEC-377–383 continue to govern frozen public behavior.
 
 ---
 
@@ -112,3 +112,8 @@ Restored the original design reference's architectural hero composition, linewor
 ## Final design parity correction — 2026-10-15
 
 User-authorized correction in progress under DEC-377–382. Earlier local functional results do not establish final visual parity. See [active report](PHASE_REPORTS/PHASE_8_FINAL_DESIGN_PARITY.md). No phase-complete or 99% claim; Phase 9 remains NOT STARTED.
+
+
+## Final parity verification — 2026-10-15
+
+DEC-377–383 locally verified; final user visual approval remains pending. 435 matched-state/supplemental PNGs across the five requested viewports; actual captures have zero page errors, console warnings or horizontal overflow. Serious/critical axe findings are zero on audited home/incident and browser-gate core surfaces. Static gate passed; unit gate 158 Python + 1 Express passed; final isolated browser gate 25 passed plus real scheduler/expiry/idempotency checks. Delivered Docker source/package/public asset hashes match all 62 checked files. Minor caption wrapping differences remain documented; no numerical fidelity claim. See [final report](PHASE_REPORTS/PHASE_8_FINAL_DESIGN_PARITY.md), source matrix and animation matrix. Phase 9 remains NOT STARTED.

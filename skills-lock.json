@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "gravitas": {
+      "source": "udaysharmadev/Gravitas",
+      "sourceType": "github",
+      "skillPath": "skills/gravitas/SKILL.md",
+      "computedHash": "e0675fce101522d4c080017bf40921b4d3bb30d8283d44240a1d4717f033cb47"
+    }
+  }
+}

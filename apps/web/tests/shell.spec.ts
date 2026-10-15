@@ -10,7 +10,7 @@ test("shell navigates to workspace and incidents feed on desktop and mobile", as
     .getByRole("link", { name: "Workspace" })
     .click();
   await expect(
-    page.getByRole("heading", { name: /Operational Overview/ }),
+    page.getByRole("heading", { name: /Your Applications/ }),
   ).toBeVisible();
   const serviceResponse = await page.request.get(`${api}/api/v1/services`);
   expect(serviceResponse.status()).toBe(200);
@@ -309,17 +309,17 @@ test("Phase 8.3 operational workspace navigation and active states", async ({
     "page",
   );
   await expect(
-    page.getByRole("heading", { name: /Operational Overview/ }),
+    page.getByRole("heading", { name: /Your Applications/ }),
   ).toBeVisible();
 
-  // 2. Services (/app/services)
-  await page.locator(".ws-sidebar a[href='/app/services']").click();
-  await expect(page).toHaveURL(/\/app\/services$/);
+  // Legacy service collection keeps working without a duplicate navigation destination.
+  await page.goto("/app/services");
+  await expect(page).toHaveURL(/\/app$/);
+  await expect(page.locator(".ws-sidebar a[href='/app/services']")).toHaveCount(
+    0,
+  );
   await expect(
-    page.locator(".ws-sidebar a[href='/app/services']"),
-  ).toHaveAttribute("aria-current", "page");
-  await expect(
-    page.getByRole("heading", { name: /Monitored Services/i }),
+    page.getByRole("heading", { name: /Your Applications/ }),
   ).toBeVisible();
 
   // 3. Incidents (/app/incidents)

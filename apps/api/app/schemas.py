@@ -471,6 +471,9 @@ class ServiceRead(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    active_incident_count: int | None = None
+    last_incident_at: datetime | None = None
+
 
 class ServiceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)

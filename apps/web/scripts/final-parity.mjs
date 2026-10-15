@@ -261,6 +261,7 @@ try {
         .first()
         .boundingBox();
       await page.getByRole("button", { name: "List view" }).click();
+      await page.evaluate(() => window.scrollTo(0, 0));
       await snap("10-workspace-list");
       await go(
         kind === "reference"

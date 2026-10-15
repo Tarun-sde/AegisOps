@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from sqlalchemy import and_, desc, func, select
+from sqlalchemy import and_, case, desc, func, select
 from sqlalchemy.orm import Session, selectinload
 from starlette.responses import JSONResponse
 
@@ -601,7 +601,26 @@ def list_services(
         .where(Service.organization_id == context.organization.id)
         .order_by(Service.created_at.desc())
     ).all()
-    return [ServiceRead.model_validate(s) for s in services]
+    # DEC-385: aggregate before presentation, never count a paginated incident sample.
+    summaries = db.execute(
+        select(
+            Incident.service_id,
+            func.sum(case((Incident.status.not_in(["resolved", "closed"]), 1), else_=0)),
+            func.max(Incident.updated_at),
+        )
+        .where(Incident.organization_id == context.organization.id)
+        .group_by(Incident.service_id)
+    ).all()
+    by_service = {row[0]: (row[1], row[2]) for row in summaries}
+    return [
+        ServiceRead.model_validate(service).model_copy(
+            update={
+                "active_incident_count": by_service.get(service.id, (0, None))[0],
+                "last_incident_at": by_service.get(service.id, (0, None))[1],
+            }
+        )
+        for service in services
+    ]
 
 
 @app.post("/api/v1/services", response_model=ServiceRead, status_code=status.HTTP_201_CREATED)
@@ -953,6 +972,7 @@ async def alertmanager_webhook(
 def list_incidents(
     db: DbSession,
     context: Annotated[TenantContext, Depends(get_tenant_context)],
+    service_id: Annotated[uuid.UUID | None, Query()] = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     severity: Annotated[str | None, Query()] = None,
     page: Annotated[int, Query(ge=1)] = 1,
@@ -962,6 +982,11 @@ def list_incidents(
     count_query = select(func.count(Incident.id)).where(
         Incident.organization_id == context.organization.id
     )
+
+    if service_id is not None:
+        get_service(service_id, context, db)
+        query = query.where(Incident.service_id == service_id)
+        count_query = count_query.where(Incident.service_id == service_id)
 
     if status_filter:
         query = query.where(Incident.status == status_filter)
