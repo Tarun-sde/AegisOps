@@ -3,11 +3,11 @@ from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from apps.api.app.auth import create_user_session
+from apps.api.app.auth import compute_tenant_webhook_secret, create_user_session
 from apps.api.app.main import app, get_db
 from apps.api.app.models import Base, Membership, Organization, Service, User
 
@@ -81,6 +81,7 @@ def sample_webhook_payload(status: str = "firing", fingerprint: str = "fp-test-1
                 "status": status,
                 "labels": {
                     "alertname": "HighApiErrorRate",
+                    "organization": "AegisOps Demo",
                     "service": "shop-api",
                     "severity": "critical",
                     "environment": "demo",
@@ -275,3 +276,202 @@ def test_application_incidents_filter_before_pagination_and_inventory_counts():
     client.cookies.clear()
     assert client.get(f"/api/v1/incidents?service_id={service_id}").status_code == 401
     assert client.get("/api/v1/services").status_code == 401
+
+
+def test_webhook_missing_organization_rejected():
+    """AUD-001: Webhook payload without target organization must be rejected with 400."""
+    payload = sample_webhook_payload("firing", "fp-missing-org")
+    del payload["alerts"][0]["labels"]["organization"]
+
+    res = client.post("/api/v1/webhooks/alertmanager", headers=AUTH_HEADER, json=payload)
+    assert res.status_code == 400
+    assert "Missing target organization" in res.json()["detail"]
+
+
+def test_webhook_unknown_organization_rejected():
+    """AUD-001: Webhook targeting unknown organization must return 404 without creating scopes."""
+    payload = sample_webhook_payload("firing", "fp-unknown-org")
+    payload["alerts"][0]["labels"]["organization"] = "NonExistentOrg"
+
+    res = client.post("/api/v1/webhooks/alertmanager", headers=AUTH_HEADER, json=payload)
+    assert res.status_code == 404
+    assert "not found" in res.json()["detail"]
+
+
+def test_webhook_unknown_service_rejected_without_autocreation():
+    """AUD-001: Unknown service must be rejected with 404 and NOT created in DB."""
+    payload = sample_webhook_payload("firing", "fp-unknown-svc")
+    payload["alerts"][0]["labels"]["service"] = "unregistered-malicious-svc"
+
+    res = client.post("/api/v1/webhooks/alertmanager", headers=AUTH_HEADER, json=payload)
+    assert res.status_code == 404
+    assert "Automatic service creation from untrusted alerts is disabled" in res.json()["detail"]
+
+    # Verify directly in DB that service was NOT created
+    with TestingSessionLocal() as db:
+        svc = db.scalar(select(Service).where(Service.name == "unregistered-malicious-svc"))
+        assert svc is None
+
+
+def test_webhook_target_org_routing_and_mismatch():
+    """AUD-001: Verify path, query, and header routing for target org and mismatch rejection."""
+    with TestingSessionLocal() as db:
+        org = db.scalar(select(Organization).where(Organization.name == "AegisOps Demo"))
+        svc2 = Service(organization_id=org.id, name="query-api")
+        svc3 = Service(organization_id=org.id, name="header-api")
+        db.add_all([svc2, svc3])
+        db.commit()
+
+    # 1. Path routing with alert label omitted
+    payload_no_label = sample_webhook_payload("firing", "fp-route-path")
+    del payload_no_label["alerts"][0]["labels"]["organization"]
+
+    res_path = client.post(
+        "/api/v1/webhooks/alertmanager/AegisOps%20Demo",
+        headers=AUTH_HEADER,
+        json=payload_no_label,
+    )
+    assert res_path.status_code == 200
+    assert res_path.json()["incidents_created"] == 1
+
+    # 2. Query routing with alert label omitted
+    payload_query = sample_webhook_payload("firing", "fp-route-query")
+    del payload_query["alerts"][0]["labels"]["organization"]
+    payload_query["alerts"][0]["labels"]["service"] = "query-api"
+
+    res_query = client.post(
+        "/api/v1/webhooks/alertmanager?organization=AegisOps%20Demo",
+        headers=AUTH_HEADER,
+        json=payload_query,
+    )
+    assert res_query.status_code == 200
+    assert res_query.json()["incidents_created"] == 1
+
+    # 3. Header routing with alert label omitted
+    payload_header = sample_webhook_payload("firing", "fp-route-header")
+    del payload_header["alerts"][0]["labels"]["organization"]
+    payload_header["alerts"][0]["labels"]["service"] = "header-api"
+
+    headers_with_org = {**AUTH_HEADER, "X-Organization": "AegisOps Demo"}
+    res_header = client.post(
+        "/api/v1/webhooks/alertmanager",
+        headers=headers_with_org,
+        json=payload_header,
+    )
+    assert res_header.status_code == 200
+    assert res_header.json()["incidents_created"] == 1
+
+    # 4. Target organization mismatch rejection
+    payload_mismatch = sample_webhook_payload("firing", "fp-mismatch")
+    payload_mismatch["alerts"][0]["labels"]["organization"] = "AegisOps Demo"
+
+    res_mismatch = client.post(
+        "/api/v1/webhooks/alertmanager?organization=DifferentOrg",
+        headers=AUTH_HEADER,
+        json=payload_mismatch,
+    )
+    assert res_mismatch.status_code == 400
+    assert "Target organization mismatch" in res_mismatch.json()["detail"]
+
+
+def test_webhook_tenant_scoped_token_authentication_and_isolation():
+    """AUD-001: Test tenant-scoped webhook secrets and cross-tenant alert injection prevention."""
+    with TestingSessionLocal() as db:
+        # Create Org A with service
+        org_a = Organization(name="Tenant Alpha")
+        db.add(org_a)
+        db.flush()
+        svc_a = Service(organization_id=org_a.id, name="alpha-api")
+        db.add(svc_a)
+
+        # Create Org B with service
+        org_b = Organization(name="Tenant Beta")
+        db.add(org_b)
+        db.flush()
+        svc_b = Service(organization_id=org_b.id, name="beta-api")
+        db.add(svc_b)
+        db.commit()
+
+        org_a_id = org_a.id
+        org_b_id = org_b.id
+
+    token_a = compute_tenant_webhook_secret(org_a_id)
+    token_b = compute_tenant_webhook_secret(org_b_id)
+
+    # 1. Tenant Alpha posts alert for Tenant Alpha with token_a -> SUCCESS (200)
+    payload_alpha = {
+        "version": "4",
+        "groupKey": "alpha-gk",
+        "status": "firing",
+        "receiver": "aegisops-webhook",
+        "alerts": [
+            {
+                "status": "firing",
+                "labels": {
+                    "alertname": "AlphaDown",
+                    "organization": "Tenant Alpha",
+                    "service": "alpha-api",
+                    "severity": "critical",
+                    "environment": "production",
+                },
+                "annotations": {"summary": "Alpha is down"},
+                "startsAt": datetime.now(UTC).isoformat(),
+                "fingerprint": "fp-alpha-1",
+            }
+        ],
+    }
+    res_a = client.post(
+        "/api/v1/webhooks/alertmanager",
+        headers={"Authorization": f"Bearer {token_a}"},
+        json=payload_alpha,
+    )
+    assert res_a.status_code == 200
+    assert res_a.json()["incidents_created"] == 1
+
+    # 2. Random/invalid token -> 401 Unauthorized
+    res_invalid = client.post(
+        "/api/v1/webhooks/alertmanager",
+        headers={"Authorization": "Bearer totally-fake-token-12345"},
+        json=payload_alpha,
+    )
+    assert res_invalid.status_code == 401
+    assert "Unauthorized webhook credentials" in res_invalid.json()["detail"]
+
+    # 3. Cross-tenant alert spoofing: Token A targeting Tenant Beta -> 401 Unauthorized
+    payload_beta = {
+        "version": "4",
+        "groupKey": "beta-gk",
+        "status": "firing",
+        "receiver": "aegisops-webhook",
+        "alerts": [
+            {
+                "status": "firing",
+                "labels": {
+                    "alertname": "BetaDown",
+                    "organization": "Tenant Beta",
+                    "service": "beta-api",
+                    "severity": "critical",
+                    "environment": "production",
+                },
+                "annotations": {"summary": "Beta is down"},
+                "startsAt": datetime.now(UTC).isoformat(),
+                "fingerprint": "fp-beta-1",
+            }
+        ],
+    }
+    res_cross = client.post(
+        "/api/v1/webhooks/alertmanager",
+        headers={"Authorization": f"Bearer {token_a}"},
+        json=payload_beta,
+    )
+    assert res_cross.status_code == 401
+    assert "Unauthorized webhook credentials" in res_cross.json()["detail"]
+
+    # 4. Valid token_b for Tenant Beta -> 200 OK
+    res_b = client.post(
+        "/api/v1/webhooks/alertmanager",
+        headers={"Authorization": f"Bearer {token_b}"},
+        json=payload_beta,
+    )
+    assert res_b.status_code == 200
+    assert res_b.json()["incidents_created"] == 1

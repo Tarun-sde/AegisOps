@@ -233,6 +233,7 @@ def main() -> int:
                     "status": "firing",
                     "labels": {
                         "alertname": "HighApiErrorRate",
+                        "organization": "AegisOps Demo",
                         "service": "shop-api",
                         "severity": incident_found["severity"],
                         "environment": "demo",
@@ -309,6 +310,7 @@ def main() -> int:
                     "status": "resolved",
                     "labels": {
                         "alertname": "HighApiErrorRate",
+                        "organization": "AegisOps Demo",
                         "service": "shop-api",
                         "severity": incident_found["severity"],
                         "environment": "demo",

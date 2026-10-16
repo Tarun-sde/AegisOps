@@ -42,6 +42,9 @@ services:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
     ports: ["127.0.0.1:8000:8000"]
+    volumes:
+      - ./apps:/app/apps
+      - ./agents:/app/agents
     mem_limit: 512m
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
@@ -64,6 +67,9 @@ services:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
     command: [celery, -A, apps.worker.celery_app.celery_app, worker, --loglevel=info, -c, "2"]
+    volumes:
+      - ./apps:/app/apps
+      - ./agents:/app/agents
     mem_limit: 512m
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
@@ -76,6 +82,9 @@ services:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
     command: [celery, -A, apps.worker.celery_app.celery_app, beat, --loglevel=info, --schedule=/tmp/celerybeat-schedule]
+    volumes:
+      - ./apps:/app/apps
+      - ./agents:/app/agents
     deploy:
       replicas: 1
     mem_limit: 256m

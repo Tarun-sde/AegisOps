@@ -468,6 +468,18 @@ class ServiceRead(BaseModel):
     github_repo: str | None = None
     current_version: str | None = None
     current_commit_sha: str | None = None
+    healthcheck_url: str | None = None
+    monitoring_status: str = "unknown"
+    last_verified_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_probe_status_code: int | None = None
+    last_probe_latency_ms: float | None = None
+    last_probe_error: str | None = None
+    is_monitored: bool = True
+    monitoring_interval_seconds: int = 60
+    failure_threshold: int = 3
+    consecutive_failures: int = 0
+    consecutive_successes: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -480,6 +492,9 @@ class ServiceCreate(BaseModel):
     environment: str = "staging"
     description: str | None = None
     github_repo: str | None = None
+    healthcheck_url: str | None = None
+    is_monitored: bool = True
+    monitoring_interval_seconds: int = 60
 
 
 class ServiceUpdate(BaseModel):
@@ -490,6 +505,10 @@ class ServiceUpdate(BaseModel):
     github_repo: str | None = None
     current_version: str | None = None
     current_commit_sha: str | None = None
+    healthcheck_url: str | None = None
+    monitoring_status: str | None = None
+    is_monitored: bool | None = None
+    monitoring_interval_seconds: int | None = None
 
 
 class DeploymentRecordRead(BaseModel):
@@ -514,6 +533,43 @@ class ServiceVerifyResponse(BaseModel):
     message: str
     status_code: int | None = None
     latency_ms: float | None = None
+    monitoring_status: str | None = None
+    last_verified_at: datetime | None = None
+
+
+class MetricDataPoint(BaseModel):
+    timestamp: float
+    value: float
+
+
+class MetricSeries(BaseModel):
+    name: str
+    unit: str
+    current_value: float | None = None
+    points: list[MetricDataPoint] = []
+
+
+class ServiceMetricsResponse(BaseModel):
+    service_id: UUID
+    service_name: str
+    window: str
+    is_instrumented: bool
+    status: str  # "instrumented" | "uninstrumented" | "unavailable"
+    message: str | None = None
+    metrics: dict[str, MetricSeries] | None = None
+
+
+class ServiceHealthObservationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    service_id: UUID
+    organization_id: UUID
+    observed_at: datetime
+    status: str
+    status_code: int | None = None
+    latency_ms: float | None = None
+    error_message: str | None = None
 
 
 class AuditEventRead(BaseModel):

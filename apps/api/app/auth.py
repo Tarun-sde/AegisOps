@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import http.client
 import ipaddress
 import os
 import secrets
+import socket
 import urllib.parse
+import urllib.request
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -38,6 +42,26 @@ ALLOWED_INTERNAL_HOSTS = {
     "tempo",
     "otel-collector",
 }
+
+PROHIBITED_METADATA_HOSTS = {
+    "169.254.169.254",
+    "169.254.170.2",
+    "metadata.google.internal",
+    "metadata",
+    "instance-data",
+    "metadata.turing.internal",
+    "100.100.100.200",
+    "fd00:ec2::254",
+}
+
+PROHIBITED_METADATA_IPS = {
+    ipaddress.ip_address("169.254.169.254"),
+    ipaddress.ip_address("169.254.170.2"),
+    ipaddress.ip_address("100.100.100.200"),
+    ipaddress.ip_address("fd00:ec2::254"),
+}
+
+CARRIER_GRADE_NAT_NET = ipaddress.IPv4Network("100.64.0.0/10")
 
 
 def hash_password(password: str) -> tuple[str, str]:
@@ -170,8 +194,64 @@ def log_audit_event(
     return event
 
 
-def validate_connector_url(url: str, allow_local_demo: bool = True) -> str:
-    """SSRF prevention: blocks cloud metadata and private networks for external connectors."""
+def _verify_ip_safety(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    hostname: str | None = None,
+    allow_local_demo: bool = False,
+) -> None:
+    """Validate that an IP does not target private, internal, or cloud metadata destinations."""
+    # Handle IPv4-mapped IPv6 (::ffff:127.0.0.1) and 6to4 addresses (2002::/16)
+    unmapped = ip.ipv4_mapped if (isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped) else ip
+    if isinstance(unmapped, ipaddress.IPv6Address) and unmapped.sixtofour:
+        unmapped = unmapped.sixtofour
+
+    # Cloud metadata check (checked first to match expected metadata rejection messages)
+    if unmapped in PROHIBITED_METADATA_IPS:
+        raise ValueError("Access to cloud instance metadata services is prohibited.")
+
+    # Loopback check
+    if unmapped.is_loopback:
+        if allow_local_demo and hostname and hostname in ALLOWED_INTERNAL_HOSTS:
+            return
+        raise ValueError(
+            f"Loopback connections are prohibited for external connectors (resolved to {unmapped})."
+        )
+
+    # Link-local check
+    if unmapped.is_link_local:
+        raise ValueError(f"Link-local addresses are prohibited (resolved to {unmapped}).")
+
+    # Private network check (RFC 1918 / fc00::/7)
+    if unmapped.is_private:
+        if allow_local_demo and hostname and hostname in ALLOWED_INTERNAL_HOSTS:
+            return
+        raise ValueError(
+            "Private network connections are prohibited for external connectors "
+            f"(resolved to {unmapped})."
+        )
+
+    # Multicast check
+    if unmapped.is_multicast:
+        raise ValueError(f"Multicast addresses are prohibited (resolved to {unmapped}).")
+
+    # Unspecified check (0.0.0.0 / ::)
+    if unmapped.is_unspecified:
+        raise ValueError(f"Unspecified addresses are prohibited (resolved to {unmapped}).")
+
+    # Reserved check
+    if unmapped.is_reserved:
+        raise ValueError(f"Reserved addresses are prohibited (resolved to {unmapped}).")
+
+    # Carrier-Grade NAT (RFC 6598: 100.64.0.0/10)
+    if isinstance(unmapped, ipaddress.IPv4Address) and unmapped in CARRIER_GRADE_NAT_NET:
+        raise ValueError(
+            "Carrier-Grade NAT / Shared address space connections are prohibited "
+            f"(resolved to {unmapped})."
+        )
+
+
+def validate_connector_url(url: str, allow_local_demo: bool = False) -> str:
+    """SSRF prevention: blocks cloud metadata, loopback, private networks, and unresolved hosts."""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(
@@ -182,29 +262,155 @@ def validate_connector_url(url: str, allow_local_demo: bool = True) -> str:
     if not hostname:
         raise ValueError("URL must have a valid hostname.")
 
-    # Block well-known cloud metadata endpoints
-    if hostname in ("169.254.169.254", "metadata.google.internal", "instance-data"):
+    # Block well-known cloud metadata endpoints and prohibited hostnames
+    if hostname in PROHIBITED_METADATA_HOSTS:
         raise ValueError("Access to cloud instance metadata services is prohibited.")
 
     # If it's a known internal demo hostname in local/dev mode, allow
     if allow_local_demo and hostname in ALLOWED_INTERNAL_HOSTS:
         return url
 
-    # Validate IP address ranges if resolved as IP
+    # Validate IP address ranges directly or resolve domain via DNS
     try:
         ip = ipaddress.ip_address(hostname)
-        if ip.is_loopback:
-            raise ValueError("Loopback connections are prohibited for external connectors.")
-        if ip.is_private and not allow_local_demo:
-            raise ValueError("Private network connections are prohibited for external connectors.")
-        if ip.is_link_local:
-            raise ValueError("Link-local addresses are prohibited.")
-    except ValueError as e:
-        if "prohibited" in str(e):
-            raise
-        # Not a raw IP literal; domain name validation passes
+        ips = [ip]
+    except ValueError:
+        # Not a raw IP literal; resolve domain via DNS
+        try:
+            addr_infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+            ips = []
+            for info in addr_infos:
+                ip_str = info[4][0]
+                try:
+                    ips.append(ipaddress.ip_address(ip_str))
+                except ValueError:
+                    continue
+            if not ips:
+                raise ValueError(
+                    f"DNS resolution failed: no IP addresses found for hostname '{hostname}'."
+                )
+        except socket.gaierror as e:
+            raise ValueError(f"DNS resolution failed for hostname '{hostname}': {e}") from e
+
+    for resolved_ip in ips:
+        _verify_ip_safety(resolved_ip, hostname=hostname, allow_local_demo=allow_local_demo)
 
     return url
+
+
+class SSRFSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Enforces SSRF validation on every redirect hop, blocks downgrade and redirect loops."""
+
+    def __init__(self, allow_local_demo: bool = False, max_redirects: int = 3):
+        super().__init__()
+        self.allow_local_demo = allow_local_demo
+        self.max_redirects = max_redirects
+        self._redirect_count = 0
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        self._redirect_count += 1
+        if self._redirect_count > self.max_redirects:
+            raise ValueError(f"Maximum redirect limit ({self.max_redirects}) exceeded.")
+
+        # Ensure no protocol downgrade (e.g. https -> http)
+        old_scheme = urllib.parse.urlparse(req.full_url).scheme.lower()
+        new_scheme = urllib.parse.urlparse(newurl).scheme.lower()
+        if old_scheme == "https" and new_scheme == "http":
+            raise ValueError("Redirect protocol downgrade from HTTPS to HTTP is prohibited.")
+
+        # Validate redirect target against SSRF rules
+        validate_connector_url(newurl, allow_local_demo=self.allow_local_demo)
+
+        result = super().redirect_request(req, fp, code, msg, headers, newurl)
+        return result
+
+
+class SSRFSafeHTTPConnection(http.client.HTTPConnection):
+    """HTTPConnection subclass that verifies connected socket peer IP before sending bytes."""
+
+    def __init__(self, *args: Any, allow_local_demo: bool = False, **kwargs: Any) -> None:
+        self.allow_local_demo = allow_local_demo
+        super().__init__(*args, **kwargs)
+
+    def connect(self) -> None:
+        super().connect()
+        if self.sock is not None:
+            peer_ip_str = self.sock.getpeername()[0]
+            ip = ipaddress.ip_address(peer_ip_str)
+            _verify_ip_safety(ip, hostname=self.host, allow_local_demo=self.allow_local_demo)
+
+
+class SSRFSafeHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPSConnection subclass that verifies connected socket peer IP before TLS handshake."""
+
+    def __init__(self, *args: Any, allow_local_demo: bool = False, **kwargs: Any) -> None:
+        self.allow_local_demo = allow_local_demo
+        super().__init__(*args, **kwargs)
+
+    def connect(self) -> None:
+        super().connect()
+        if self.sock is not None:
+            peer_ip_str = self.sock.getpeername()[0]
+            ip = ipaddress.ip_address(peer_ip_str)
+            _verify_ip_safety(ip, hostname=self.host, allow_local_demo=self.allow_local_demo)
+
+
+class SSRFSafeHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, allow_local_demo: bool = False) -> None:
+        super().__init__()
+        self.allow_local_demo = allow_local_demo
+
+    def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        res = self.do_open(
+            lambda host, **kwargs: SSRFSafeHTTPConnection(
+                host, allow_local_demo=self.allow_local_demo, **kwargs
+            ),
+            req,
+        )
+        assert isinstance(res, http.client.HTTPResponse)
+        return res
+
+
+class SSRFSafeHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, allow_local_demo: bool = False, context: Any = None) -> None:
+        super().__init__(context=context)
+        self.allow_local_demo = allow_local_demo
+
+    def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        res = self.do_open(
+            lambda host, **kwargs: SSRFSafeHTTPSConnection(
+                host, allow_local_demo=self.allow_local_demo, **kwargs
+            ),
+            req,
+        )
+        assert isinstance(res, http.client.HTTPResponse)
+        return res
+
+
+def get_ssrf_safe_opener(
+    allow_local_demo: bool = False, max_redirects: int = 3
+) -> urllib.request.OpenerDirector:
+    """Build a urllib OpenerDirector hardened against SSRF, redirects, and DNS rebinding."""
+    redirect_handler = SSRFSafeRedirectHandler(
+        allow_local_demo=allow_local_demo, max_redirects=max_redirects
+    )
+    http_handler = SSRFSafeHTTPHandler(allow_local_demo=allow_local_demo)
+    https_handler = SSRFSafeHTTPSHandler(allow_local_demo=allow_local_demo)
+    return urllib.request.build_opener(redirect_handler, http_handler, https_handler)
+
+
+def compute_tenant_webhook_secret(org_id: uuid.UUID | str) -> str:
+    """Compute deterministic HMAC-derived per-tenant webhook secret."""
+    key = os.environ.get("ALERTMANAGER_SECRET", "aegisops-demo-alertmanager-secret").encode("utf-8")
+    return hmac.new(key, str(org_id).encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 @dataclass

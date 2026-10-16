@@ -1698,6 +1698,12 @@
 .ws-health-critical {
   color: var(--red);
 }
+.ws-health-configured {
+  color: var(--ws-blue);
+}
+.ws-health-configured i {
+  background: var(--ws-blue);
+}
 .ws-health-unknown {
   color: var(--muted);
 }

@@ -35,7 +35,7 @@ const links = [
 function WorkspaceShell({ children }: { children: ReactNode }) {
   const path = usePathname(),
     router = useRouter();
-  const { activeOrg, role, user, loading, logout } = useAuth();
+  const { activeOrg, role, user, organizations, loading, logout } = useAuth();
   const [error, setError] = useState<string | null>(null),
     [collapsed, setCollapsed] = useState(false),
     [pinned, setPinned] = useState<string[]>([]),
@@ -127,23 +127,42 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
             : (activeOrg?.name ?? "Session required")
         }
         options={
-          activeOrg
-            ? [
-                {
-                  id: activeOrg.id,
-                  label: activeOrg.name,
-                  description: `${role} · Active authenticated organization`,
-                  selected: true,
-                  action: () => {},
+          organizations && organizations.length > 0
+            ? organizations.map((org) => ({
+                id: org.id,
+                label: org.name,
+                description:
+                  org.id === activeOrg?.id
+                    ? `${role} · Active organization`
+                    : "Switch to this organization",
+                selected: org.id === activeOrg?.id,
+                action: () => {
+                  if (org.id !== activeOrg?.id) {
+                    if (typeof window !== "undefined") {
+                      localStorage.setItem("aegisops_active_org", org.id);
+                      document.cookie = `aegisops_active_org=${org.id}; path=/; max-age=31536000; SameSite=Lax`;
+                      window.location.reload();
+                    }
+                  }
                 },
-              ]
-            : [
-                {
-                  id: "login",
-                  label: "Sign in",
-                  action: () => router.push("/login"),
-                },
-              ]
+              }))
+            : activeOrg
+              ? [
+                  {
+                    id: activeOrg.id,
+                    label: activeOrg.name,
+                    description: `${role} · Active authenticated organization`,
+                    selected: true,
+                    action: () => {},
+                  },
+                ]
+              : [
+                  {
+                    id: "login",
+                    label: "Sign in",
+                    action: () => router.push("/login"),
+                  },
+                ]
         }
       />
       <button className="ws-find" onClick={search} title="Find applications">

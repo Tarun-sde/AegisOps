@@ -34,12 +34,42 @@ export function ApplicationActions({ service }: { service: Service }) {
             ["overview", "Open application"],
             ["analytics", "View analytics"],
             ["incidents", "View incidents"],
+            ["settings", "Connection settings"],
             ["activity", "View activity"],
           ].map(([id, label]) => ({
             id,
             label,
             action: () => router.push(`/app/services/${service.id}?view=${id}`),
           })),
+          {
+            id: "copy-id",
+            label: "Copy service ID",
+            action: () => {
+              if (typeof navigator !== "undefined" && navigator.clipboard) {
+                void navigator.clipboard.writeText(service.id);
+              }
+            },
+          },
+          ...(service.healthcheck_url
+            ? [
+                {
+                  id: "open-external",
+                  label: "Open healthcheck URL ↗",
+                  action: () => {
+                    if (
+                      typeof window !== "undefined" &&
+                      service.healthcheck_url
+                    ) {
+                      window.open(
+                        service.healthcheck_url,
+                        "_blank",
+                        "noopener,noreferrer",
+                      );
+                    }
+                  },
+                },
+              ]
+            : []),
         ]}
       />
     </div>

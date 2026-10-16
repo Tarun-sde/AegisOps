@@ -199,6 +199,7 @@ def main() -> int:
                     "status": "firing",
                     "labels": {
                         "alertname": "ShopApiHighErrorRate",
+                        "organization": "AegisOps Demo",
                         "service": "shop-api",
                         "severity": "critical",
                     },

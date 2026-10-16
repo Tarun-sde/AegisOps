@@ -11,6 +11,8 @@ import {
 import { ServiceAnalytics } from "../../../components/service-analytics";
 import { ApplicationActions } from "../../../components/application-actions";
 import { StatusBadge } from "../../../components/status-badge";
+import { HealthStatus } from "../../../components/project-visuals";
+import { ServiceSettings } from "../../../components/service-settings";
 import { EvidenceExplorer } from "../../../components/evidence-explorer";
 import { InvestigationPanel } from "../../incidents/[incidentId]/investigation-panel";
 import { DeploymentContext } from "../../incidents/[incidentId]/deployment-context";
@@ -22,6 +24,7 @@ const views = [
   "investigations",
   "evidence",
   "activity",
+  "settings",
 ];
 const utc = (value: string) =>
   new Date(value).toISOString().replace("T", " ").slice(0, 19) + " UTC";
@@ -207,10 +210,12 @@ export default async function ServicePage({
       </div>
       <div className="ws-project-badges">
         <span className="ws-tag">{service.environment}</span>
-        <span className="ws-health ws-health-unknown">
-          <i aria-hidden="true" />
-          Monitoring unknown
-        </span>
+        <HealthStatus health={service.monitoring_status || "unknown"} />
+        {service.healthcheck_url && (
+          <span className="ws-tag">
+            {service.is_monitored !== false ? "Monitored" : "Monitoring Paused"}
+          </span>
+        )}
         <span>Updated {utc(service.updated_at)}</span>
         {service.current_version && (
           <span>Version {service.current_version}</span>
@@ -492,6 +497,7 @@ export default async function ServicePage({
           />
         </section>
       )}
+      {view === "settings" && <ServiceSettings service={service} />}
     </main>
   );
 }

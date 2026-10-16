@@ -23,6 +23,8 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 }
 
 ALL_STATUSES = set(VALID_TRANSITIONS.keys())
+ACTIVE_INCIDENT_STATUSES: tuple[str, ...] = ("open", "acknowledged", "mitigating", "reopened")
+TERMINAL_STATUSES: tuple[str, ...] = ("resolved", "closed")
 
 
 class InvalidTransitionError(ValueError):

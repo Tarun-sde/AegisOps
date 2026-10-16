@@ -43,7 +43,11 @@ export default async function OperationalOverviewPage() {
               ? String(services.data.length).padStart(2, "0")
               : "—"}
           </strong>
-          <small>Connection health not reported</small>
+          <small>
+            {services.data
+              ? `${services.data.filter((s) => s.monitoring_status === "reachable").length} reachable · ${services.data.length} registered`
+              : "No services registered"}
+          </small>
         </div>
         <div>
           <span className="mono">ACTIVE INCIDENTS</span>
@@ -58,10 +62,12 @@ export default async function OperationalOverviewPage() {
           <span className="mono">AUTHORIZED DATA / TELEMETRY BOUNDARY</span>
           <p>
             {services.data?.filter((s) => (s.active_incident_count ?? 0) > 0)
-              .length ?? "—"}{" "}
+              .length ?? 0}{" "}
             applications with active incidents.
             <br />
-            Monitoring health remains unknown.
+            {services.data?.filter((s) => s.monitoring_status === "reachable")
+              .length ?? 0}{" "}
+            monitored services reporting healthy.
           </p>
         </div>
       </div>

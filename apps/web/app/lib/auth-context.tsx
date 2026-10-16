@@ -14,6 +14,7 @@ interface AuthContextValue {
   user: AuthResponse["user"] | null;
   activeOrg: AuthResponse["active_organization"] | null;
   role: string | null;
+  organizations: AuthResponse["organizations"];
   isAuthenticated: boolean;
   loading: boolean;
   refresh: () => Promise<void>;
@@ -24,6 +25,7 @@ const AuthContext = createContext<AuthContextValue>({
   user: null,
   activeOrg: null,
   role: null,
+  organizations: [],
   isAuthenticated: false,
   loading: true,
   refresh: async () => {},
@@ -36,6 +38,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     AuthResponse["active_organization"] | null
   >(null);
   const [role, setRole] = useState<string | null>(null);
+  const [organizations, setOrganizations] = useState<
+    AuthResponse["organizations"]
+  >([]);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
@@ -45,15 +50,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(data.user);
         setActiveOrg(data.active_organization);
         setRole(data.role);
+        setOrganizations(data.organizations || []);
       } else {
         setUser(null);
         setActiveOrg(null);
         setRole(null);
+        setOrganizations([]);
       }
     } catch {
       setUser(null);
       setActiveOrg(null);
       setRole(null);
+      setOrganizations([]);
     } finally {
       setLoading(false);
     }
@@ -65,6 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setActiveOrg(null);
     setRole(null);
+    setOrganizations([]);
   }, []);
 
   useEffect(() => {
@@ -77,6 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         activeOrg,
         role,
+        organizations,
         isAuthenticated: !!user,
         loading,
         refresh,

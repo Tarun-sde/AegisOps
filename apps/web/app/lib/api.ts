@@ -73,7 +73,7 @@ export async function apiFetch(
     headers.set("Accept", "application/json");
   }
 
-  // 1. Browser client-side CSRF handling for mutating requests
+  // 1. Browser client-side CSRF and workspace handling
   if (typeof window !== "undefined") {
     if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
       const csrf = getCsrfToken();
@@ -81,15 +81,20 @@ export async function apiFetch(
         headers.set("x-csrf-token", csrf);
       }
     }
+    const activeOrgId = localStorage.getItem("aegisops_active_org");
+    if (activeOrgId && !headers.has("x-organization-id")) {
+      headers.set("x-organization-id", activeOrgId);
+    }
   }
 
-  // 2. Server-side: forward session cookies to trusted API_BASE only
+  // 2. Server-side: forward session cookies and active workspace to trusted API_BASE only
   if (typeof window === "undefined" && url.startsWith(API_BASE)) {
     try {
       const { cookies } = await import("next/headers");
       const cookieStore = await cookies();
       const session = cookieStore.get("aegisops_session");
       const csrf = cookieStore.get("aegisops_csrf");
+      const activeOrgCookie = cookieStore.get("aegisops_active_org");
 
       const cookieParts: string[] = [];
       if (session) cookieParts.push(`aegisops_session=${session.value}`);
@@ -97,6 +102,10 @@ export async function apiFetch(
 
       if (cookieParts.length > 0 && !headers.has("Cookie")) {
         headers.set("Cookie", cookieParts.join("; "));
+      }
+
+      if (activeOrgCookie && !headers.has("x-organization-id")) {
+        headers.set("x-organization-id", activeOrgCookie.value);
       }
 
       if (
@@ -466,6 +475,18 @@ export interface Service {
   github_repo?: string | null;
   current_version?: string | null;
   current_commit_sha?: string | null;
+  healthcheck_url?: string | null;
+  monitoring_status?: string;
+  last_verified_at?: string | null;
+  last_success_at?: string | null;
+  last_probe_status_code?: number | null;
+  last_probe_latency_ms?: number | null;
+  last_probe_error?: string | null;
+  is_monitored?: boolean;
+  monitoring_interval_seconds?: number;
+  failure_threshold?: number;
+  consecutive_failures?: number;
+  consecutive_successes?: number;
   active_incident_count?: number | null;
   last_incident_at?: string | null;
 }
@@ -475,6 +496,19 @@ export interface ServiceVerifyResponse {
   message: string;
   status_code?: number;
   latency_ms?: number;
+  monitoring_status?: string;
+  last_verified_at?: string;
+}
+
+export interface ServiceHealthObservation {
+  id: string;
+  service_id: string;
+  organization_id: string;
+  observed_at: string;
+  status: string;
+  status_code?: number | null;
+  latency_ms?: number | null;
+  error_message?: string | null;
 }
 
 export interface Span {
@@ -625,6 +659,10 @@ export async function createService(payload: {
   name: string;
   environment?: string;
   description?: string;
+  github_repo?: string;
+  healthcheck_url?: string;
+  is_monitored?: boolean;
+  monitoring_interval_seconds?: number;
 }): Promise<{ data: Service | null; error: string | null }> {
   try {
     const res = await apiFetch("/api/v1/services", {
@@ -647,6 +685,75 @@ export async function createService(payload: {
     return {
       data: null,
       error: err instanceof Error ? err.message : "Failed to create service",
+    };
+  }
+}
+
+export async function updateService(
+  serviceId: string,
+  payload: {
+    name?: string;
+    environment?: string;
+    description?: string | null;
+    status?: string | null;
+    github_repo?: string | null;
+    current_version?: string | null;
+    current_commit_sha?: string | null;
+    healthcheck_url?: string | null;
+    monitoring_status?: string | null;
+    is_monitored?: boolean;
+    monitoring_interval_seconds?: number;
+  },
+): Promise<{ data: Service | null; error: string | null }> {
+  try {
+    const res = await apiFetch(`/api/v1/services/${serviceId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      return {
+        data: null,
+        error: errJson.detail || `Failed to update service (${res.status})`,
+      };
+    }
+    const data = (await res.json()) as Service;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to update service",
+    };
+  }
+}
+
+export async function getServiceHealthObservations(
+  serviceId: string,
+  limit: number = 20,
+): Promise<{ data: ServiceHealthObservation[] | null; error: string | null }> {
+  try {
+    const res = await apiFetch(
+      `/api/v1/services/${serviceId}/health-observations?limit=${limit}`,
+      {
+        cache: "no-store",
+      },
+    );
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      return {
+        data: null,
+        error: errJson.detail || `Failed to load observations (${res.status})`,
+      };
+    }
+    const data = (await res.json()) as ServiceHealthObservation[];
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to load observations",
     };
   }
 }
@@ -680,6 +787,60 @@ export async function verifyServiceConnection(
     return {
       data: null,
       error: err instanceof Error ? err.message : "Failed to connect",
+    };
+  }
+}
+
+export interface MetricDataPoint {
+  timestamp: number;
+  value: number;
+}
+
+export interface MetricSeries {
+  name: string;
+  unit: string;
+  current_value: number | null;
+  points: MetricDataPoint[];
+}
+
+export interface ServiceMetricsResponse {
+  service_id: string;
+  service_name: string;
+  window: string;
+  is_instrumented: boolean;
+  status: "instrumented" | "uninstrumented" | "unavailable";
+  message: string | null;
+  metrics: {
+    request_rate?: MetricSeries;
+    error_rate?: MetricSeries;
+    p95_latency?: MetricSeries;
+  } | null;
+}
+
+export async function getServiceMetrics(
+  serviceId: string,
+  window: "15m" | "1h" | "6h" | "24h" = "1h",
+): Promise<{ data: ServiceMetricsResponse | null; error: string | null }> {
+  try {
+    const res = await apiFetch(
+      `/api/v1/services/${serviceId}/metrics?window=${window}`,
+      {
+        cache: "no-store",
+      },
+    );
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      return {
+        data: null,
+        error: errJson.detail || `Failed to load metrics (${res.status})`,
+      };
+    }
+    const data = (await res.json()) as ServiceMetricsResponse;
+    return { data, error: null };
+  } catch (err) {
+    return {
+      data: null,
+      error: err instanceof Error ? err.message : "Failed to load metrics",
     };
   }
 }

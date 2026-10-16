@@ -92,7 +92,10 @@ def main() -> None:
                     with urllib.request.urlopen(f"{env['BROWSER_API_URL']}/readyz", timeout=3) as r:
                         assert json.load(r)["checks"] == {"postgres": "ok", "redis": "ok"}
                     break
-                except urllib.error.URLError, TimeoutError:
+                except (
+                    urllib.error.URLError,
+                    TimeoutError,
+                ):
                     if time.monotonic() >= deadline:
                         raise
                     time.sleep(1)

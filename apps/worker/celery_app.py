@@ -34,4 +34,9 @@ celery_app.conf.beat_schedule = {
         "schedule": 15.0,
         "options": {"expires": 12.0},
     },
+    "probe-monitored-services-periodic": {
+        "task": "aegisops.probe_monitored_services",
+        "schedule": 10.0,
+        "options": {"expires": 8.0},
+    },
 }

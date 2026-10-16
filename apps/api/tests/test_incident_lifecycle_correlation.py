@@ -329,6 +329,7 @@ def test_multi_alert_correlation_and_deduplication(test_client):
                 "status": "firing",
                 "labels": {
                     "alertname": "HighApiErrorRate",
+                    "organization": org.name,
                     "service": "shop-api",
                     "severity": "warning",
                 },
@@ -363,6 +364,7 @@ def test_multi_alert_correlation_and_deduplication(test_client):
                 "status": "firing",
                 "labels": {
                     "alertname": "HighLatencyP95",
+                    "organization": org.name,
                     "service": "shop-api",
                     "severity": "critical",  # Escalates incident severity!
                 },
@@ -416,6 +418,7 @@ def test_multi_alert_correlation_negative_boundaries(test_client):
                 "status": "firing",
                 "labels": {
                     "alertname": "HighApiErrorRate",
+                    "organization": org.name,
                     "service": "shop-api",
                     "severity": "warning",
                 },
@@ -438,6 +441,7 @@ def test_multi_alert_correlation_negative_boundaries(test_client):
                 "status": "firing",
                 "labels": {
                     "alertname": "HighApiErrorRate",
+                    "organization": org.name,
                     "service": "auth-api",
                     "severity": "critical",
                 },

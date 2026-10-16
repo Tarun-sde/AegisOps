@@ -1,0 +1,6 @@
+# Prometheus file-based service discovery targets for authorized registered applications.
+# Targets defined here are automatically discovered and scraped by Prometheus.
+
+- targets: []
+  labels:
+    job: external-applications

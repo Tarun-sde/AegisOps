@@ -111,6 +111,32 @@ def test_migration_round_trip_and_database_constraints():
                         datetime.now(UTC),
                     ),
                 )
+            # Transition first incident to acknowledged
+            connection.execute(
+                "UPDATE incidents SET status='acknowledged' WHERE id=%s",
+                (inc1_id,),
+            )
+            # Acknowledged incident with same fingerprint must also reject duplicate
+            # incident via uq_active_incident_fingerprint
+            with pytest.raises(psycopg.errors.UniqueViolation), connection.transaction():
+                connection.execute(
+                    """
+                    INSERT INTO incidents (
+                        id, organization_id, service_id, title,
+                        severity, status, fingerprint, started_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        uuid4(),
+                        org_id,
+                        service_id,
+                        "Duplicate while acknowledged",
+                        "critical",
+                        "open",
+                        "fp-1",
+                        datetime.now(UTC),
+                    ),
+                )
 
             # Incident events foreign key constraint
             event_id = uuid4()

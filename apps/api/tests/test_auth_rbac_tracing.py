@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from agents.incident_investigator.tools.gateway import ReadOnlyToolGateway
 from apps.api.app.auth import (
+    SSRFSafeRedirectHandler,
     create_user_session,
     hash_password,
     validate_connector_url,
@@ -369,7 +371,7 @@ def test_rbac_role_hierarchy_and_permissions(test_client):
 
 
 def test_ssrf_validator_guards(test_client):
-    # Direct validator tests
+    # Direct validator tests: IP literals and schemes
     with pytest.raises(ValueError, match="cloud instance metadata"):
         validate_connector_url("http://169.254.169.254/latest/meta-data")
 
@@ -387,6 +389,45 @@ def test_ssrf_validator_guards(test_client):
 
     with pytest.raises(ValueError, match="cloud instance metadata"):
         validate_connector_url("http://metadata.google.internal/computeMetadata/v1")
+
+    # AUD-002: IPv6 loopback, link-local, CGNAT, and IPv4-mapped IPv6
+    with pytest.raises(ValueError, match="Loopback connections are prohibited"):
+        validate_connector_url("http://[::1]:8000/metrics", allow_local_demo=False)
+
+    with pytest.raises(ValueError, match="Link-local addresses are prohibited"):
+        validate_connector_url("http://[fe80::1]:8000/metrics")
+
+    with pytest.raises(ValueError, match="Loopback connections are prohibited"):
+        validate_connector_url("http://[::ffff:127.0.0.1]:8000/metrics", allow_local_demo=False)
+
+    with pytest.raises(ValueError, match="cloud instance metadata"):
+        validate_connector_url("http://[::ffff:169.254.169.254]/latest/meta-data")
+
+    with pytest.raises(ValueError, match="cloud instance metadata"):
+        validate_connector_url("http://100.100.100.200/")
+
+    with pytest.raises(ValueError, match="Carrier-Grade NAT"):
+        validate_connector_url("http://100.64.1.1:8080/")
+
+    with pytest.raises(ValueError, match="cloud instance metadata"):
+        validate_connector_url("http://[fd00:ec2::254]/")
+
+    # AUD-002: DNS resolution testing with mock
+    with patch("socket.getaddrinfo") as mock_dns:
+        # Mock domain resolving to private IP
+        mock_dns.return_value = [(2, 1, 6, "", ("10.20.30.40", 80))]
+        with pytest.raises(ValueError, match="Private network connections are prohibited"):
+            validate_connector_url("http://internal-corp-service.test/")
+
+        # Mock domain resolving to loopback IP
+        mock_dns.return_value = [(2, 1, 6, "", ("127.0.0.2", 80))]
+        with pytest.raises(ValueError, match="Loopback connections are prohibited"):
+            validate_connector_url("http://local-rebind.test/")
+
+        # Mock domain resolving to metadata IP
+        mock_dns.return_value = [(2, 1, 6, "", ("169.254.169.254", 80))]
+        with pytest.raises(ValueError, match="cloud instance metadata"):
+            validate_connector_url("http://cloud-rebind.test/")
 
     # API endpoint SSRF rejection
     with TestingSessionLocal() as db:
@@ -417,6 +458,50 @@ def test_ssrf_validator_guards(test_client):
     assert "SSRF Protection" in res.json()["detail"]
 
 
+def test_ssrf_redirect_and_connection_hardening():
+    """AUD-002: Verify redirect validation, protocol downgrade protection, and hop limits."""
+    import urllib.request
+
+    http_req = urllib.request.Request("http://external-service.com/api")
+    https_req = urllib.request.Request("https://external-service.com/api")
+
+    # 1. Reject redirect targeting cloud metadata
+    h1 = SSRFSafeRedirectHandler(allow_local_demo=False, max_redirects=3)
+    with pytest.raises(ValueError, match="cloud instance metadata"):
+        h1.redirect_request(
+            http_req, None, 302, "Found", {}, "http://169.254.169.254/latest/meta-data"
+        )
+
+    # 2. Reject redirect targeting loopback
+    h2 = SSRFSafeRedirectHandler(allow_local_demo=False, max_redirects=3)
+    with pytest.raises(ValueError, match="Loopback connections are prohibited"):
+        h2.redirect_request(http_req, None, 302, "Found", {}, "http://127.0.0.1:8000/internal")
+
+    # 3. Reject redirect targeting private IP
+    h3 = SSRFSafeRedirectHandler(allow_local_demo=False, max_redirects=3)
+    with pytest.raises(ValueError, match="Private network connections are prohibited"):
+        h3.redirect_request(http_req, None, 302, "Found", {}, "http://10.0.0.5:9090/")
+
+    # 4. Reject protocol downgrade from HTTPS to HTTP
+    h4 = SSRFSafeRedirectHandler(allow_local_demo=False, max_redirects=3)
+    with pytest.raises(
+        ValueError, match="Redirect protocol downgrade from HTTPS to HTTP is prohibited"
+    ):
+        h4.redirect_request(https_req, None, 301, "Moved", {}, "http://external-service.com/api")
+
+    # 5. Reject excessive redirects (> 3 hops)
+    h_hops = SSRFSafeRedirectHandler(allow_local_demo=True, max_redirects=2)
+    # Hop 1
+    h_hops.redirect_request(https_req, None, 302, "Found", {}, "https://external-service.com/hop1")
+    # Hop 2
+    h_hops.redirect_request(https_req, None, 302, "Found", {}, "https://external-service.com/hop2")
+    # Hop 3 -> Exceeds max 2 hops!
+    with pytest.raises(ValueError, match="Maximum redirect limit"):
+        h_hops.redirect_request(
+            https_req, None, 302, "Found", {}, "https://external-service.com/hop3"
+        )
+
+
 def test_distributed_tracing_endpoint_and_gateway(test_client):
     # 1. Invalid trace id format
     with TestingSessionLocal() as db:
@@ -428,7 +513,7 @@ def test_distributed_tracing_endpoint_and_gateway(test_client):
         db.add(user)
         db.flush()
         db.add(Membership(user_id=user.id, organization_id=org.id, role="member"))
-        svc = Service(organization_id=org.id, name="trace-svc")
+        svc = Service(organization_id=org.id, name="shop-api")
         db.add(svc)
         db.flush()
         inc = Incident(
@@ -525,3 +610,170 @@ def test_distributed_tracing_endpoint_and_gateway(test_client):
             ev = db.query(EvidenceItem).filter(EvidenceItem.run_id == inv_id).first()
             assert ev is not None
             assert ev.source == "traces"
+
+    # 3. Foreign trace retrieval must fail closed (404 in API, Access Denied in Gateway)
+    foreign_trace_id = "5cf92f3577b34da6a3ce929d0e0e4739"
+    foreign_summary = TraceSummaryRead(
+        trace_id=foreign_trace_id,
+        service_name="foreign-tenant-service",
+        root_operation="POST /billing",
+        duration_ms=2.5,
+        span_count=1,
+        error_span_count=0,
+        spans=[
+            SpanRead(
+                span_id="0000000000000002",
+                trace_id=foreign_trace_id,
+                name="POST /billing",
+                service_name="foreign-tenant-service",
+                start_time_unix_nano=1000000,
+                end_time_unix_nano=3500000,
+                duration_ms=2.5,
+                status_code="STATUS_CODE_OK",
+                attributes={},
+            )
+        ],
+    )
+
+    with patch("apps.api.app.main.TempoClient") as MockTempo:
+        instance = MockTempo.return_value
+        instance.get_trace_summary.return_value = foreign_summary
+
+        # API endpoint rejects foreign trace with 404
+        neg_res = test_client.get(f"/api/v1/traces/{foreign_trace_id}")
+        assert neg_res.status_code == 404
+
+    with patch("apps.api.app.telemetry.tempo.TempoClient") as MockGwTempo:
+        gw_inst = MockGwTempo.return_value
+        gw_inst.get_trace_summary.return_value = foreign_summary
+
+        with TestingSessionLocal() as db:
+            run_rec = db.query(InvestigationRun).filter(InvestigationRun.id == inv_id).first()
+            inc_rec = db.query(Incident).filter(Incident.id == inc_id).first()
+            scope = Scope(
+                organization_id=org_id,
+                service_id=svc_id,
+                run_id=inv_id,
+            )
+            gw = ReadOnlyToolGateway(
+                scope=scope,
+                incident=inc_rec,
+                run_record=run_rec,
+                db_session=db,
+            )
+            # Gateway tool rejects foreign trace
+            neg_gw_res = gw.get_trace_summary(foreign_trace_id)
+            assert "error" in neg_gw_res
+            assert "Access denied" in neg_gw_res["error"]
+
+            from uuid import uuid4
+
+            # Gateway tool with non-existent service bound also fails closed
+            scope_no_svc = Scope(
+                organization_id=org_id,
+                service_id=uuid4(),
+                run_id=inv_id,
+            )
+            gw_no_svc = ReadOnlyToolGateway(
+                scope=scope_no_svc,
+                incident=inc_rec,
+                run_record=run_rec,
+                db_session=db,
+            )
+            no_svc_res = gw_no_svc.get_trace_summary(trace_id)
+            assert "error" in no_svc_res
+            assert "Access denied" in no_svc_res["error"]
+
+
+def test_mixed_service_trace_isolation_and_provenance(test_client):
+    """Prove mixed-service traces filter foreign spans and enforce provenance authorization."""
+    with TestingSessionLocal() as db:
+        pwd_hash, salt = hash_password("pass123")
+        org = Organization(id=uuid4(), name="Test Org Tracing")
+        user = User(
+            id=uuid4(),
+            email="tracing_user@example.com",
+            hashed_password=pwd_hash,
+            salt=salt,
+            name="Tracing User",
+        )
+        db.add_all([org, user])
+        db.flush()
+        db.add(Membership(user_id=user.id, organization_id=org.id, role="owner"))
+        svc = Service(
+            id=uuid4(),
+            organization_id=org.id,
+            name="cart-service",
+            environment="production",
+        )
+        db.add(svc)
+        token, _ = create_user_session(db, user.id)
+        db.commit()
+
+        org_id_str = str(org.id)
+        svc_id_str = str(svc.id)
+
+    test_client.cookies.set("aegisops_session", token)
+
+    mixed_trace_id = "aabbccddeeff00112233445566778899"
+    mixed_summary = TraceSummaryRead(
+        trace_id=mixed_trace_id,
+        service_name="cart-service",
+        root_operation="GET /cart",
+        duration_ms=45.0,
+        span_count=3,
+        error_span_count=0,
+        spans=[
+            SpanRead(
+                span_id="0000000000000001",
+                trace_id=mixed_trace_id,
+                name="GET /cart",
+                service_name="cart-service",
+                start_time_unix_nano=1_000_000_000,
+                end_time_unix_nano=1_045_000_000,
+                duration_ms=45.0,
+                status_code="STATUS_CODE_OK",
+                attributes={"organization_id": org_id_str, "service_id": svc_id_str},
+            ),
+            SpanRead(
+                span_id="0000000000000002",
+                trace_id=mixed_trace_id,
+                name="POST /payments/charge",
+                service_name="foreign-payment-service",
+                start_time_unix_nano=1_010_000_000,
+                end_time_unix_nano=1_030_000_000,
+                duration_ms=20.0,
+                status_code="STATUS_CODE_OK",
+                attributes={"organization_id": "00000000-0000-0000-0000-foreign000001"},
+            ),
+            SpanRead(
+                span_id="0000000000000003",
+                trace_id=mixed_trace_id,
+                name="GET /cart",
+                service_name="cart-service",
+                start_time_unix_nano=1_015_000_000,
+                end_time_unix_nano=1_025_000_000,
+                duration_ms=10.0,
+                status_code="STATUS_CODE_OK",
+                attributes={"organization_id": "00000000-0000-0000-0000-foreign000002"},
+            ),
+        ],
+    )
+
+    with patch("apps.api.app.main.TempoClient") as MockTempo:
+        instance = MockTempo.return_value
+        instance.get_trace_summary.return_value = mixed_summary
+
+        res = test_client.get(f"/api/v1/traces/{mixed_trace_id}")
+        assert res.status_code == 200
+        data = res.json()
+
+        # Only the authorized span must be returned
+        assert data["span_count"] == 1
+        assert len(data["spans"]) == 1
+        assert data["spans"][0]["span_id"] == "0000000000000001"
+        assert data["spans"][0]["service_name"] == "cart-service"
+        # Foreign spans must be filtered out
+        span_ids = [s["span_id"] for s in data["spans"]]
+        assert "0000000000000002" not in span_ids
+        assert "0000000000000003" not in span_ids

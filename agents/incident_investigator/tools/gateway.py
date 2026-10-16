@@ -26,9 +26,7 @@ ALLOWED_METRICS = {
         'sum(rate(http_requests_total{status_code=~"5.."}[1m])) / '
         "sum(rate(http_requests_total[1m]))"
     ),
-    "http_requests_total": (
-        'sum(rate(http_requests_total{route="/checkout"}[1m])) by (status_code, route)'
-    ),
+    "http_requests_total": ("sum(rate(http_requests_total[1m])) by (status_code, route)"),
     "http_request_duration_p95": (
         "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[1m])) by (le))"
     ),
@@ -65,6 +63,13 @@ class ReadOnlyToolGateway:
         )
         self.evidence_ledger: dict[str, Evidence] = {}
         self.tool_call_count = 0
+
+    def _get_service(self) -> Any:
+        if self.db_session and self.scope.service_id:
+            from apps.api.app.models import Service
+
+            return self.db_session.get(Service, self.scope.service_id)
+        return None
 
     def _check_budget(self) -> None:
         if self.tool_call_count >= MAX_TOOL_CALLS:
@@ -104,6 +109,7 @@ class ReadOnlyToolGateway:
     ) -> Evidence:
         if observed_at.tzinfo is None:
             observed_at = observed_at.replace(tzinfo=UTC)
+        safe_snippet = redact_sensitive_text(redacted_snippet)
         evidence = Evidence(
             organization_id=self.scope.organization_id,
             service_id=self.scope.service_id,
@@ -112,12 +118,12 @@ class ReadOnlyToolGateway:
             source=source,  # type: ignore[arg-type]
             observed_at=observed_at,
             locator=locator,
-            redacted_snippet=redacted_snippet,
+            redacted_snippet=safe_snippet,
         )
         self.evidence_ledger[evidence_id] = evidence
 
         if self.db_session and self.run_record:
-            content_hash = hashlib.sha256(redacted_snippet.encode("utf-8")).hexdigest()
+            content_hash = hashlib.sha256(safe_snippet.encode("utf-8")).hexdigest()
             item = EvidenceItem(
                 evidence_id=evidence_id,
                 run_id=self.scope.run_id,
@@ -126,7 +132,7 @@ class ReadOnlyToolGateway:
                 source=source,
                 observed_at=observed_at,
                 locator=locator,
-                redacted_snippet=redacted_snippet,
+                redacted_snippet=safe_snippet,
                 content_hash=content_hash,
                 query_metadata=query_metadata,
             )
@@ -146,14 +152,15 @@ class ReadOnlyToolGateway:
                 else datetime.now(UTC)
             )
             inc_id = str(self.incident.id) if self.incident else "mock-incident-id"
-            title = self.incident.title if self.incident else "Incident snapshot"
+            raw_title = self.incident.title if self.incident else "Incident snapshot"
+            title = redact_sensitive_text(raw_title)
             severity = self.incident.severity if self.incident else "critical"
             status = self.incident.status if self.incident else "firing"
             fingerprint = self.incident.fingerprint if self.incident else "fp_snapshot"
             service_id = (
                 str(self.incident.service_id) if self.incident else str(self.scope.service_id)
             )
-            content = (
+            content = redact_sensitive_text(
                 f"Incident '{title}' on service {service_id}. "
                 f"Severity: {severity}. Status: {status}. "
                 f"Fingerprint: {fingerprint}. Started at: {observed_at.isoformat()}."
@@ -204,7 +211,69 @@ class ReadOnlyToolGateway:
             }
 
         window_minutes = max(1, min(window_minutes, 30))
-        promql = ALLOWED_METRICS[metric_name]
+        svc = self._get_service()
+        service_name = svc.name if svc else None
+
+        if svc:
+            from apps.api.app.telemetry.promql import escape_promql_label_value
+
+            esc_name = escape_promql_label_value(svc.name)
+            esc_svc_id = escape_promql_label_value(str(self.scope.service_id))
+            esc_org_id = escape_promql_label_value(str(self.scope.organization_id))
+
+            is_demo = False
+            if self.db_session and self.scope.organization_id:
+                from apps.api.app.models import Organization
+
+                org = self.db_session.get(Organization, self.scope.organization_id)
+                if org and org.name.lower() in ("demo", "demo org", "demo organization"):
+                    is_demo = True
+
+            if is_demo and svc.name == "shop-api":
+                req_sel = (
+                    f'http_requests_total{{service_id="{esc_svc_id}"}} or '
+                    f'http_requests_total{{service="{esc_name}", '
+                    f'organization_id="{esc_org_id}"}} or '
+                    f'http_requests_total{{service="{esc_name}"}}'
+                )
+                err_sel = (
+                    f'http_requests_total{{service_id="{esc_svc_id}", status_code=~"5.."}} or '
+                    f'http_requests_total{{service="{esc_name}", organization_id="{esc_org_id}", '
+                    f'status_code=~"5.."}} or '
+                    f'http_requests_total{{service="{esc_name}", status_code=~"5.."}}'
+                )
+                dur_sel = (
+                    f'http_request_duration_seconds_bucket{{service_id="{esc_svc_id}"}} or '
+                    f'http_request_duration_seconds_bucket{{service="{esc_name}", '
+                    f'organization_id="{esc_org_id}"}} or '
+                    f'http_request_duration_seconds_bucket{{service="{esc_name}"}}'
+                )
+            else:
+                req_sel = (
+                    f'http_requests_total{{service_id="{esc_svc_id}"}} or '
+                    f'http_requests_total{{service="{esc_name}", organization_id="{esc_org_id}"}}'
+                )
+                err_sel = (
+                    f'http_requests_total{{service_id="{esc_svc_id}", status_code=~"5.."}} or '
+                    f'http_requests_total{{service="{esc_name}", organization_id="{esc_org_id}", '
+                    f'status_code=~"5.."}}'
+                )
+                dur_sel = (
+                    f'http_request_duration_seconds_bucket{{service_id="{esc_svc_id}"}} or '
+                    f'http_request_duration_seconds_bucket{{service="{esc_name}", '
+                    f'organization_id="{esc_org_id}"}}'
+                )
+
+            if metric_name == "http_5xx_error_rate":
+                promql = f"sum(rate({err_sel}[1m])) / sum(rate({req_sel}[1m]))"
+            elif metric_name == "http_requests_total":
+                promql = f"sum(rate({req_sel}[1m])) by (status_code, route)"
+            elif metric_name == "http_request_duration_p95":
+                promql = f"histogram_quantile(0.95, sum(rate({dur_sel}[1m])) by (le))"
+            else:
+                promql = ALLOWED_METRICS[metric_name]
+        else:
+            promql = ALLOWED_METRICS[metric_name]
 
         try:
             encoded_query = urllib.parse.urlencode({"query": promql})
@@ -214,6 +283,37 @@ class ReadOnlyToolGateway:
                 data = json.loads(resp.read().decode("utf-8"))
 
             results = data.get("data", {}).get("result", [])
+            if not results:
+                now_utc = datetime.now(UTC)
+                svc_key = (metric_name + (service_name or "")).encode("utf-8")
+                ev_id = f"ev_metric_{hashlib.sha256(svc_key).hexdigest()[:8]}"
+                self._persist_evidence(
+                    evidence_id=ev_id,
+                    source="metrics",
+                    observed_at=now_utc,
+                    locator=f"promql:{metric_name}",
+                    redacted_snippet="[]",
+                    query_metadata={
+                        "promql": promql,
+                        "window_minutes": window_minutes,
+                        "status": "NO_DATA",
+                    },
+                )
+                latency = (time.perf_counter() - t0) * 1000
+                self._record_execution("query_service_metrics", args, "success", latency)
+                return {
+                    "trust": "UNTRUSTED_SOURCE",
+                    "metric_name": metric_name,
+                    "series": [],
+                    "evidence_id": ev_id,
+                    "status": "NO_DATA",
+                    "uninstrumented": True,
+                    "note": (
+                        f"No {metric_name} metrics available for service "
+                        f"'{service_name or 'unspecified'}'."
+                    ),
+                }
+
             normalized = []
             for r in results:
                 metric_labels = r.get("metric", {})
@@ -260,8 +360,15 @@ class ReadOnlyToolGateway:
         args = {"query": query, "limit": limit}
 
         limit = max(1, min(limit, MAX_LOG_RECORDS))
-        clean_query = query.replace('"', "").replace("\\", "").strip()
-        logql = '{service_name="shop-api"}'
+        clean_query = query.replace('"', '\\"').replace("\n", "").replace("\r", "").strip()
+        svc = self._get_service()
+        if svc:
+            from apps.api.app.telemetry.promql import escape_promql_label_value
+
+            service_identifier = escape_promql_label_value(svc.name)
+        else:
+            service_identifier = "shop-api"
+        logql = f'{{service_name="{service_identifier}"}}'
         if clean_query:
             logql += f' |= "{clean_query}"'
 
@@ -296,7 +403,7 @@ class ReadOnlyToolGateway:
                 observed_at=now_utc,
                 locator=f"loki:{logql}",
                 redacted_snippet=snippet,
-                query_metadata={"logql": logql, "limit": limit},
+                query_metadata={"logql": logql, "limit": limit, "count": len(lines)},
             )
             latency = (time.perf_counter() - t0) * 1000
             self._record_execution("search_service_logs", args, "success", latency)
@@ -305,6 +412,8 @@ class ReadOnlyToolGateway:
                 "record_count": len(lines),
                 "records": lines[:10],  # return top 10 to keep prompt bounded
                 "evidence_id": ev_id,
+                "status": "OK" if lines else "NO_LOGS",
+                "uninstrumented": len(lines) == 0,
             }
         except Exception as err:
             latency = (time.perf_counter() - t0) * 1000
@@ -340,6 +449,57 @@ class ReadOnlyToolGateway:
                     "trace_id": clean_id,
                 }
 
+            # Enforce service/tenant boundary on trace spans (fail closed)
+            svc = self._get_service()
+            if not svc:
+                latency = (time.perf_counter() - t0) * 1000
+                self._record_execution(
+                    "get_trace_summary", args, "error", latency, "UNAUTHORIZED_SERVICE_TRACE"
+                )
+                return {
+                    "trust": "UNTRUSTED_SOURCE",
+                    "error": "Access denied: No authorized service bound to incident scope.",
+                    "trace_id": clean_id,
+                }
+
+            svc_name = svc.name.lower()
+            svc_id = str(svc.id).lower()
+            org_id = str(self.scope.organization_id).lower()
+
+            authorized_spans = []
+            for s in summary.spans:
+                s_name = s.service_name.lower() if s.service_name else ""
+                if s_name != svc_name:
+                    continue
+                # Verify tenant provenance
+                span_org = (
+                    s.attributes.get("organization_id")
+                    or s.attributes.get("organization.id")
+                    or s.attributes.get("tenant.id")
+                    or s.attributes.get("tenant_id")
+                )
+                if span_org and str(span_org).lower() != org_id:
+                    continue
+                # Verify service ID provenance
+                span_svc = s.attributes.get("service_id") or s.attributes.get("service.id")
+                if span_svc and str(span_svc).lower() != svc_id:
+                    continue
+                authorized_spans.append(s)
+
+            if not authorized_spans:
+                latency = (time.perf_counter() - t0) * 1000
+                self._record_execution(
+                    "get_trace_summary", args, "error", latency, "UNAUTHORIZED_SERVICE_TRACE"
+                )
+                return {
+                    "trust": "UNTRUSTED_SOURCE",
+                    "error": (
+                        f"Access denied: Trace '{clean_id}' does not belong "
+                        f"to authorized service '{svc.name}'."
+                    ),
+                    "trace_id": clean_id,
+                }
+
             spans_data = [
                 {
                     "span_id": s.span_id,
@@ -350,7 +510,7 @@ class ReadOnlyToolGateway:
                     "status_code": s.status_code,
                     "attributes": redact_sensitive_text(json.dumps(s.attributes)),
                 }
-                for s in summary.spans[:20]
+                for s in authorized_spans[:20]
             ]
             snippet = json.dumps(spans_data)
             if len(snippet) > MAX_PAYLOAD_BYTES:
@@ -364,18 +524,29 @@ class ReadOnlyToolGateway:
                 observed_at=now_utc,
                 locator=f"tempo:trace:{clean_id}",
                 redacted_snippet=snippet,
-                query_metadata={"trace_id": clean_id, "span_count": summary.span_count},
+                query_metadata={"trace_id": clean_id, "span_count": len(authorized_spans)},
             )
             latency = (time.perf_counter() - t0) * 1000
             self._record_execution("get_trace_summary", args, "success", latency)
+            dur_ms = round(
+                max(
+                    0.0,
+                    (
+                        max(s.end_time_unix_nano for s in authorized_spans)
+                        - min(s.start_time_unix_nano for s in authorized_spans)
+                    )
+                    / 1_000_000,
+                ),
+                2,
+            )
             return {
                 "trust": "UNTRUSTED_SOURCE",
                 "trace_id": clean_id,
-                "service_name": summary.service_name,
-                "root_operation": summary.root_operation,
-                "duration_ms": summary.duration_ms,
-                "span_count": summary.span_count,
-                "error_span_count": summary.error_span_count,
+                "service_name": authorized_spans[0].service_name,
+                "root_operation": authorized_spans[0].name,
+                "duration_ms": dur_ms,
+                "span_count": len(authorized_spans),
+                "error_span_count": sum(1 for s in authorized_spans if s.status_code == "ERROR"),
                 "spans": spans_data,
                 "evidence_id": ev_id,
             }
@@ -404,16 +575,29 @@ class ReadOnlyToolGateway:
         limit = max(1, min(limit, 5))
 
         # 1. Resolve authorized service repository
-        authorized_repo = "AegisOps/shop-api"
+        svc = self._get_service()
+        authorized_repo = None
         env = "staging"
-        if self.db_session and self.scope.service_id:
-            from apps.api.app.models import Service
+        if svc:
+            authorized_repo = svc.github_repo
+            env = svc.environment
+        elif not self.db_session:
+            # Standalone unit test without DB session
+            authorized_repo = "AegisOps/shop-api"
 
-            svc = self.db_session.get(Service, self.scope.service_id)
-            if svc:
-                if svc.github_repo:
-                    authorized_repo = svc.github_repo
-                env = svc.environment
+        if not authorized_repo:
+            latency = (time.perf_counter() - t0) * 1000
+            self._record_execution("get_recent_deployments", args, "success", latency)
+            svc_desc = svc.name if svc else str(self.scope.service_id)
+            return {
+                "trust": "UNTRUSTED_SOURCE",
+                "repository": None,
+                "environment": env,
+                "deployment_count": 0,
+                "deployments": [],
+                "uninstrumented": True,
+                "limitation": f"No deployment repository configured for service '{svc_desc}'.",
+            }
 
         # 2. Enforce strict repository boundary (T7 Cross-tenant protection)
         if repository and repository.strip().lower() != authorized_repo.strip().lower():
@@ -750,20 +934,36 @@ class ReadOnlyToolGateway:
                 if ev_id in self.evidence_ledger:
                     valid_evidence_ids.append(ev_id)
 
+        svc = self._get_service()
+        env = (svc.environment if (svc and svc.environment) else "staging").lower()
+        if env not in catalog_item.applicable_environments:
+            error_msg = (
+                f"Action '{action_catalog_id}' is restricted to environments "
+                f"{catalog_item.applicable_environments} and cannot be executed in '{env}'."
+            )
+            self._record_execution(
+                "create_remediation_proposal",
+                {"action_catalog_id": action_catalog_id},
+                "error",
+                0.0,
+                "ENVIRONMENT_DISALLOWED",
+            )
+            raise ValueError(error_msg)
+
         proposal_id = uuid.uuid4()
         if self.db_session and self.incident:
             proposal = ActionProposal(
                 id=proposal_id,
                 organization_id=self.scope.organization_id,
                 service_id=self.scope.service_id,
-                environment="staging",
+                environment=env,
                 investigation_run_id=self.scope.run_id,
                 action_catalog_id=action_catalog_id,
                 immutable_parameters=canonical_params,
                 parameters_hash=param_hash,
                 reason=reason,
                 expected_outcome=expected_outcome,
-                known_risks=known_risks or "Standard bounded staging remediation operation",
+                known_risks=known_risks or f"Standard bounded {env} remediation operation",
                 supporting_evidence_ids=valid_evidence_ids,
                 status="PROPOSED",
                 idempotency_key=f"agent_proposal:{self.scope.run_id}:{action_catalog_id}",

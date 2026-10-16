@@ -1,7 +1,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
-import { ServiceDrawing, HealthStatus } from "./project-visuals";
+import { ServiceDrawing, HealthStatus, type Health } from "./project-visuals";
 import { ApplicationActions } from "./application-actions";
 import { useAuth } from "../lib/auth-context";
 import { useFavorites } from "./app-shell";
@@ -213,11 +213,19 @@ export function ServiceCollection({ services }: { services: Service[] }) {
                         </div>
                         <div>
                           <small>Monitoring</small>
-                          <span className="ws-connection">Not reported</span>
+                          <span className="ws-connection">
+                            {s.healthcheck_url
+                              ? s.is_monitored !== false
+                                ? "Monitored"
+                                : "Paused"
+                              : "Not configured"}
+                          </span>
                         </div>
                         <div>
                           <small>Health</small>
-                          <HealthStatus health="unknown" />
+                          <HealthStatus
+                            health={s.monitoring_status || "unknown"}
+                          />
                         </div>
                         <div>
                           <small>Active incidents</small>
@@ -277,7 +285,12 @@ export function ServiceCollection({ services }: { services: Service[] }) {
                       project={{
                         name: s.name,
                         services: [
-                          { id: s.id, name: s.name, health: "unknown" },
+                          {
+                            id: s.id,
+                            name: s.name,
+                            health:
+                              (s.monitoring_status as Health) || "unknown",
+                          },
                         ],
                       }}
                     />
@@ -285,9 +298,11 @@ export function ServiceCollection({ services }: { services: Service[] }) {
                 )}
                 <div className="ws-card-status">
                   <span className="ws-connection">
-                    Connection: not reported
+                    {s.healthcheck_url
+                      ? `Connection: ${s.monitoring_status || "configured"}`
+                      : "Connection: not configured"}
                   </span>
-                  <HealthStatus health="unknown" />
+                  <HealthStatus health={s.monitoring_status || "unknown"} />
                 </div>
                 <div className="ws-card-counts">
                   <span>

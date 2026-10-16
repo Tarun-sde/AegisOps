@@ -16,3 +16,19 @@ scrape_configs:
       - targets: ["shop-api:3001"]
         labels:
           service: shop-api
+          service_id: "00000000-0000-0000-0000-000000000066"
+          organization_id: "00000000-0000-0000-0000-000000000064"
+          organization: "AegisOps Demo"
+
+  - job_name: aegisops-api
+    static_configs:
+      - targets: ["api:8000"]
+        labels:
+          service: aegisops-api
+
+  - job_name: registered-services
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/*.json
+          - /etc/prometheus/targets/*.yml
+        refresh_interval: 10s

@@ -4,7 +4,19 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, UniqueConstraint, func, text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -130,12 +142,54 @@ class Service(Base):
     github_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
     current_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     current_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    healthcheck_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    monitoring_status: Mapped[str] = mapped_column(
+        String(32), default="unknown", server_default="unknown"
+    )
+    last_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_probe_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_probe_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_probe_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_monitored: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    monitoring_interval_seconds: Mapped[int] = mapped_column(
+        Integer, default=60, server_default="60"
+    )
+    failure_threshold: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    consecutive_successes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     organization: Mapped[Organization] = relationship("Organization", back_populates="services")
+    health_observations: Mapped[list[ServiceHealthObservation]] = relationship(
+        "ServiceHealthObservation", back_populates="service", cascade="all, delete-orphan"
+    )
+
+
+class ServiceHealthObservation(Base):
+    __tablename__ = "service_health_observations"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    service_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("services.id", ondelete="CASCADE"), index=True
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    status: Mapped[str] = mapped_column(String(32))  # reachable | degraded | down | error
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    service: Mapped[Service] = relationship("Service", back_populates="health_observations")
 
 
 class AlertEvent(Base):

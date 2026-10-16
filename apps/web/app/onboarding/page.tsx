@@ -203,14 +203,35 @@ export default function OnboardingPage() {
               {verifying ? "Probing…" : "Test Connector"}
             </button>
             {verifyResult && (
-              <p role="status">
-                {verifyResult.success
-                  ? "HTTP probe succeeded"
-                  : "HTTP probe failed"}
-                : {verifyResult.message}
-                {verifyResult.latency_ms != null &&
-                  ` (${verifyResult.latency_ms} ms)`}
-              </p>
+              <div
+                role="status"
+                className="an-alert"
+                style={{
+                  marginTop: "1rem",
+                  borderColor: verifyResult.success
+                    ? "var(--ws-green)"
+                    : "var(--red)",
+                }}
+              >
+                <div>
+                  <strong>
+                    {verifyResult.success
+                      ? "HTTP probe succeeded"
+                      : "HTTP probe failed"}
+                    : {verifyResult.message}
+                    {verifyResult.latency_ms != null &&
+                      ` (${verifyResult.latency_ms} ms)`}
+                  </strong>
+                  {verifyResult.success && (
+                    <p
+                      style={{ marginTop: "0.25rem", color: "var(--ws-green)" }}
+                    >
+                      ✓ Healthcheck URL persisted. Connection is now verified
+                      and active.
+                    </p>
+                  )}
+                </div>
+              </div>
             )}
           </form>
         </section>

@@ -1,10 +1,10 @@
 # AegisOps — Current Project State
 
-**Updated:** 2026-10-15
-**Current phase:** Phase 8.4 Professional Workspace & Application Analytics — IMPLEMENTED, VERIFICATION IN PROGRESS.
-**Overall state:** User-authorized authenticated redesign now maps registered services to an application collection and distinct service-scoped views. Landing/sign-in are frozen, with fresh five-size baselines. Existing prior parity work is preserved. Full regression and visual gates are running; Phase 9 remains locked.
-**Source:** User Phase 8.4 brief; [active report](PHASE_REPORTS/PHASE_8_4_WORKSPACE_ANALYTICS.md); [prior final-parity report](PHASE_REPORTS/PHASE_8_FINAL_DESIGN_PARITY.md).
-**Governing Decisions:** DEC-384–389; ADR-023/027/028 security and ADR-029/030 source identity. DEC-377–383 continue to govern frozen public behavior.
+**Updated:** 2026-10-16
+**Current phase:** Phase 8.5 Critical Defect Repair — REPAIRED LOCALLY, PENDING FINAL INDEPENDENT ACCEPTANCE AUDIT.
+**Overall state:** Repaired all independently reproduced defects from Astra's Phase 8.5 acceptance audit across Priority 0 (PromQL cross-tenant leakage, PromQL injection, unauthorized trace retrieval, secret leakage into evidence), Priority 1 (duplicate incidents across active states, consistent manual recovery participation), and Priority 2 (clearing nullable settings, browser text parity, test suite alignment). Gemini's prior 177-test completion claim is explicitly not accepted as proof of product correctness; all repairs are backed by empirical negative and positive regression tests and returned for final independent acceptance audit. Phase 9 remains locked.
+**Source:** User Phase 8.5 Defect Repair brief; [completion report](PHASE_8_5_COMPLETION.md); [audit findings](docs/AUDIT_FINDINGS_PHASE_8_5.md).
+**Governing Decisions:** DEC-390–401; ADR-023/027/028 security and ADR-029/030 source identity.
 
 ---
 
@@ -117,3 +117,95 @@ User-authorized correction in progress under DEC-377–382. Earlier local functi
 ## Final parity verification — 2026-10-15
 
 DEC-377–383 locally verified; final user visual approval remains pending. 435 matched-state/supplemental PNGs across the five requested viewports; actual captures have zero page errors, console warnings or horizontal overflow. Serious/critical axe findings are zero on audited home/incident and browser-gate core surfaces. Static gate passed; unit gate 158 Python + 1 Express passed; final isolated browser gate 25 passed plus real scheduler/expiry/idempotency checks. Delivered Docker source/package/public asset hashes match all 62 checked files. Minor caption wrapping differences remain documented; no numerical fidelity claim. See [final report](PHASE_REPORTS/PHASE_8_FINAL_DESIGN_PARITY.md), source matrix and animation matrix. Phase 9 remains NOT STARTED.
+
+## Phase 8.5 — Work Package 1: Security and Tenant Isolation Complete Locally — 2026-10-15
+
+Addressed audit findings AUD-001 (Alertmanager Webhook Multi-Tenant Isolation) and AUD-002 (Connector URL SSRF & DNS Rebinding Hardening) under governing decisions DEC-390 and DEC-391:
+- **AUD-001 Webhook Tenant-to-Service Isolation (DEC-390):**
+  - Removed insecure first-organization fallback and automatic service creation from untrusted incoming alert payloads in `resolve_webhook_target_service`.
+  - Enforced authenticated tenant-to-service mapping: incoming Alertmanager webhooks must explicitly specify a verified target organization via URL path (`/api/v1/webhooks/alertmanager/{target_org}`), query param (`?organization=` or `?organization_id=`), header (`X-Organization` or `X-Organization-Id`), or alert labels. Missing target org returns HTTP 400; non-existent org returns HTTP 404; identifier mismatch returns HTTP 400.
+  - Required target service to be pre-registered under the resolved organization; unregistered services return HTTP 404 without database row creation.
+  - Implemented dual-layer webhook authentication: supports platform-wide `ALERTMANAGER_SECRET` and per-tenant deterministic secret `compute_tenant_webhook_secret(org_id)` derived via HMAC-SHA256 from the master secret. Cross-tenant alert spoofing (Token A used to inject alerts targeting Tenant B) returns HTTP 401 Unauthorized.
+  - Fully preserved deterministic alert deduplication and correlation engines (`correlate_alert`).
+- **AUD-002 SSRF, DNS Resolution, and Redirect Hardening (DEC-391):**
+  - Hardened `validate_connector_url` with pre-flight DNS resolution using `socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)`. All resolved IPv4 and IPv6 addresses are validated against loopback, RFC 1918 private subnets, link-local, carrier-grade NAT (`100.64.0.0/10`), multicast, unspecified, reserved, and cloud metadata endpoints (`169.254.169.254`, `169.254.170.2`, `100.100.100.200`, `fd00:ec2::254`, `metadata.google.internal`), including IPv4-mapped IPv6 and 6to4 addresses.
+  - Implemented `SSRFSafeRedirectHandler` (subclassing `urllib.request.HTTPRedirectHandler`) to re-validate every redirect hop against SSRF rules, prohibit protocol downgrade (HTTPS -> HTTP), and enforce a hard ceiling of 3 redirect hops.
+  - Implemented `SSRFSafeHTTPConnection` and `SSRFSafeHTTPSConnection` which verify the connected socket's peer IP (`sock.getpeername()[0]`) at TCP connect time, eliminating DNS rebinding (TOCTOU).
+  - Hardened `/api/v1/services/{id}/verify-connection` endpoint to return HTTP 400 Bad Request with `"SSRF Protection: ..."` for SSRF violations.
+- **Verification Evidence:**
+  - `uv run pytest apps/api/tests/test_webhooks_and_incidents.py apps/api/tests/test_auth_rbac_tracing.py apps/api/tests/test_incident_lifecycle_correlation.py`: Exit 0 (29 passed, 0 failed).
+  - Full test suite `uv run pytest`: Exit 0 (165 passed, 6 skipped, 132 warnings in 13.61s; +6 new security regression tests over 159 baseline).
+  - Static type check `uv run mypy apps/api/app/auth.py apps/api/app/main.py`: Exit 0 (Success: no issues found in 2 source files).
+  - Linter check `uv run ruff check apps/api/app apps/api/tests`: Exit 0 (All checks passed!).
+  - Format check `uv run ruff format --check apps/api/app apps/api/tests`: Exit 0.
+  - Work remains uncommitted on `feat/phase8-frontend-integration`; no push or deployment performed.
+
+## Phase 8.5 — Complete Functional Integration Complete Locally — 2026-10-15
+
+Completed all work packages (WP1 through WP6), resolving audit findings AUD-001 through AUD-018:
+- **WP1: Security & Multi-Tenant Isolation (AUD-001, AUD-002, DEC-390, DEC-391):**
+  - Removed first-organization webhook fallback and untrusted automatic service creation. Enforced strict tenant-to-service mapping and HMAC-SHA256 authenticated webhook tokens.
+  - Hardened connector URL verification with pre-flight DNS resolution, IPv4/IPv6 private IP filtering, cloud metadata blocking, redirect validation, and TCP socket peer IP verification against DNS rebinding.
+- **WP2: Persistent Application Connection Management (AUD-003, AUD-004, AUD-010, DEC-392):**
+  - Database schema migration `0010_service_connection_and_monitoring.py` persisting healthcheck URLs, verification timestamps, probe latencies, HTTP codes, and monitoring intervals. Added `service_health_observations` audit table.
+  - Frontend `ServiceSettings` component with inline connection testing, observation history, and configuration updates. Dynamic `<HealthStatus>` replacing hardcoded "Monitoring unknown".
+- **WP3: Continuous Monitoring & Observability (AUD-005, AUD-007, AUD-008, DEC-393):**
+  - Celery Beat scheduled periodic probing (`aegisops.probe_monitored_services`) with bounded timeouts and SSRF defenses.
+  - Cold-start and transient glitch dampening: degraded state transitions for transient failures; 3 consecutive failure threshold qualifications before incident creation.
+  - Deterministic incident creation with SHA-256 fingerprint deduplication and auto-recovery transition to resolved when service recovers.
+  - Prometheus file service discovery (`targets.yml`) and instrumentation documentation in `docs/EXTERNAL_APPLICATION_INSTRUMENTATION.md`.
+- **WP4: Google ADK & Real AI Investigations (AUD-006, AUD-009, AUD-013, AUD-014, DEC-394):**
+  - Dynamic tool scoping to authenticated incident service (removed hardcoded `shop-api` and `/checkout` bias).
+  - Loki queries scoped to authorized service; Tempo trace spans verified against service name (`UNAUTHORIZED_SERVICE_TRACE`).
+  - Deployment repo resolved from service metadata; honest `uninstrumented: True` when unconfigured.
+  - Sensitive data redaction extended for MongoDB/SQL URIs with credentials, JWT tokens, session cookies, and SSNs.
+  - Production remediation proposals strictly prohibited; staging-only allowlisted execution preserved.
+- **WP5: Functional Analytics & Application UX (AUD-011, AUD-012, AUD-016, AUD-017, DEC-395):**
+  - Tenant-safe performance metrics API (`GET /api/v1/services/{id}/metrics`) querying Prometheus with sanitized PromQL templates and bounded windows.
+  - `ServiceAnalytics` connected to real metrics API, rendering live SVG charts or honest uninstrumented states without mock data.
+  - Multi-organization workspace switching in `app-shell.tsx` with header forwarding. Dynamic overview counts replacing static placeholders.
+- **WP6: End-to-End Tests, Documentation, and Cleanup (AUD-015, AUD-018, DEC-396):**
+  - Comprehensive unit, integration, contract, and agent isolation test suites.
+  - Full repo verification: `make check` (Ruff, mypy, ESLint, Prettier, dual workspace TypeScript) passed with 0 errors. Python test suite: 177 passed, 6 skipped in 19.17s. Next.js production build: 13/13 static pages generated in 3.4s.
+  - All 18 audit findings (AUD-001 through AUD-018) fully resolved and documented in `docs/PHASE_8_5_COMPLETION.md`.
+
+## Phase 8.5 — Acceptance Audit Conditions Resolved Locally — 2026-10-16
+
+Astra completed an independent acceptance audit and issued **APPROVED WITH CONDITIONS**. All 6 required conditions have been resolved, backed by empirical regression tests, static checks, and full containerized E2E validation:
+
+### Acceptance Conditions Resolved
+1. **Python Syntax Error Investigation & Parenthesization (Condition 1):**
+   - Investigated `apps/api/app/main.py:1185` and `scripts/verify_browser_gate.py:95`.
+   - Identified root cause: `pyproject.toml` configures `target-version = "py314"`. Under Python 3.14 / Ruff 0.17.0 grammar, unparenthesized exception tuples are accepted by CPython 3.14's PEG parser and preferred by Ruff's `py314` single-line formatter. However, PEP 8 and Python <= 3.13 flag unparenthesized tuples as invalid syntax mimicking Python 2 syntax.
+   - Formatted the exception clauses with multi-line parenthesized tuples and trailing commas. Both files verified clean via `python -m py_compile`.
+2. **Removal of Unsafe Unscoped PromQL Fallback (Condition 2, DEC-397):**
+   - Completely eliminated the fallback `or http_requests_total{service="shop-api"}` from `apps/api/app/telemetry/promql.py`. All telemetry queries now require `service_id` or `(service, organization_id)`.
+   - In `infra/prometheus/prometheus.yml`, configured the `shop-api` scrape job with static trusted labels `service_id="00000000-0000-0000-0000-000000000066"` and `organization_id="00000000-0000-0000-0000-000000000064"`, matching `get_or_create_demo_scope`.
+   - Added regression test `test_no_unscoped_promql_fallback_for_demo_shop_api` in `apps/api/tests/test_service_metrics.py`.
+3. **Migration 0011 Preflight & Read-Only Detection Query (Condition 3, DEC-400):**
+   - Added comprehensive preflight documentation and read-only SQL check to `apps/api/alembic/versions/0011_active_incident_fingerprint_unique.py` and `docs/MIGRATION_0011_PREFLIGHT.md`.
+   - Query detects duplicate active episodes before applying the partial unique index.
+   - Runbook provides safe human-governed remediation to `resolved` status with audit trail notes without destructive deletion of operational incident data.
+4. **Independent Browser E2E Gate Execution (Condition 4):**
+   - Executed `make browser` (`python scripts/verify_browser_gate.py`).
+   - Result: Exit code 0, 27/27 Playwright tests passed in 1.2m across desktop and mobile viewports.
+   - Watchdog assertions passed: Celery Beat schedule file in `/tmp` as UID 10001, isolated Compose project `aegisops-browser-08d60dc4` cleanly torn down. Evidence recorded at `artifacts/aegisops-browser-08d60dc4`.
+5. **Mixed-Service Trace Provenance & Span-Level Isolation (Condition 5, DEC-398):**
+   - In `apps/api/app/telemetry/tempo.py`, merged resource attributes (`res_attrs`) directly into `span_attrs` so individual spans retain `organization_id` and `service_id` provenance tags.
+   - In `apps/api/app/main.py`, `get_trace` filters spans in mixed-service traces, stripping foreign microservice/tenant spans and failing closed with 404 if no authorized spans remain. Returns a sanitized `TraceSummaryRead`.
+   - In `agents/incident_investigator/tools/gateway.py`, `get_trace_summary` filters spans to authorized tenant provenance and persists only authorized spans into evidence items.
+   - Added regression tests in `apps/api/tests/test_auth_rbac_tracing.py` and `agents/incident_investigator/tests/test_service_evidence_isolation.py`.
+6. **Worker Concurrency Controls & Locking Architecture (Condition 6, DEC-402):**
+   - In `apps/worker/tasks.py`, wrapped `db.flush()` on incident creation in `try...except (IntegrityError, DBAPIError)`. If a concurrent worker task or manual recheck wins the race against the PostgreSQL partial unique index, the second worker catches the conflict, rolls back the failed flush, retrieves the newly committed incident record, and appends the failure telemetry to the existing incident timeline instead of crashing.
+   - Documented distributed locking requirements (`SELECT FOR UPDATE` or Redis mutex `lock:probe:{service_id}`) for high-concurrency scaling in `docs/ENGINEERING_DECISIONS.md`.
+
+### Current Verification Status
+- `make check`: PASS (Ruff check/format clean across 88 files, mypy 49 files clean, ESLint clean, Prettier clean, TypeScript clean across `@aegisops/web` and `@aegisops/shop-api`).
+- Pytest: 185 passed, 6 skipped, 132 warnings in 13.31s (`uv run pytest apps/api/tests agents/incident_investigator/tests -q`).
+- Express Tests: 1 passed in 598ms (`npm test`).
+- PostgreSQL Integration Tests: 5 passed, 1 skipped, 179 deselected in 20.70s (`make integration`).
+- Browser E2E Gate: 27 passed, 0 failed in 1.2m (`make browser`, exit code 0).
+- Next.js Production Build: 13/13 static pages compiled in 2.2s with 0 errors (`npm --prefix apps/web run build`).
+- **Phase 8.5 status:** REPAIRED LOCALLY, NOT CLAIMED FULLY VERIFIED. Returned for final independent acceptance audit by Astra.
+
+

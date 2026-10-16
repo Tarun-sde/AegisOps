@@ -49,3 +49,26 @@ Ignored local artifacts: `artifacts/workspace-analytics/`. `baseline.patch` pres
 Targeted API regression: 5 passed, 2 warnings (`api-targeted.log`). Full static, unit/browser, Docker, frozen-pixel, accessibility and visual-review gates pending. No completion or visual-acceptance claim yet.
 
 Unsupported: performance time series and historical comparisons; monitoring health/freshness; automatic telemetry provisioning; exhaustive service-wide proposal/execution timeline. Existing incident-context and global operational tools remain available. Offline run outputs retain explicit labels; no live-model accuracy claim.
+
+## Verification observed before overlapping Phase 8.5 changes — 2026-10-16 reconciliation
+
+The following results belong to the completed Phase 8.4 implementation captured before the subsequently observed Phase 8.5 working-tree changes. They do **not** verify the current combined tree. External commit `36ad2d1` and all newer edits were preserved; this agent did not commit, push, merge or deploy.
+
+| Check | Observed result | Local evidence |
+|---|---|---|
+| `UV_NO_SYNC=1 make check` | Passed Ruff, mypy, ESLint, formatting and both TypeScript checks after final Phase 8.4 refinement | `artifacts/workspace-analytics/check-final.log` |
+| `UV_NO_SYNC=1 make test` | 159 Python passed, 6 deselected, 132 warnings; Express 1 passed | `test.log` |
+| First `UV_NO_SYNC=1 make browser` | 25 passed, 2 failed on ambiguous environment select label | `browser.log` |
+| Corrected `UV_NO_SYNC=1 make browser` | 27 passed (1.1m); isolated scheduler/expiry/idempotency checks passed | `browser-final.log`, `artifacts/aegisops-browser-c9397589/` |
+| Docker builds | API/web build passed; refined web build passed; only changed API/web recreated without removing main database volumes | `docker-build.log`, `docker-build-refined.log`, `docker-refined-up.log` |
+| Actual localhost registration journey | Empty → visible form → real backend creation → collection → exact service UUID details passed | `collection-journey.log`, `collection-journey.json` |
+| Five-size rendered audit | 45 screen/viewport records; zero page errors, zero horizontal overflow, zero serious/critical axe findings | `after-results.json` |
+| Visual gallery | 80 page/viewport sections with before/after where available; approved-source comparison images included | `index.html`, locally served at http://localhost:3004 |
+| Frozen landing | All five full-page screenshots pixel-identical | `frozen-comparison.json` |
+| Frozen sign-in | Identical geometry/source; final captures differ at 10–21 rounded-input edge pixels, maximum channel delta 2/255. Same-build repeated captures also vary in that region. Strict byte/pixel equality is not claimed | `frozen-comparison.json`, `login-repeat-*.png` |
+
+Reviewed source comparison: retained 240px desktop rail, source grid/card/row linework, typography families and spacing hierarchy. Deliberate differences are exact backend identities, real incident aggregates, sentence-case application headings, supported actions, six URL-backed tabs, compact details and unavailable telemetry. QA fixtures are explicitly synthetic. Desktop collection and evidence plus narrow-phone registration/overview were visually inspected; automated viewport/axe checks cover the full 45-screen set.
+
+Current-state conflict: `PROJECT_STATE.md` still identifies Phase 8.4 verification in progress while its appended Phase 8.5 sections and `docs/PHASE_8_5_COMPLETION.md` claim Phase 8.5 completion. Those later changes overlap authentication, monitoring, metrics, schema, workspace and analytics. The mandatory AGENTS.md instruction to stop/report document conflicts applies; scope clarification was requested before further product edits or certification. Current protected hashes show an additional Phase 8.5 modification to `workspace.css`; no claim is made that the current runtime matches these captures.
+
+Decisions governing this evidence: DEC-384–389; existing ADR-023/027/028 and ADR-029/030. No new ADR or product decision added during reconciliation. Remaining gate: resolve current verification target, then validate that target and its public freeze. Historical verified lesson: service scope must be applied before pagination; marketing class names can hide operational forms; exact accessible names need real browser journeys.

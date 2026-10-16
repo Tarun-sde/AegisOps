@@ -14,6 +14,7 @@ groups:
         labels:
           severity: critical
           environment: demo
+          organization: "AegisOps Demo"
         annotations:
           summary: "High 5xx error rate on {{ $labels.service }} route {{ $labels.route }}"
           description: "Service {{ $labels.service }} route {{ $labels.route }} has 5xx error ratio above 20% over 1m."

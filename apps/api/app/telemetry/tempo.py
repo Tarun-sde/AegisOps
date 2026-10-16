@@ -114,8 +114,9 @@ class TempoClient:
                     )
                     duration_ms = max(0.0, (end_nano - start_nano) / 1_000_000)
 
-                    # Extract attributes
-                    span_attrs: dict[str, Any] = {}
+                    # Extract attributes, combining resource-level provenance
+                    # with span-level attributes
+                    span_attrs: dict[str, Any] = dict(res_attrs)
                     for attr in span.get("attributes", []):
                         val_obj = attr.get("value", {})
                         if isinstance(val_obj, dict):

@@ -3,8 +3,13 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import secrets
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
@@ -31,9 +36,11 @@ from apps.api.app.actions import (
 from apps.api.app.auth import (
     TenantContext,
     clear_auth_cookies,
+    compute_tenant_webhook_secret,
     create_user_session,
     extract_raw_token,
     get_current_user,
+    get_ssrf_safe_opener,
     get_tenant_context,
     hash_password,
     log_audit_event,
@@ -46,6 +53,7 @@ from apps.api.app.correlation import correlate_alert
 from apps.api.app.db import get_db
 from apps.api.app.integrations.github import ScopedGitHubClient
 from apps.api.app.lifecycle import (
+    ACTIVE_INCIDENT_STATUSES,
     ConcurrencyConflictError,
     InvalidTransitionError,
     transition_incident,
@@ -60,6 +68,7 @@ from apps.api.app.models import (
     Organization,
     OutboxEvent,
     Service,
+    ServiceHealthObservation,
     ToolExecution,
     User,
 )
@@ -91,6 +100,8 @@ from apps.api.app.schemas import (
     LoginRequest,
     MemberAddRequest,
     MembershipRead,
+    MetricDataPoint,
+    MetricSeries,
     OrganizationCreate,
     OrganizationRead,
     OutboxEventRead,
@@ -106,15 +117,19 @@ from apps.api.app.schemas import (
     RunbookSearchResult,
     RunbookUploadRequest,
     ServiceCreate,
+    ServiceHealthObservationRead,
+    ServiceMetricsResponse,
     ServiceRead,
     ServiceUpdate,
     ServiceVerifyRequest,
     ServiceVerifyResponse,
+    SpanRead,
     ToolExecutionRead,
     TraceSummaryRead,
     UserRead,
 )
 from apps.api.app.simulation.router import router as simulation_router
+from apps.api.app.telemetry.promql import build_service_metrics_queries
 from apps.api.app.telemetry.tempo import TempoClient, validate_trace_id
 from apps.worker.tasks import (
     ingest_document_task,
@@ -646,12 +661,35 @@ def create_service(
             detail=f"Service '{payload.name}' already exists in this organization.",
         )
 
+    healthcheck_url = None
+    monitoring_status = "unknown"
+    if payload.healthcheck_url:
+        allow_local = os.environ.get("AEGISOPS_ALLOW_LOCAL_CONNECTOR", "false").lower() in (
+            "true",
+            "1",
+        )
+        try:
+            healthcheck_url = validate_connector_url(
+                payload.healthcheck_url, allow_local_demo=allow_local
+            )
+            monitoring_status = "configured"
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"SSRF Protection: {e}",
+            ) from e
+
     service = Service(
         organization_id=context.organization.id,
         name=payload.name.strip(),
         environment=payload.environment,
         description=payload.description,
+        github_repo=payload.github_repo,
         status="active",
+        healthcheck_url=healthcheck_url,
+        monitoring_status=monitoring_status,
+        is_monitored=payload.is_monitored,
+        monitoring_interval_seconds=max(10, payload.monitoring_interval_seconds),
     )
     db.add(service)
     db.commit()
@@ -718,10 +756,46 @@ def update_service(
         service.name = payload.name.strip()
     if payload.environment is not None:
         service.environment = payload.environment
-    if payload.description is not None:
-        service.description = payload.description
+    if "description" in payload.model_fields_set:
+        service.description = payload.description.strip() if payload.description else None
     if payload.status is not None:
         service.status = payload.status
+    if "github_repo" in payload.model_fields_set:
+        repo_val = payload.github_repo.strip() if payload.github_repo else None
+        service.github_repo = repo_val if repo_val else None
+    if "current_version" in payload.model_fields_set:
+        ver_val = payload.current_version.strip() if payload.current_version else None
+        service.current_version = ver_val if ver_val else None
+    if "current_commit_sha" in payload.model_fields_set:
+        sha_val = payload.current_commit_sha.strip() if payload.current_commit_sha else None
+        service.current_commit_sha = sha_val if sha_val else None
+    if "healthcheck_url" in payload.model_fields_set:
+        url_val = payload.healthcheck_url.strip() if payload.healthcheck_url else ""
+        if not url_val:
+            service.healthcheck_url = None
+            service.monitoring_status = "unknown"
+        else:
+            allow_local = os.environ.get("AEGISOPS_ALLOW_LOCAL_CONNECTOR", "false").lower() in (
+                "true",
+                "1",
+            )
+            try:
+                service.healthcheck_url = validate_connector_url(
+                    url_val, allow_local_demo=allow_local
+                )
+                if service.monitoring_status == "unknown":
+                    service.monitoring_status = "configured"
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"SSRF Protection: {e}",
+                ) from e
+    if payload.monitoring_status is not None:
+        service.monitoring_status = payload.monitoring_status
+    if payload.is_monitored is not None:
+        service.is_monitored = payload.is_monitored
+    if payload.monitoring_interval_seconds is not None:
+        service.monitoring_interval_seconds = max(10, payload.monitoring_interval_seconds)
     service.updated_at = datetime.now(UTC)
 
     db.commit()
@@ -763,26 +837,129 @@ def verify_service_connection(
             detail=f"Service '{service_id}' not found.",
         )
 
+    allow_local = os.environ.get("AEGISOPS_ALLOW_LOCAL_CONNECTOR", "false").lower() in ("true", "1")
     try:
-        validated_url = validate_connector_url(payload.url)
+        validated_url = validate_connector_url(payload.url, allow_local_demo=allow_local)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"SSRF Protection: {e}",
         ) from e
 
-    import time
-    import urllib.request
-
     t0 = time.perf_counter()
+    now = datetime.now(UTC)
+    threshold = service.failure_threshold or 3
+    fp = hashlib.sha256(f"healthcheck:{service.id}".encode()).hexdigest()[:32]
+
     try:
         req = urllib.request.Request(
             validated_url, headers={"User-Agent": "AegisOps-Connector/1.0"}
         )
-        with urllib.request.urlopen(req, timeout=3.0) as res:
-            latency_ms = (time.perf_counter() - t0) * 1000
+        opener = get_ssrf_safe_opener(allow_local_demo=allow_local)
+        with opener.open(req, timeout=3.0) as res:
+            latency_ms = round((time.perf_counter() - t0) * 1000, 2)
             st_code = res.status
             success = 200 <= st_code < 400
+
+            service.healthcheck_url = validated_url
+            service.last_verified_at = now
+            service.last_probe_status_code = st_code
+            service.last_probe_latency_ms = latency_ms
+
+            if success:
+                obs_status = "reachable"
+                service.monitoring_status = "reachable"
+                service.last_success_at = now
+                service.consecutive_failures = 0
+                service.consecutive_successes += 1
+                service.last_probe_error = None
+
+                # Manual recovery: resolve active healthcheck outage incidents for this service
+                active_incidents = db.scalars(
+                    select(Incident).where(
+                        Incident.service_id == service.id,
+                        Incident.organization_id == context.organization.id,
+                        Incident.status.in_(ACTIVE_INCIDENT_STATUSES),
+                        Incident.fingerprint == fp,
+                    )
+                ).all()
+                for active_incident in active_incidents:
+                    active_incident.status = "resolved"
+                    active_incident.updated_at = now
+                    active_incident.resolved_at = now
+                    evt = IncidentEvent(
+                        incident_id=active_incident.id,
+                        event_type="resolved",
+                        actor=f"user:{context.user.email}",
+                        occurred_at=now,
+                        payload={
+                            "message": (
+                                f"Service recovered via manual connection recheck. "
+                                f"HTTP {st_code} ({latency_ms} ms)."
+                            )
+                        },
+                    )
+                    db.add(evt)
+            else:
+                service.consecutive_failures += 1
+                service.consecutive_successes = 0
+                service.last_probe_error = f"HTTP {st_code}"
+
+                if service.consecutive_failures < threshold:
+                    obs_status = "degraded"
+                    service.monitoring_status = "degraded"
+                else:
+                    obs_status = "down"
+                    service.monitoring_status = "down"
+
+                    existing_incident = db.scalar(
+                        select(Incident).where(
+                            Incident.service_id == service.id,
+                            Incident.organization_id == context.organization.id,
+                            Incident.status.in_(ACTIVE_INCIDENT_STATUSES),
+                            Incident.fingerprint == fp,
+                        )
+                    )
+                    if not existing_incident:
+                        outage_inc = Incident(
+                            organization_id=context.organization.id,
+                            service_id=service.id,
+                            title=f"Service Outage: {service.name} unreachable",
+                            severity="critical",
+                            status="open",
+                            environment=service.environment,
+                            fingerprint=fp,
+                            started_at=now,
+                        )
+                        db.add(outage_inc)
+                        db.flush()
+                        db.add(
+                            IncidentEvent(
+                                incident_id=outage_inc.id,
+                                event_type="created",
+                                actor=f"user:{context.user.email}",
+                                occurred_at=now,
+                                payload={
+                                    "message": (
+                                        f"Manual connection recheck failed with HTTP {st_code}."
+                                    )
+                                },
+                            )
+                        )
+
+            obs = ServiceHealthObservation(
+                service_id=service.id,
+                organization_id=context.organization.id,
+                observed_at=now,
+                status=obs_status,
+                status_code=st_code,
+                latency_ms=latency_ms,
+                error_message=None if success else f"HTTP {st_code}",
+            )
+            db.add(obs)
+            db.commit()
+            db.refresh(service)
+
             log_audit_event(
                 db,
                 organization_id=context.organization.id,
@@ -791,16 +968,96 @@ def verify_service_connection(
                 resource_id=str(service.id),
                 action="integration.connection_verified",
                 result="success" if success else "failure",
-                metadata={"url": validated_url, "status_code": st_code},
+                metadata={"url": validated_url, "status_code": st_code, "latency_ms": latency_ms},
             )
             return ServiceVerifyResponse(
                 success=success,
                 message=f"Endpoint responded with HTTP {st_code}",
                 status_code=st_code,
-                latency_ms=round(latency_ms, 2),
+                latency_ms=latency_ms,
+                monitoring_status=service.monitoring_status,
+                last_verified_at=service.last_verified_at,
             )
+    except ValueError as e:
+        # SSRF violation during redirect or socket connection
+        latency_ms = round((time.perf_counter() - t0) * 1000, 2)
+        log_audit_event(
+            db,
+            organization_id=context.organization.id,
+            actor_id=context.user.id,
+            resource_type="connector",
+            resource_id=str(service.id),
+            action="integration.connection_verified",
+            result="failure",
+            metadata={"url": validated_url, "error": str(e)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"SSRF Protection: {e}",
+        ) from e
     except Exception as e:
-        latency_ms = (time.perf_counter() - t0) * 1000
+        latency_ms = round((time.perf_counter() - t0) * 1000, 2)
+        service.healthcheck_url = validated_url
+        service.last_verified_at = now
+        service.last_probe_latency_ms = latency_ms
+        service.last_probe_error = str(e)[:500]
+        service.consecutive_failures += 1
+        service.consecutive_successes = 0
+
+        if service.consecutive_failures < threshold:
+            obs_status = "degraded"
+            service.monitoring_status = "degraded"
+        else:
+            obs_status = "down"
+            service.monitoring_status = "down"
+
+            existing_incident = db.scalar(
+                select(Incident).where(
+                    Incident.service_id == service.id,
+                    Incident.organization_id == context.organization.id,
+                    Incident.status.in_(ACTIVE_INCIDENT_STATUSES),
+                    Incident.fingerprint == fp,
+                )
+            )
+            if not existing_incident:
+                outage_inc = Incident(
+                    organization_id=context.organization.id,
+                    service_id=service.id,
+                    title=f"Service Outage: {service.name} unreachable",
+                    severity="critical",
+                    status="open",
+                    environment=service.environment,
+                    fingerprint=fp,
+                    started_at=now,
+                )
+                db.add(outage_inc)
+                db.flush()
+                db.add(
+                    IncidentEvent(
+                        incident_id=outage_inc.id,
+                        event_type="created",
+                        actor=f"user:{context.user.email}",
+                        occurred_at=now,
+                        payload={
+                            "message": (
+                                f"Manual connection recheck failed with error: {str(e)[:500]}"
+                            )
+                        },
+                    )
+                )
+
+        obs = ServiceHealthObservation(
+            service_id=service.id,
+            organization_id=context.organization.id,
+            observed_at=now,
+            status=obs_status,
+            latency_ms=latency_ms,
+            error_message=str(e)[:500],
+        )
+        db.add(obs)
+        db.commit()
+        db.refresh(service)
+
         log_audit_event(
             db,
             organization_id=context.organization.id,
@@ -814,7 +1071,163 @@ def verify_service_connection(
         return ServiceVerifyResponse(
             success=False,
             message=f"Connection failed: {e}",
-            latency_ms=round(latency_ms, 2),
+            latency_ms=latency_ms,
+            monitoring_status=service.monitoring_status,
+            last_verified_at=service.last_verified_at,
+        )
+
+
+@app.get(
+    "/api/v1/services/{service_id}/health-observations",
+    response_model=list[ServiceHealthObservationRead],
+)
+def list_service_health_observations(
+    service_id: uuid.UUID,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    db: DbSession,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> list[ServiceHealthObservationRead]:
+    service = db.scalar(
+        select(Service).where(
+            Service.id == service_id,
+            Service.organization_id == context.organization.id,
+        )
+    )
+    if not service:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Service '{service_id}' not found.",
+        )
+    stmt = (
+        select(ServiceHealthObservation)
+        .where(
+            ServiceHealthObservation.service_id == service_id,
+            ServiceHealthObservation.organization_id == context.organization.id,
+        )
+        .order_by(desc(ServiceHealthObservation.observed_at))
+        .limit(limit)
+    )
+    observations = db.scalars(stmt).all()
+    return [ServiceHealthObservationRead.model_validate(o) for o in observations]
+
+
+@app.get(
+    "/api/v1/services/{service_id}/metrics",
+    response_model=ServiceMetricsResponse,
+)
+def get_service_metrics(
+    service_id: uuid.UUID,
+    context: Annotated[TenantContext, Depends(get_tenant_context)],
+    db: DbSession,
+    window: Annotated[Literal["15m", "1h", "6h", "24h"], Query()] = "1h",
+) -> ServiceMetricsResponse:
+    """Tenant-safe bounded metric queries for application performance analytics (AUD-011)."""
+    service = db.scalar(
+        select(Service).where(
+            Service.id == service_id,
+            Service.organization_id == context.organization.id,
+        )
+    )
+    if not service:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Service '{service_id}' not found.",
+        )
+
+    window_configs = {
+        "15m": (900, 15),
+        "1h": (3600, 60),
+        "6h": (21600, 300),
+        "24h": (86400, 1200),
+    }
+    duration_sec, step_sec = window_configs.get(window, (3600, 60))
+    end_ts = time.time()
+    start_ts = end_ts - duration_sec
+
+    prom_url = os.environ.get(
+        "AEGISOPS_PROM_URL",
+        "http://prometheus:9090" if os.environ.get("IN_DOCKER") else "http://127.0.0.1:9090",
+    )
+
+    is_demo = context.organization.name.lower() in ("demo", "demo org", "demo organization")
+    queries = build_service_metrics_queries(
+        service_id=service.id,
+        organization_id=context.organization.id,
+        service_name=service.name,
+        is_demo_org=is_demo,
+    )
+
+    metrics_result: dict[str, MetricSeries] = {}
+    any_instrumented = False
+
+    for m_name, (promql, unit) in queries.items():
+        try:
+            params = {
+                "query": promql,
+                "start": start_ts,
+                "end": end_ts,
+                "step": f"{step_sec}s",
+            }
+            url = f"{prom_url}/api/v1/query_range?{urllib.parse.urlencode(params)}"
+            req = urllib.request.Request(url, headers={"User-Agent": "AegisOps-API/1.0"})
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+
+            results = data.get("data", {}).get("result", [])
+            points: list[MetricDataPoint] = []
+            if results:
+                raw_values = results[0].get("values", [])
+                for ts, val_str in raw_values:
+                    try:
+                        val = float(val_str)
+                        if not math.isnan(val) and not math.isinf(val):
+                            points.append(MetricDataPoint(timestamp=float(ts), value=round(val, 2)))
+                    except (
+                        ValueError,
+                        TypeError,
+                    ):
+                        pass
+
+            current_val = points[-1].value if points else None
+            if points:
+                any_instrumented = True
+            metrics_result[m_name] = MetricSeries(
+                name=m_name,
+                unit=unit,
+                current_value=current_val,
+                points=points,
+            )
+        except Exception as err:
+            logger.debug(f"Failed to query Prometheus for {m_name}: {err}")
+            metrics_result[m_name] = MetricSeries(
+                name=m_name,
+                unit=unit,
+                current_value=None,
+                points=[],
+            )
+
+    if any_instrumented:
+        return ServiceMetricsResponse(
+            service_id=service.id,
+            service_name=service.name,
+            window=window,
+            is_instrumented=True,
+            status="instrumented",
+            message="Live Prometheus telemetry active.",
+            metrics=metrics_result,
+        )
+    else:
+        return ServiceMetricsResponse(
+            service_id=service.id,
+            service_name=service.name,
+            window=window,
+            is_instrumented=False,
+            status="uninstrumented",
+            message=(
+                f"No Prometheus metrics scraped for '{service.name}'. "
+                "See documentation to configure Prometheus or OpenTelemetry collector."
+            ),
+            metrics=metrics_result,
         )
 
 
@@ -825,6 +1238,7 @@ def verify_service_connection(
 def get_trace(
     trace_id: str,
     context: Annotated[TenantContext, Depends(get_tenant_context)],
+    db: DbSession,
 ) -> TraceSummaryRead:
     try:
         clean_id = validate_trace_id(trace_id)
@@ -838,7 +1252,73 @@ def get_trace(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Trace '{clean_id}' not found in Tempo or has no spans.",
         )
-    return summary
+
+    # Multi-tenant trace authorization: enforce trustworthy provenance and span-level isolation
+    org_services = db.scalars(
+        select(Service).where(Service.organization_id == context.organization.id)
+    ).all()
+    authorized_service_names = {s.name.lower(): str(s.id).lower() for s in org_services}
+    authorized_service_ids = {str(s.id).lower() for s in org_services}
+    caller_org_id = str(context.organization.id).lower()
+
+    is_demo = context.organization.name.lower() in ("demo", "demo org", "demo organization")
+    if is_demo:
+        authorized_service_names["shop-api"] = str(DEFAULT_DEMO_SERVICE_ID).lower()
+        authorized_service_ids.add(str(DEFAULT_DEMO_SERVICE_ID).lower())
+
+    authorized_spans: list[SpanRead] = []
+    for s in summary.spans:
+        # 1. Require service name matching an authorized service of the organization
+        s_name = s.service_name.lower() if s.service_name else ""
+        if not s_name or s_name not in authorized_service_names:
+            continue
+
+        # 2. Check explicit tenant provenance in span/resource attributes
+        span_org = (
+            s.attributes.get("organization_id")
+            or s.attributes.get("organization.id")
+            or s.attributes.get("tenant.id")
+            or s.attributes.get("tenant_id")
+        )
+        if span_org and str(span_org).lower() != caller_org_id:
+            # Foreign organization provenance: reject span
+            continue
+
+        # 3. Check explicit service provenance in span/resource attributes
+        span_svc_id = s.attributes.get("service_id") or s.attributes.get("service.id")
+        if span_svc_id:
+            if str(span_svc_id).lower() not in authorized_service_ids:
+                # Foreign service ID provenance: reject span
+                continue
+            expected_svc_id = authorized_service_names.get(s_name)
+            if expected_svc_id and expected_svc_id != str(span_svc_id).lower():
+                # Service ID / name mismatch: reject span
+                continue
+
+        authorized_spans.append(s)
+
+    # Fail closed: if no authorized spans belong to the caller's organization, 404
+    if not authorized_spans:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Trace '{clean_id}' not found in Tempo or has no spans.",
+        )
+
+    # Reconstruct sanitized summary exposing ONLY authorized spans
+    earliest = min(s.start_time_unix_nano for s in authorized_spans)
+    latest = max(s.end_time_unix_nano for s in authorized_spans)
+    dur_ms = max(0.0, (latest - earliest) / 1_000_000)
+    error_count = sum(1 for s in authorized_spans if s.status_code == "ERROR")
+
+    return TraceSummaryRead(
+        trace_id=clean_id,
+        service_name=authorized_spans[0].service_name,
+        root_operation=authorized_spans[0].name,
+        duration_ms=round(dur_ms, 2),
+        span_count=len(authorized_spans),
+        error_span_count=error_count,
+        spans=authorized_spans,
+    )
 
 
 # --- Phase 1: Webhook & Incident Management ---
@@ -863,21 +1343,78 @@ def verify_alertmanager_auth(
 
 
 def resolve_webhook_target_service(
-    session: Session, alert_labels: dict[str, str]
+    session: Session,
+    alert_labels: dict[str, str],
+    target_org_override: str | None = None,
 ) -> tuple[uuid.UUID, uuid.UUID, str]:
-    """Resolve organization and service for incoming alert, creating demo scopes if missing."""
-    org_name = alert_labels.get("organization")
-    org = None
-    if org_name:
-        org = session.scalar(select(Organization).where(Organization.name == org_name))
-    if not org:
-        org = session.scalar(select(Organization).order_by(Organization.created_at.asc()))
-    if not org:
-        org = Organization(name="AegisOps Demo")
-        session.add(org)
-        session.flush()
+    """Resolve organization and service for incoming alert.
 
-    service_name = alert_labels.get("service") or alert_labels.get("app") or "shop-api"
+    Strictly requires an explicit, authenticated organization and pre-registered service.
+    Rejects missing target organization, unknown organization, mismatched identifiers,
+    and unknown services (no automatic creation).
+    """
+    raw_target_org = (
+        target_org_override
+        or alert_labels.get("organization")
+        or alert_labels.get("organization_id")
+    )
+    if not raw_target_org:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing target organization in webhook alert payload or request parameters.",
+        )
+
+    # Check for mismatch if both override and label are specified
+    label_org = alert_labels.get("organization") or alert_labels.get("organization_id")
+    if (
+        target_org_override
+        and label_org
+        and str(target_org_override).strip() != str(label_org).strip()
+    ):
+        try:
+            override_uuid = uuid.UUID(str(target_org_override).strip())
+            label_uuid = uuid.UUID(str(label_org).strip())
+            if override_uuid != label_uuid:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Target organization mismatch: request specifies '{target_org_override}' "
+                        f"but alert label specifies '{label_org}'"
+                    ),
+                )
+        except ValueError:
+            if str(target_org_override).strip().lower() != str(label_org).strip().lower():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Target organization mismatch: request specifies '{target_org_override}' "
+                        f"but alert label specifies '{label_org}'"
+                    ),
+                ) from None
+
+    # Look up organization by UUID or Name
+    org = None
+    try:
+        org_uuid = uuid.UUID(str(raw_target_org).strip())
+        org = session.scalar(select(Organization).where(Organization.id == org_uuid))
+    except ValueError:
+        org = session.scalar(
+            select(Organization).where(Organization.name == str(raw_target_org).strip())
+        )
+
+    if not org:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Target organization '{raw_target_org}' not found.",
+        )
+
+    service_name = alert_labels.get("service") or alert_labels.get("app")
+    if not service_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Alert is missing required 'service' or 'app' label.",
+        )
+
     svc = session.scalar(
         select(Service).where(
             Service.organization_id == org.id,
@@ -885,25 +1422,62 @@ def resolve_webhook_target_service(
         )
     )
     if not svc:
-        env = alert_labels.get("environment") or alert_labels.get("env") or "staging"
-        svc = Service(organization_id=org.id, name=service_name, environment=env)
-        session.add(svc)
-        session.flush()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Service '{service_name}' not found under organization '{org.name}'. "
+                "Automatic service creation from untrusted alerts is disabled."
+            ),
+        )
 
-    return org.id, svc.id, svc.environment
+    env = alert_labels.get("environment") or alert_labels.get("env") or svc.environment
+    return org.id, svc.id, env
+
+
+DEFAULT_DEMO_ORG_ID = uuid.UUID("00000000-0000-0000-0000-000000000064")
+DEFAULT_DEMO_SERVICE_ID = uuid.UUID("00000000-0000-0000-0000-000000000066")
 
 
 def get_or_create_demo_scope(session: Session) -> tuple[uuid.UUID, uuid.UUID]:
-    org_id, svc_id, _ = resolve_webhook_target_service(session, {"service": "shop-api"})
-    return org_id, svc_id
+    org = session.scalar(
+        select(Organization).where(
+            (Organization.name == "AegisOps Demo") | (Organization.id == DEFAULT_DEMO_ORG_ID)
+        )
+    )
+    if not org:
+        org = Organization(id=DEFAULT_DEMO_ORG_ID, name="AegisOps Demo")
+        session.add(org)
+        session.flush()
+    svc = session.scalar(
+        select(Service).where(
+            Service.organization_id == org.id,
+            (Service.name == "shop-api") | (Service.id == DEFAULT_DEMO_SERVICE_ID),
+        )
+    )
+    if not svc:
+        svc = Service(
+            id=DEFAULT_DEMO_SERVICE_ID,
+            organization_id=org.id,
+            name="shop-api",
+            environment="staging",
+        )
+        session.add(svc)
+        session.flush()
+    return org.id, svc.id
 
 
 @app.post("/api/v1/webhooks/alertmanager", status_code=status.HTTP_200_OK)
+@app.post("/api/v1/webhooks/alertmanager/{target_org}", status_code=status.HTTP_200_OK)
 async def alertmanager_webhook(
     request: Request,
     payload: AlertmanagerWebhookPayload,
     db: DbSession,
-    _auth: Annotated[None, Depends(verify_alertmanager_auth)],
+    target_org: str | None = None,
+    organization: Annotated[str | None, Query()] = None,
+    organization_id: Annotated[str | None, Query()] = None,
+    x_organization: Annotated[str | None, Header(alias="x-organization")] = None,
+    x_organization_id: Annotated[str | None, Header(alias="x-organization-id")] = None,
+    authorization: Annotated[str | None, Header()] = None,
 ) -> dict[str, object]:
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > 524_288:
@@ -912,13 +1486,74 @@ async def alertmanager_webhook(
             detail="Payload exceeds maximum permitted size of 512KB",
         )
 
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid Bearer authentication header",
+        )
+    token = authorization.removeprefix("Bearer ").strip()
+
+    req_target_org = (
+        target_org or organization or organization_id or x_organization or x_organization_id
+    )
+
+    # Check if authorized by global ALERTMANAGER_SECRET
+    is_global_secret = hmac.compare_digest(token, ALERTMANAGER_SECRET)
+
+    # If not global secret, must authenticate via per-tenant secret
+    authenticated_org_id: uuid.UUID | None = None
+    if not is_global_secret:
+        cand_org_str = req_target_org
+        if not cand_org_str and payload.alerts:
+            cand_org_str = payload.alerts[0].labels.get("organization") or payload.alerts[
+                0
+            ].labels.get("organization_id")
+
+        if not cand_org_str:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing target organization in webhook request.",
+            )
+
+        cand_org = None
+        try:
+            cand_uuid = uuid.UUID(str(cand_org_str).strip())
+            cand_org = db.scalar(select(Organization).where(Organization.id == cand_uuid))
+        except ValueError:
+            cand_org = db.scalar(
+                select(Organization).where(Organization.name == str(cand_org_str).strip())
+            )
+
+        if not cand_org:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Target organization '{cand_org_str}' not found.",
+            )
+
+        expected_tenant_secret = compute_tenant_webhook_secret(cand_org.id)
+        if not hmac.compare_digest(token, expected_tenant_secret):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Unauthorized webhook credentials for target organization",
+            )
+        authenticated_org_id = cand_org.id
+
     created_count = 0
     resolved_count = 0
     duplicate_count = 0
     correlated_count = 0
 
     for alert in payload.alerts:
-        org_id, svc_id, env = resolve_webhook_target_service(db, alert.labels)
+        org_id, svc_id, env = resolve_webhook_target_service(
+            db, alert.labels, target_org_override=req_target_org
+        )
+
+        # If authenticated with tenant token, prevent cross-tenant alert injection
+        if authenticated_org_id and org_id != authenticated_org_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Webhook token does not match target alert organization",
+            )
 
         payload_hash = hashlib.sha256(
             f"{alert.fingerprint}:{alert.startsAt}:{alert.status}".encode()

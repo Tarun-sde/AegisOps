@@ -1,5 +1,14 @@
 import { Mark } from "./marketing/artwork";
-type Health = "healthy" | "degraded" | "critical" | "unknown";
+export type Health =
+  | "healthy"
+  | "reachable"
+  | "configured"
+  | "degraded"
+  | "critical"
+  | "down"
+  | "stale"
+  | "unavailable"
+  | "unknown";
 type Project = {
   name: string;
   services: { id: string; name: string; health: Health }[];
@@ -7,14 +16,26 @@ type Project = {
 export function AegisMark() {
   return <Mark width="28" height="30" />;
 }
-export function HealthStatus({ health }: { health: Health }) {
+export function HealthStatus({ health }: { health: string }) {
+  const norm = health.toLowerCase();
+  const badgeClass =
+    norm === "reachable" || norm === "healthy"
+      ? "healthy"
+      : norm === "degraded"
+        ? "degraded"
+        : norm === "down" || norm === "critical"
+          ? "critical"
+          : norm === "configured"
+            ? "configured"
+            : "unknown";
+  const displayLabel = norm === "unknown" ? "Monitoring unknown" : health;
   return (
     <span
-      className={`ws-health ws-health-${health}`}
-      aria-label={`Health: ${health}`}
+      className={`ws-health ws-health-${badgeClass}`}
+      aria-label={`Health: ${displayLabel}`}
     >
       <i aria-hidden="true" />
-      {health}
+      {displayLabel}
     </span>
   );
 }

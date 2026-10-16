@@ -3661,3 +3661,238 @@ An external local commit 7e8b41cb84c5bb4ca8ae9828b1bea0bd567f524b appeared durin
 - Fresh Docker review confirms visible registration fields; the new exact-label journey exposed that a label wrapping the environment select also included option text in its accessible name. Add explicit Environment accessible name; keep real required select validation.
 - Source/global heading rules uppercase application names; workspace-only sentence-case overrides preserve exact stored-name presentation and readable onboarding headings. Reduce detail heading padding while retaining source geometry.
 - Frozen login comparison initially differs in a tiny input-edge region; diagnosing rasterization before accepting the freeze gate. No protected source hash changed.
+
+### DEC-390 — Strict Tenant-to-Service Alertmanager Webhook Isolation
+- Date / scope: 2026-10-15; Phase 8.5 Work Package 1 / AUD-001 / Alertmanager webhook ingestion.
+- Status: ACCEPTED — implementation and verification in progress.
+- Context: AUD-001 identified that `resolve_webhook_target_service` in `apps/api/app/main.py` defaulted to the first organization created in the database if the `organization` label was omitted, and automatically inserted new `Service` rows for unrecognized service names from untrusted alert payloads. This enabled cross-tenant incident leakage and untrusted resource creation.
+- Choice: 
+  1. Remove first-organization fallback and auto-creation of services completely.
+  2. Require explicit target organization identification via URL path (`/api/v1/webhooks/alertmanager/{target_org}`), query parameter (`?organization=` or `?organization_id=`), HTTP header (`X-Organization` or `X-Organization-Id`), or alert labels (`organization` or `organization_id`).
+  3. Validate target organization exists in database; return HTTP 400 if missing or mismatched, and HTTP 404 if not found.
+  4. Require target service to already exist under the target organization; return HTTP 404 if not found.
+  5. Support both global `ALERTMANAGER_SECRET` (for platform infrastructure) and per-tenant deterministic secret `compute_tenant_webhook_secret(org_id)` derived via HMAC-SHA256 from the master secret.
+  6. Reject missing, invalid, or cross-tenant tokens (e.g. Org A token targeting Org B) with HTTP 401 Unauthorized.
+  7. Preserve existing alert deduplication and correlation engines (`correlate_alert`).
+- Alternatives:
+  - Keep auto-creation under a dedicated "Quarantine" organization: rejected because untrusted webhooks should never allocate database resources without administrative provisioning.
+  - Rely solely on payload labels: rejected because standard Alertmanager configs often route per-receiver URLs (e.g. per-tenant path or query params).
+- Reason: Enforces multi-tenant security boundary at ingestion time, prevents resource exhaustion / denial-of-service, and isolates tenants completely.
+- Downside: Unprovisioned services will generate 404 alert delivery errors in Alertmanager until registered in AegisOps.
+- Revisit: If dynamic zero-touch service registration is approved with signed provisioning tokens.
+- Evidence: Unit and integration tests in `test_webhooks_and_incidents.py` and `test_incident_lifecycle_correlation.py`.
+
+### DEC-391 — Comprehensive SSRF, DNS Resolution, and Redirect Hardening
+- Date / scope: 2026-10-15; Phase 8.5 Work Package 1 / AUD-002 / connector URL verification.
+- Status: ACCEPTED — implementation and verification in progress.
+- Context: AUD-002 identified that `validate_connector_url` in `apps/api/app/auth.py` only checked raw IP strings against blocklists, allowing DNS domain bypasses (e.g. `127.0.0.1.nip.io`). Furthermore, `urllib.request.urlopen` followed HTTP 301/302 redirects without re-validating the target URL, permitting redirect-based SSRF into cloud metadata or internal services, and did not protect against DNS rebinding.
+- Choice:
+  1. Harden `validate_connector_url` with pre-flight DNS resolution using `socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)`.
+  2. Validate all resolved IPv4 and IPv6 addresses against loopback (`127.0.0.0/8`, `::1`), private RFC 1918 subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`), link-local (`169.254.0.0/16`, `fe80::/10`), carrier-grade NAT (`100.64.0.0/10`), multicast (`224.0.0.0/4`, `ff00::/8`), unspecified (`0.0.0.0`, `::`), reserved ranges, and cloud metadata endpoints (`169.254.169.254`, `169.254.170.2`, `100.100.100.200`, `fd00:ec2::254`, `metadata.google.internal`). Handle IPv4-mapped IPv6 (`::ffff:...`) and 6to4 (`2002::`) conversions.
+  3. Default `allow_local_demo` to `False` in production connector verification; allow only when explicitly permitted and matching `ALLOWED_INTERNAL_HOSTS`.
+  4. Implement `SSRFSafeRedirectHandler` (subclassing `urllib.request.HTTPRedirectHandler`) to inspect each redirect hop, disallow protocol downgrade (HTTPS -> HTTP), cap redirects at 3 hops, and re-validate every redirect target with `validate_connector_url`.
+  5. Implement `SSRFSafeHTTPConnection` and `SSRFSafeHTTPSConnection` to inspect the connected socket's peer IP (`sock.getpeername()[0]`) at TCP connect time, aborting immediately if it connects to a prohibited IP, thereby eliminating DNS rebinding (TOCTOU).
+  6. Return HTTP 400 Bad Request with `"SSRF Protection: ..."` for SSRF/redirect rejections in `/api/v1/services/{id}/verify-connection`.
+- Alternatives:
+  - Third-party library (e.g. `requests` or `urllib3` with custom adapters): rejected to comply with Ponytail constraint avoiding extra dependencies when Python standard library `http.client` and `urllib.request` provide complete primitives.
+  - IP pinning in URL: rejected because HTTPS SNI and certificate validation break when hostname is replaced with IP without complex SSLContext host manipulation.
+- Reason: Multi-layer defense-in-depth completely closes DNS domain resolution, redirect chaining, and DNS rebinding SSRF vectors.
+- Downside: DNS resolution occurs at validation time and TCP connection time; negligible latency impact (<5ms).
+- Revisit: If egress proxy architecture is deployed.
+- Evidence: Unit and endpoint tests in `test_auth_rbac_tracing.py`.
+### DEC-392 — Persistent Application Connection Management and Observability State Separation
+- Date / scope: 2026-10-15; Phase 8.5 Work Package 2 / AUD-003, AUD-004, AUD-010.
+- Status: VERIFIED.
+- Context: Prior to WP2, service connection verification (`POST /api/v1/services/{id}/verify-connection`) conducted a one-time HTTP probe without persisting results to the database. The `Service` model lacked fields for healthcheck URLs, verification timestamps, probe latency, status codes, and monitoring intervals. On the frontend, applications displayed hardcoded `"Monitoring unknown"` status badges, had no settings tab for editing connection configurations, and lost probe state on page reload.
+- Choice:
+  1. Alembic migration `0010_service_connection_and_monitoring.py` adds `healthcheck_url`, `monitoring_status`, `last_verified_at`, `last_success_at`, `last_probe_status_code`, `last_probe_latency_ms`, `last_probe_error`, `is_monitored`, `monitoring_interval_seconds`, `failure_threshold`, `consecutive_failures`, and `consecutive_successes` to `services` table.
+  2. Create `service_health_observations` table for historical audit log of health probe results (timestamp, status, code, latency, error).
+  3. Separate static service configuration (URL, enabled status, target interval) from observed monitoring health (`reachable`, `configured`, `degraded`, `down`, `stale`, `unavailable`, `unknown`).
+  4. Update `create_service`, `update_service` (`PATCH /api/v1/services/{id}`), and `verify_service_connection` to validate SSRF and persist all connection parameters and health probe observations.
+  5. Add `GET /api/v1/services/{id}/health-observations` endpoint with strict tenant isolation.
+  6. Frontend: Add comprehensive `Settings` tab (`?view=settings`) via `ServiceSettings` component allowing inline testing, observation inspection, and configuration updates.
+  7. Frontend: Replace static "Monitoring unknown" badge with dynamic `<HealthStatus>` rendering real observed health across list, grid, and detail views.
+  8. Frontend: Add "Connection settings", "Copy service ID", and "Open healthcheck URL" actions to `ApplicationActions`.
+- Alternatives:
+  - Store connection configuration in external key-value store: rejected to maintain relational integrity and atomic tenant cascading.
+  - Ephemeral probe state in Redis only: rejected because historical health observations and audit evidence require durable PostgreSQL persistence.
+- Reason: Provides a single, durable, tenant-scoped source of truth for both manual onboarding and automated continuous monitoring.
+- Downside: Additional columns on `services` and rows in `service_health_observations`; mitigated by indexed foreign keys and bounded limit queries.
+### DEC-393 — Continuous Asynchronous Monitoring, Outage Qualification, and Auto-Recovery Engine
+- Date / scope: 2026-10-15; Phase 8.5 Work Package 3 / AUD-005, AUD-007, AUD-008.
+- Status: VERIFIED.
+- Context: AUD-005 identified that scheduled continuous monitoring was absent from AegisOps. The Celery worker and beat scheduler were stopped, no automated health probe loop existed, and outages could not be detected without external alerts. AUD-007 noted that single-probe failures or cloud cold-starts would trigger false-positive alerts.
+- Choice:
+  1. Celery beat task `aegisops.probe_monitored_services` running periodically every 10s to probe services whose configured interval has elapsed.
+  2. Bounded timeouts (5s) and pre-flight + socket peer IP SSRF validation (`DEC-391`) for all automated probes.
+  3. Cold-start / transient glitch resistance: state transitions to `degraded` for consecutive failures below `failure_threshold` (default 3), preventing premature false-positive incidents.
+  4. Outage qualification: after 3 consecutive failures, service transitions to `down`, and an automated incident (`severity="critical"`, `status="open"`, source `healthcheck_monitor`) is created with deterministic SHA-256 fingerprint deduplication.
+  5. Auto-recovery: when a health probe succeeds following an outage, service transitions to `reachable`, and open healthcheck incidents are automatically transitioned to `resolved` with a recovery audit event.
+  6. Historical observations logged to `service_health_observations` table.
+  7. Prometheus file service discovery (`file_sd_configs`) enabled for maintainable target registration via `infra/prometheus/targets/targets.yml`.
+- Alternatives:
+  - Synchronous probing inside FastAPI: rejected because blocking HTTP I/O in API processes degrades request throughput and scalability.
+  - Immediate incident creation on first failure: rejected because serverless and free-tier cloud platforms experience 10-30s cold starts that trigger misleading pages.
+- Reason: Provides autonomous, verifiable, cold-start resistant monitoring that triggers real incident lifecycles without manual intervention.
+- Downside: Requires active Celery worker and Redis broker.
+- Evidence: Verified live with Celery worker executing `aegisops.probe_monitored_services` against IRONLOG in Docker, and unit/integration tests in `test_continuous_monitoring.py` covering cold-starts, threshold qualification, deduplication, and recovery.
+
+### DEC-394 — Multi-Tenant Service Evidence Isolation, Comprehensive Redaction, and Execution Bounds in AI Investigations
+- Date / scope: 2026-10-15; Phase 8.5 Work Package 4 / AUD-006, AUD-009, AUD-013, AUD-014.
+- Status: VERIFIED.
+- Context: AUD-006 identified hardcoded `shop-api` and `/checkout` references in `ReadOnlyToolGateway` across metrics, logql, and deployment repos. AUD-009 identified lack of trace tenant/service verification in `get_trace_summary`. AUD-013 noted that sensitive text redaction lacked MongoDB URIs, JWTs, and cookies. AUD-014 noted that uninstrumented telemetry led to misleading states or fallbacks rather than honest `INCONCLUSIVE` investigations.
+- Choice:
+  1. Dynamically scope `query_service_metrics` to the authenticated incident's service name (removing `/checkout` assumptions) and return explicit `NO_DATA` / `uninstrumented: True` when metrics are absent.
+  2. Dynamically scope `search_service_logs` in Loki to `{service_name="{service_name}"}` instead of hardcoded `shop-api`.
+  3. In `get_recent_deployments`, resolve `service.github_repo` and return honest `uninstrumented: True` with explicit limitation message when unconfigured, never falling back to `AegisOps/shop-api`.
+  4. In `get_trace_summary`, verify that retrieved Tempo trace spans belong to the authorized service; reject foreign traces with `UNAUTHORIZED_SERVICE_TRACE`.
+  5. Extend `agents/incident_investigator/tools/redaction.py` with regex patterns for MongoDB/SQL connection URIs with credentials, JWT tokens (`[REDACTED_JWT]`), session cookies (`[REDACTED_COOKIE]`), and US SSNs (`[REDACTED_SSN]`), with negative lookaheads preventing re-redaction.
+  6. In `create_remediation_proposal`, derive target environment from `service.environment` and strictly enforce `catalog_item.applicable_environments`, preventing production remediation proposals.
+  7. Preserve evidence validation, provenance tracking, run budgets (max 12 calls), and ensure uninstrumented services produce honest `INCONCLUSIVE` investigations without fabricated evidence.
+- Alternatives:
+  - Global metric queries without service filter: rejected because it leaks multi-tenant performance metrics across organizations.
+  - Silent fallback to shop-api repo: rejected because it attributes third-party code changes to external services like IRONLOG.
+- Reason: Strict evidence boundary guarantees that external applications (e.g. IRONLOG) are investigated purely against their own authorized telemetry and configuration.
+- Downside: Uninstrumented external applications produce INCONCLUSIVE investigations until instrumented; this is an honest and necessary behavior.
+- Evidence: Unit and integration tests in `agents/incident_investigator/tests/test_service_evidence_isolation.py` and entire agent suite (60 tests passed/skipped, 0 failed).
+
+### DEC-395 — Tenant-Safe Performance Analytics API, Dynamic Time-Series SVG Visualization, and Multi-Org Workspace Switching
+- Date / scope: 2026-10-15; Phase 8.5 Work Package 5 / AUD-011, AUD-012, AUD-016, AUD-017.
+- Status: VERIFIED.
+- Context: AUD-011 and AUD-012 identified that the frontend analytics view had no backend time-series endpoint and displayed static placeholder messages. AUD-016 noted that workspace switching was misleading or non-functional, and AUD-017 noted that static or hardcoded service status counts were shown across overview headers.
+- Choice:
+  1. Add `GET /api/v1/services/{id}/metrics` querying Prometheus `query_range` with strict tenant scoping (`Service.organization_id == context.organization.id`) and bounded time ranges (`15m`, `1h`, `6h`, `24h`).
+  2. Implement sanitized PromQL query templates for request rate, error rate, and p95 latency scoped strictly to `service="{service.name}"`, preventing arbitrary PromQL injection.
+  3. When an application has no Prometheus scrape target (e.g. IRONLOG), return honest `status: "uninstrumented"`, `is_instrumented: False`, without fabricating values.
+  4. Connect `ServiceAnalytics` frontend to the real API: render real SVG curves with dynamic Y-axis min/max scales and time bounds when metrics exist; render clean, honest empty state with external instrumentation instructions when uninstrumented.
+  5. Replace static "Monitoring unknown" badge with dynamic `<HealthStatus>` rendering real backend monitoring state.
+  6. Enable multi-organization workspace switching in `app-shell.tsx` with `X-Organization-ID` header forwarding in `apiFetch` across both SSR and client fetchers.
+  7. Replace hardcoded "Connection health not reported" and "Monitoring health remains unknown" strings in overview page with live dynamic counts of reachable and configured services.
+- Alternatives:
+  - Generate synthetic time-series in frontend: rejected because fabricating demo measurements violates the non-mock portfolio mandate.
+  - Client-side direct PromQL queries to Prometheus: rejected because Prometheus has no multi-tenant authorization layer.
+- Reason: Guarantees authentic telemetry visibility while maintaining strict multi-tenant boundaries.
+- Downside: Uninstrumented external applications display honest unavailable metric cards until Prometheus or OTel collectors are instrumented.
+- Evidence: Unit and contract tests in `test_service_metrics.py`, Next.js build compilation with 0 errors, and live UI verification.
+
+### DEC-396 — End-to-End Test Harness, Regression Defense, and Audit Reconciliation
+- Date / scope: 2026-10-15; Phase 8.5 Work Package 6 / AUD-015, AUD-018.
+- Status: VERIFIED.
+- Context: AUD-015 observed that previous test suites accepted static empty states as proof of functionality. AUD-018 identified incomplete automated test coverage across external application lifecycles (persistent connections, continuous probing, cold-start resistance, incident deduplication, auto-recovery, and tenant evidence isolation).
+- Choice:
+  1. Add comprehensive test suites verifying active functional requirements:
+     - `test_service_connection_persistence.py`: Validates database schema persistence, SSRF rejection, settings update, and health observation audit logs.
+     - `test_continuous_monitoring.py`: Validates periodic Celery probing, cold-start resistance (degraded state), threshold qualification (down state + incident creation), fingerprint deduplication, and auto-recovery (resolved incident + reachable status).
+     - `test_service_evidence_isolation.py`: Validates Google ADK investigator scoping to authorized service, foreign trace rejection (`UNAUTHORIZED_SERVICE_TRACE`), deployment uninstrumented state, production remediation denial, and comprehensive sensitive data redaction.
+     - `test_service_metrics.py`: Validates multi-tenant isolation, sanitized PromQL templates, bounded time ranges, time-series parsing, and honest uninstrumented responses.
+  2. Maintain zero regression across Phase 8.5 WP1 security fixes (AUD-001 tenant-to-service mapping and AUD-002 SSRF/DNS rebinding defense).
+  3. Validate full repository gate: `make check` (ruff, mypy, eslint, prettier, tsc) and `pytest` (177 passed, 6 skipped, 0 failed).
+- Alternatives:
+  - Mocking the entire database or Celery stack: rejected because integration tests must execute against real PostgreSQL and ORM schemas to verify migration correctness.
+- Reason: Provides regression defense and empirical evidence for every finding in the engineering audit (AUD-001 through AUD-018).
+- Downside: Test execution time increased moderately (19s for 177 tests); fully acceptable for comprehensive safety.
+- Evidence: Full test suite passing (177 passed in 19.17s), Next.js production build passing in 3.4s, and clean linting across all packages.
+
+#### DEC-384–389 — Historical Phase 8.4 evidence reconciliation (2026-10-16)
+- Observed final Phase 8.4 gates: static passed; 159 Python/1 Express passed; corrected full isolated browser gate 27 passed with scheduler/expiry/idempotency proof. First browser gate had 25 passed/2 environment-label failures, repaired by explicit select accessible name. Actual localhost empty/register/open journey passed after the capture script awaited Next.js navigation completion instead of asserting URL immediately after click.
+- Five-size audit: 45 page/viewport records, zero overflow/page errors/serious-critical axe findings. Gallery has 80 page/viewport sections including source comparison, empty/one/multiple registrations and both collection modes (`artifacts/workspace-analytics/index.html`).
+- Public freeze: landing pixel-identical at all five sizes; sign-in retains identical protected source/layout, with 10–21 input-edge pixels differing by at most 2/255 in final capture. Repeated same-build captures vary in the same rounded-edge region. Do not describe every sign-in capture as pixel-identical.
+- Recovery discovered external commit 36ad2d1 plus overlapping Phase 8.5 changes/DEC-390–396. Preserve all. The earlier test/capture results are historical and cannot certify the current combined tree. PROJECT_STATE's phase header and new Phase 8.5 completion claims disagree; requested scope clarification under AGENTS.md before further product edits/certification.
+- No new ADR or behavior decision during reconciliation. DEC-384 source freeze, DEC-385 scoped aggregate/pagination, DEC-386 source-derived navigation/preferences, DEC-387 truthful analytics/context, DEC-388 onboarding and DEC-389 verification remain the reasons for the Phase 8.4 changes. Full details: PHASE_REPORTS/PHASE_8_4_WORKSPACE_ANALYTICS.md.
+
+### DEC-397 — Scoped Multi-Tenant PromQL Construction and Strict Label Escaping
+- Date / scope: 2026-10-16; Phase 8.5 Defect Repair / Priority 0.1 & Priority 0.2 (AUD-019, AUD-020).
+- Status: VERIFIED.
+- Context: Astra's independent audit reproduced cross-tenant Prometheus metric queries leaking between separate tenants sharing service names (e.g. `service="shop-api"` without tenant identity), and demonstrated PromQL injection where unescaped control/delimiter characters in service names broke out of string literals.
+- Choice:
+  1. In `apps/api/app/telemetry/promql.py`, implement `escape_promql_label_value` which strips control characters (`\r\n\t\0`) and escapes backslashes (`\ -> \\`) and double quotes (`" -> \"`).
+  2. Enforce strict tenant identity: telemetry queries enforce `service_id="{esc_svc_id}"` or `(service="{esc_name}", organization_id="{esc_org_id}")` as mandatory matchers.
+  3. Unscoped fallback removal: The unsafe unscoped demo fallback clause `or http_requests_total{service="shop-api"}` was completely removed. Instead, the `shop-api` Prometheus scrape configuration (`infra/prometheus/prometheus.yml`) is explicitly provisioned with static labels `service_id: "00000000-0000-0000-0000-000000000066"` and `organization_id: "00000000-0000-0000-0000-000000000064"`, matching `get_or_create_demo_scope`. All telemetry metric queries require `service_id` or `(service, organization_id)`. External applications and demo services alike are strictly scoped by tenant identity.
+  4. Tested PromQL expressions against pinned Prometheus grammar and verified isolation across identical service names in different organizations.
+- Alternatives:
+  - Client-side filtering: rejected because multi-tenant isolation must be enforced on backend query construction.
+  - Complex AST parsing: rejected in favor of fixed, allowlisted query templates with strictly escaped label matchers.
+- Reason: Eliminates PromQL injection and cross-tenant metrics leakage even with identical service names.
+- Downside: Scraped external metrics must include `service_id` or `(service, organization_id)` labels to return non-empty series.
+- Evidence: Verified in `apps/api/tests/test_service_metrics.py` (adversarial injection attacks tested, identical service names across separate organizations proven isolated, regression test `test_no_unscoped_promql_fallback_for_demo_shop_api` confirms zero unscoped fallback).
+
+### DEC-398 — Fail-Closed Authenticated Trace Authorization in API and AI Gateway
+- Date / scope: 2026-10-16; Phase 8.5 Defect Repair / Priority 0.3 (AUD-021).
+- Status: VERIFIED.
+- Context: Astra audit demonstrated that a viewer could retrieve foreign traces if they knew or guessed a trace ID, because `GET /api/v1/traces/{trace_id}` did not verify trace ownership against the authenticated tenant's services. In addition, the AI gateway `get_trace_summary` did not fail closed when trace services were unverified, and mixed-service traces could leak foreign microservice spans.
+- Choice:
+  1. In `apps/api/app/telemetry/tempo.py`: `_parse_tempo_trace` merges resource attributes (`res_attrs`) directly into `span_attrs` so individual spans retain their `organization_id` and `service_id` provenance tags.
+  2. In `apps/api/app/main.py`: `get_trace` resolves the caller's organization services and filters all spans in the retrieved trace. Spans from foreign microservices or foreign tenants are stripped. If zero authorized spans remain, it fails closed with HTTP 404 Not Found (preventing trace ID enumeration/timing attacks). It returns a sanitized `TraceSummaryRead` containing only spans belonging to authorized services.
+  3. In `agents/incident_investigator/tools/gateway.py`: `get_trace_summary` filters `summary.spans` to only authorized services matching tenant provenance, persists only authorized spans into evidence items, and fails closed with `UNAUTHORIZED_SERVICE_TRACE` if no authorized spans exist.
+- Alternatives:
+  - Return HTTP 403: rejected to prevent trace ID enumeration/timing attacks.
+  - Trust client-provided service header: rejected because authorization must be derived from authenticated user session and database service registry.
+  - Return all spans if root span matches: rejected because distributed traces traversing third-party or foreign services must not expose unauthorized spans.
+- Reason: Enforces strict data ownership boundaries for distributed trace data at the span provenance level.
+- Downside: Unattributed or foreign spans are excluded from API responses and AI investigator evidence.
+- Evidence: Verified in `apps/api/tests/test_auth_rbac_tracing.py` (`test_mixed_service_trace_isolation_and_provenance`) and `agents/incident_investigator/tests/test_service_evidence_isolation.py` (`test_gateway_mixed_service_trace_filters_foreign_spans`).
+
+### DEC-399 — Multi-Layer Sensitive Data Redaction for Incident Ledgers and External Model Gateways
+- Date / scope: 2026-10-16; Phase 8.5 Defect Repair / Priority 0.4 (AUD-022).
+- Status: VERIFIED.
+- Context: Astra audit reproduced unredacted incident titles and summaries (e.g. containing MongoDB URIs with embedded passwords, JWT bearer tokens, or session cookies) reaching the evidence ledger and external AI models.
+- Choice:
+  1. Enhanced regex patterns in `agents/incident_investigator/tools/redaction.py`: non-greedy credential matching with port support (`mongodb://user:pass@host:27017`), complete JWT structure matching (`eyJ...`), comprehensive cookie patterns (`[A-Za-z0-9_]*session...`), and API key/bearer token redaction.
+  2. Pre-persistence redaction: In `get_incident_snapshot`, incident title and content are redacted prior to calling `_persist_evidence` and before returning.
+  3. Defense-in-depth in `_persist_evidence`: all snippet texts are passed through `redact_sensitive_text` before creating `EvidenceItem` and before SHA-256 fingerprinting.
+- Alternatives:
+  - Post-processing prompt output only: rejected because secrets must never enter the persistent database ledger or external LLM context.
+- Reason: Prevents secrets from leaking into stored audit records or external model prompts.
+- Downside: Snippet text replacement with `[REDACTED_...]` masks exact tokens from AI model (which is the intended security invariant).
+- Evidence: Verified in `agents/incident_investigator/tests/test_service_evidence_isolation.py` and `apps/api/tests/test_incident_lifecycle_correlation.py`.
+
+### DEC-400 — Episode Correlation Across Active Incident States and Unique Database Index
+- Date / scope: 2026-10-16; Phase 8.5 Defect Repair / Priority 1.5 & Priority 1.6 (AUD-023, AUD-024).
+- Status: VERIFIED.
+- Context: Astra audit showed that when an outage was acknowledged, subsequent failed probes created a second incident because the query only checked `Incident.status == "open"`. Later recovery resolved only the new incident, leaving the acknowledged one dangling. Furthermore, manual recheck did not properly participate in health transitions and failure threshold counts.
+- Choice:
+  1. Migration `0011_active_incident_fingerprint_unique.py`: Added PostgreSQL partial unique index `uq_active_incident_fingerprint` on `(organization_id, service_id, fingerprint)` for `status IN ('open', 'acknowledged', 'mitigating', 'reopened')`.
+  2. In `apps/worker/tasks.py`: Correlation query checks `Incident.status.in_(ACTIVE_INCIDENT_STATUSES)`. Any continued failure on an acknowledged, mitigating, or reopened incident attaches to the existing incident episode without duplicating.
+  3. Probe recovery: On probe success (HTTP 200..399), worker queries all active matching incidents (`status IN ACTIVE_INCIDENT_STATUSES`) and transitions them to `resolved`, setting `resolved_at=now`.
+  4. Manual recheck in `apps/api/app/main.py`: Participates in health transitions. Successful recheck resets `consecutive_failures = 0`, updates status to `reachable`, and automatically resolves any active outage incidents. Failed recheck increments `consecutive_failures` and transitions status to `degraded` (< threshold) or `down` (>= threshold) with incident creation.
+  5. Migration 0011 Preflight & Runbook: Documented in `docs/MIGRATION_0011_PREFLIGHT.md` and `apps/api/alembic/versions/0011_active_incident_fingerprint_unique.py`. Provides a read-only duplicate active-fingerprint detection query to verify invariant safety prior to running Alembic upgrade, and a safe, non-destructive, human-governed remediation runbook that transitions duplicates to `resolved` status with an audit note rather than destructive row deletion.
+- Alternatives:
+  - Application-only lock: rejected because concurrent worker tasks could race without a database unique constraint.
+  - Manual recheck diagnostic-only: rejected because leaving contradictory active outage incidents after a verified healthy recheck creates operational split-brain.
+- Reason: Guarantees single active incident episode per failure condition and consistent operational state between manual and automated monitoring.
+- Downside: Requires database index migration 0011.
+- Evidence: Migration applied in PostgreSQL; verified in `apps/api/tests/test_continuous_monitoring.py` and `apps/api/tests/test_incident_lifecycle_correlation.py`.
+
+### DEC-401 — Explicit Null Semantics for Clearing Service Configuration Fields
+- Date / scope: 2026-10-16; Phase 8.5 Defect Repair / Priority 2.7 (AUD-025).
+- Status: VERIFIED.
+- Context: In Settings UI, clearing the GitHub repository input field and saving reported success, but reloading the page restored the old value. This occurred because empty strings were converted to `undefined` or omitted from JSON, which Pydantic/SQLAlchemy treated as "field not provided" rather than "set to NULL".
+- Choice:
+  1. In `apps/api/app/schemas.py`: `ServiceSettingsUpdate` supports `Optional[str] = None` with explicit null handling via `model_fields_set`.
+  2. In `apps/api/app/main.py`: `update_service` iterates over `payload.model_fields_set` and assigns `None` directly to the ORM model attributes for explicitly provided nulls (`github_repo`, `healthcheck_url`).
+  3. In `apps/web/app/components/service-settings.tsx`: `handleSaveSettings` converts empty string inputs to `null` instead of omitting them.
+  4. In `apps/web/app/lib/api.ts`: `UpdateServicePayload` types accept `string | null`.
+- Alternatives:
+  - Empty string `""` in database: rejected because database schema uses nullable columns (`VARCHAR(255), nullable=True`), and empty strings break URL validation and git repo parsing.
+- Reason: Ensures explicit user intent to clear optional configuration fields is correctly persisted.
+- Downside: None.
+- Evidence: Verified in `apps/api/tests/test_service_connection_persistence.py` (`test_service_settings_clear_nullable_fields`).
+
+### DEC-402 — Monitoring Worker Concurrency Controls, Partial Index Race Handling, and Locking Requirements
+- Date / scope: 2026-10-16; Phase 8.5 Acceptance Repair / Condition 6 (AUD-024 review).
+- Status: VERIFIED.
+- Context: Monitoring workers execute scheduled probes concurrently across services, and manual rechecks may be triggered via HTTP API while a background probe task is running. If two worker tasks probe the same degrading/down service simultaneously, both tasks could query `Incident.status.in_(ACTIVE_INCIDENT_STATUSES)` before either commits, resulting in a race condition on incident creation.
+- Choice:
+  1. Database engine-level guarantee: PostgreSQL partial unique index `uq_active_incident_fingerprint` (`0011_active_incident_fingerprint_unique.py`) guarantees that only one active incident can exist for a given `(organization_id, service_id, fingerprint)`.
+  2. Application conflict recovery in `apps/worker/tasks.py`: Wrapped `db.flush()` on incident creation in `try...except (IntegrityError, DBAPIError)`. If a concurrent worker or manual recheck wins the race and commits an incident first, the conflicting worker rolls back the failed flush, queries the newly committed incident record using the unique fingerprint, and safely attaches the probe failure telemetry to the existing incident timeline instead of raising an unhandled exception or crashing the worker process.
+  3. Architectural locking requirements:
+     - In single-worker or low-concurrency deployments: The PostgreSQL partial unique index combined with the flush conflict handler provides deterministic, deadlock-free serialization of incident creation.
+     - In distributed, high-concurrency multi-worker scaling: To eliminate redundant outbound HTTP probes to degrading targets, an advisory row lock (`SELECT ... FOR UPDATE` on `Service`) or a short-TTL distributed lock (e.g. Redis mutex on `lock:probe:{service_id}` with 10s TTL) is required before probe dispatch.
+- Alternatives:
+  - Table-level locking: rejected due to severe throughput bottleneck across unrelated services.
+  - Ignoring IntegrityError without attaching telemetry: rejected because probe failure details would be lost from the active incident ledger.
+- Reason: Enforces database-level uniqueness while ensuring worker resilience and preserving failure telemetry during race conditions.
+- Downside: Concurrent duplicate probes may both execute before the second is attached to the winning incident.
+- Evidence: Verified via PostgreSQL integration test suite (`make integration`), worker task exception handling, and full browser gate (`make browser`).
+
+
